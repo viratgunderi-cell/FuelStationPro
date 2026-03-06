@@ -3002,7 +3002,7 @@ function renderPumps(D) {
           <button onclick="openEditPumpModal(${p.id})" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-3);border-radius:6px;padding:3px 7px;cursor:pointer;font-size:12px" title="Edit Pump & Nozzles">✏️</button>
         </div>
       </div>
-      ${allSameFuel ? `<div class="g" style="grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">
+      ${ nozzleLabels.length > 1 ? `<div style="margin-bottom:10px">${nozzleBreakdown}</div>` : `<div class="g" style="grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">
         <div class="dbox"><div class="dbox-label">Opening</div><div class="dbox-value mono" style="font-size:13px">${fmt(p.openReading)}</div></div>
         <div class="dbox"><div class="dbox-label">Current</div><div class="dbox-value mono" style="font-size:13px">${fmt(p.currentReading)}</div></div>
         <div class="dbox"><div class="dbox-label">Sold</div><div class="dbox-value mono" style="font-size:13px;color:var(--green)">${fmt(sold)} L</div></div>
@@ -3010,7 +3010,7 @@ function renderPumps(D) {
       <div class="flex-between mb-10" style="font-size:12px">
         <span style="color:var(--text-3)">Revenue</span>
         <span class="mono fw-700" style="color:var(--text-0)">${cur(rev)}</span>
-      </div>` : `<div style="margin-bottom:10px">${nozzleBreakdown}</div>`}
+      </div>`}
       <button class="btn btn-ghost btn-sm btn-block" onclick="openReadingModal(${p.id})">⚙️ Update Reading</button>
     </div>`;
   }).join('');
