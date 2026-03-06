@@ -2950,8 +2950,16 @@ function renderTanks(D) {
 function renderPumps(D) {
   const pumpCards = D.pumps.map(p => {
     const fuel = getFuel(p.fuelType);
-    const sold = Math.max(0, (p.currentReading || 0) - (p.openReading || 0));
-    const rev  = sold * (D.prices[p.fuelType] || 0);
+    const _nOpen = (p.openReading || 0);
+    const _nCur  = (p.currentReading || 0);
+    const meterSoldAgg = Math.max(0, _nCur - _nOpen);
+    // Use today's sales-based revenue when opening reading is 0 (no shift data yet)
+    const todayIso_card = new Date().toISOString().slice(0,10);
+    const pumpTodaySales = _nOpen === 0 && _nCur === 0 ? D.sales.filter(s => String(s.pump) === String(p.id) && (s.date||'').slice(0,10) === todayIso_card) : [];
+    const salesRevAgg = pumpTodaySales.reduce((a,s) => a + (s.amount||0), 0);
+    const salesSoldAgg = pumpTodaySales.reduce((a,s) => a + (s.liters||0), 0);
+    const sold = meterSoldAgg > 0 ? meterSoldAgg : salesSoldAgg;
+    const rev  = meterSoldAgg > 0 ? meterSoldAgg * (D.prices[p.fuelType] || 0) : salesRevAgg;
 
     // Per-nozzle fuel display
     const nozzleLabels = p.nozzleLabels || (p.nozzles === 1 ? ['A'] : p.nozzles === 2 ? ['A','B'] : ['A','B','C'].slice(0, p.nozzles));
@@ -2963,15 +2971,22 @@ function renderPumps(D) {
 
     // Per-nozzle breakdown for mixed-fuel pumps
     const allSameFuel = nozzleLabels.every(n => (nozzleFuels[n]||p.fuelType) === (nozzleFuels[nozzleLabels[0]]||p.fuelType));
-    const nozzleBreakdown = allSameFuel ? '' : nozzleLabels.map(n => {
+    const todayIso_pumps = new Date().toISOString().slice(0,10);
+    const nozzleBreakdown = nozzleLabels.length <= 1 ? '' : nozzleLabels.map(n => {
       const nft  = getFuel(nozzleFuels[n] || p.fuelType);
       const nOpen  = (p.nozzleOpen || {})[n] ?? 0;
       const nClose = (p.nozzleReadings || {})[n] ?? 0;
-      const nSold  = Math.max(0, nClose - nOpen);
-      const nRev   = nSold * (D.prices[nozzleFuels[n] || p.fuelType] || 0);
+      const meterSold = Math.max(0, nClose - nOpen);
+      // Fallback to today's sales when no meter readings exist
+      const nozzleSales = D.sales.filter(s => String(s.pump) === String(p.id) && (s.nozzle === n || s.nozzle === String(n)) && (s.date||'').slice(0,10) === todayIso_pumps);
+      const salesSold = nozzleSales.reduce((a,s) => a + (s.liters||0), 0);
+      const salesRev  = nozzleSales.reduce((a,s) => a + (s.amount||0), 0);
+      const nSold = meterSold > 0 ? meterSold : salesSold;
+      const nRev  = meterSold > 0 ? meterSold * (D.prices[nozzleFuels[n] || p.fuelType] || 0) : salesRev;
+      const srcTag = meterSold > 0 ? '' : salesSold > 0 ? ' <span style="font-size:9px;color:var(--text-3)">(sales)</span>' : '';
       return `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:${nft.color}0f;border-radius:6px;border:1px solid ${nft.color}22;margin-bottom:4px">
         <span style="font-size:11px;font-weight:700;color:${nft.color}">N${n}: ${nft.short}</span>
-        <span class="mono fw-700" style="font-size:12px;color:var(--green)">${fmt(nSold)} L</span>
+        <span class="mono fw-700" style="font-size:12px;color:var(--green)">${fmt(nSold)} L${srcTag}</span>
         <span class="mono" style="font-size:11px;color:var(--text-3)">${cur(nRev)}</span>
       </div>`;
     }).join('');
@@ -3007,24 +3022,14 @@ function renderPumps(D) {
     // If all nozzles have same fuel, keep single row using aggregate readings
     const fuels = labels.map(n => nf[n] || p.fuelType);
     const allSameFuel = fuels.every(f => f === fuels[0]);
-    if (allSameFuel) {
-      const fuel = getFuel(fuels[0]);
-      const open = p.openReading || 0;
-      const cur_ = p.currentReading || 0;
-      const sold = Math.max(0, cur_ - open);
-      const rev  = sold * ((D.prices || {})[fuels[0]] || 0);
-      return [`<tr><td class="fw-600">${p.name}</td><td style="color:${fuel.color}" class="fw-600">${fuel.short}</td>
-        <td class="r mono">${fmt(open)}</td><td class="r mono">${fmt(cur_)}</td>
-        <td class="r mono fw-700" style="color:var(--green)">${fmt(sold)}</td><td class="r mono fw-700">${cur(rev)}</td></tr>`];
-    }
-    // Mixed fuel pump — one row per nozzle
+    // Always show per-nozzle rows (clearer and more accurate)
     return labels.map((n, i) => {
       const ft   = nf[n] || p.fuelType;
       const fuel = getFuel(ft);
       const open  = nr[n] !== undefined ? (nr[n] - (p.nozzleOpen?.[n] || 0)) >= 0 ? (p.nozzleOpen?.[n] || 0) : 0 : (p.openReading || 0);
       const close = nr[n] !== undefined ? nr[n] : (p.currentReading || 0);
       // Use sales data as source for per-nozzle sold when nozzleReadings available
-      const nozzleSales = D.sales.filter(s => s.pump === p.id && (s.nozzle === n || s.nozzle === String(n)));
+      const nozzleSales = D.sales.filter(s => String(s.pump) === String(p.id) && (s.nozzle === n || s.nozzle === String(n)));
       const todayIso = new Date().toISOString().slice(0,10);
       const todayNozzleSales = nozzleSales.filter(s => (s.date||'').slice(0,10) === todayIso);
       const soldL = todayNozzleSales.reduce((a,s) => a + (s.liters||0), 0);
