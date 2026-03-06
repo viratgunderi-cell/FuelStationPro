@@ -318,9 +318,10 @@ function dataRoutes(db) {
 // Reverse aliases: DB column name -> frontend property name
 const DB_TO_FRONTEND = {
   // Tank
-  current_level:   'current',        // DB current_level -> frontend c.current
+  current_level:   'current',        // DB current_level -> frontend tank.current
   current_reading: 'currentReading',
   low_alert:       'lowAlert',
+  last_dip:        'lastDip',        // DB last_dip -> frontend tank.lastDip
   // Common
   fuel_type:       'fuelType',
   tank_id:         'tankId',
@@ -330,30 +331,33 @@ const DB_TO_FRONTEND = {
   color_light:     'colorLight',
   // Employee / shifts
   join_date:       'joinDate',
-  start_time:      'startTime',
-  end_time:        'endTime',
-  // Credit customers — CRITICAL: DB uses balance/credit_limit, frontend uses outstanding/limit
+  start_time:      'startTime',      // Also exposed as 'start' for shift compatibility
+  end_time:        'endTime',        // Also exposed as 'end' for shift compatibility
+  // Credit customers
   balance:         'outstanding',    // DB balance -> frontend c.outstanding
-  credit_limit:    'limit',          // DB credit_limit -> frontend c.limit (NOT creditLimit)
+  credit_limit:    'limit',          // DB credit_limit -> frontend c.limit
+  last_payment:    'lastPayment',
   // Sales
   employee_name:   'employeeName',
   employee_id:     'employeeId',
   sale_id:         'saleId',
   customer_id:     'customerId',
-  // Expenses / purchases
+  upi_txn_id:      'upiTxnId',
+  // Expenses
+  description:     'desc',           // DB description -> frontend expense.desc
   invoice_no:      'invoiceNo',
   receipt_ref:     'receiptRef',
   approved_by:     'approvedBy',
   paid_to:         'paidTo',
-  // Credit customer
-  last_payment:    'lastPayment',    // DB last_payment -> frontend c.lastPayment
+  // Dip readings
+  computed_volume: 'calculated',     // DB computed_volume -> frontend dip.calculated
+  recorded_by:     'recordedBy',
   // Pump nozzle data
-  nozzle_readings: 'nozzleReadings', // DB nozzle_readings -> pump.nozzleReadings
-  nozzle_open:     'nozzleOpen',     // DB nozzle_open -> pump.nozzleOpen
-  nozzle_fuels:    'nozzleFuels',    // DB nozzle_fuels -> pump.nozzleFuels
-  nozzle_labels:   'nozzleLabels',   // DB nozzle_labels -> pump.nozzleLabels
-  open_reading:    'openReading',    // DB open_reading -> pump.openReading
-  upi_txn_id:      'upiTxnId',       // DB upi_txn_id -> sale.upiTxnId
+  nozzle_readings: 'nozzleReadings',
+  nozzle_open:     'nozzleOpen',
+  nozzle_fuels:    'nozzleFuels',
+  nozzle_labels:   'nozzleLabels',
+  open_reading:    'openReading',
   // Security — never expose
   pin_hash:        null,
   pass_hash:       null,
@@ -387,6 +391,9 @@ function parseRow(r) {
     if (alias) {
       obj[alias] = parsedVal;    // use the frontend name
       obj[col] = parsedVal;      // also keep snake_case for backward compat
+      // Extra compat aliases so shift.start and shift.end work
+      if (col === 'start_time') obj['start'] = parsedVal;
+      if (col === 'end_time')   obj['end']   = parsedVal;
     } else {
       obj[col] = parsedVal;      // no alias needed, keep as-is
     }
@@ -408,21 +415,23 @@ const FIELD_ALIASES = {
   // Tank fields
   current:        'current_level',   // tank.current -> tanks.current_level
   lowAlert:       'low_alert',       // tank.lowAlert -> tanks.low_alert
+  lastDip:        'last_dip',        // tank.lastDip -> tanks.last_dip
   // Pump fields
   currentReading: 'current_reading', // pump.currentReading -> pumps.current_reading
-  openReading:    'open_reading',    // (future use)
+  openReading:    'open_reading',
   // Employee fields
-  pinHash:        'pin_hash',        // employee.pinHash -> employees.pin_hash
-  passHash:       'pass_hash',       // admin.passHash -> admin_users.pass_hash
-  // Credit customer fields — CRITICAL: frontend uses these names, DB uses different columns
+  pinHash:        'pin_hash',
+  passHash:       'pass_hash',
+  // Credit customer fields
   outstanding:    'balance',         // c.outstanding -> credit_customers.balance
   limit:          'credit_limit',    // c.limit -> credit_customers.credit_limit
+  lastPayment:    'last_payment',    // c.lastPayment -> credit_customers.last_payment
   // Sale fields
   employee:       'employee_name',   // sale.employee -> sales.employee_name
-  fuelType:       'fuel_type',       // sale.fuelType -> sales.fuel_type (also handled by camelToSnake)
-  upiTxnId:       'upi_txn_id',      // sale.upiTxnId -> sales.data_json (no column, goes to extra)
-  tankId:         'tank_id',         // fuel purchase tankId -> fuel_purchases.tank_id
-  invoiceNo:      'invoice_no',      // invoice_no alias
+  fuelType:       'fuel_type',
+  upiTxnId:       'upi_txn_id',
+  tankId:         'tank_id',
+  invoiceNo:      'invoice_no',
   paidTo:         'paid_to',
   approvedBy:     'approved_by',
   receiptRef:     'receipt_ref',
@@ -431,6 +440,17 @@ const FIELD_ALIASES = {
   endTime:        'end_time',
   employeeName:   'employee_name',
   employeeId:     'employee_id',
+  // Shift fields: frontend sends 'start'/'end', DB has 'start_time'/'end_time'
+  start:          'start_time',      // shift.start -> shifts.start_time
+  end:            'end_time',        // shift.end -> shifts.end_time
+  // Expense fields: frontend sends 'desc', DB has 'description'
+  desc:           'description',     // expense.desc -> expenses.description
+  // Fuel purchase fields
+  total:          'amount',          // purchase.total -> fuel_purchases.amount
+  invoice:        'invoice_no',      // purchase.invoice -> fuel_purchases.invoice_no
+  // Dip reading fields
+  calculated:     'computed_volume', // dip.calculated -> dip_readings.computed_volume
+  recordedBy:     'recorded_by',     // dip.recordedBy -> dip_readings.recorded_by
 };
 
 async function upsertRow(db, meta, tenantId, data, isInsert) {
