@@ -351,17 +351,7 @@
         window.db = new FuelDB('FuelBunkPro_' + session.tenant.id);
       }
 
-      // initApp() ran loadData() BEFORE this set the token → got SEED zeros.
-      // Schedule a reload now that we have a valid token.
-      if (session.role !== 'employee') {
-        setTimeout(function() {
-          if (typeof loadData === 'function' && typeof getAuthToken === 'function' && getAuthToken()) {
-            loadData()
-              .then(function() { if (typeof renderPage === 'function') renderPage(); })
-              .catch(function(e) { console.warn('[Bridge] session reload:', e.message); });
-          }
-        }, 200);
-      }
+      // Token is set above — loadData() will be called by initApp() with correct token
 
       return true;
     } catch (e) {
@@ -616,16 +606,7 @@
         if (session.tenant?.id) {
           window.db = new FuelDB('FuelBunkPro_' + session.tenant.id);
         }
-        // Reload data from server now that token is set
-        if (session.role !== 'employee') {
-          setTimeout(function() {
-            if (typeof loadData === 'function' && typeof getAuthToken === 'function' && getAuthToken()) {
-              loadData()
-                .then(function() { if (typeof renderPage === 'function') renderPage(); })
-                .catch(function(e) { console.warn('[Bridge] session reload:', e.message); });
-            }
-          }, 200);
-        }
+        // Token set above — loadData() called by initApp() with correct token
         return true;
       } catch (e) {
         return false;

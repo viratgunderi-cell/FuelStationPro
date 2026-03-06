@@ -9095,16 +9095,6 @@ async function initApp() {
     } catch (e) { /* skip */ }
   }
 
-  // Try IndexedDB (non-blocking: SEED is already set as fallback)
-  try {
-    await Promise.race([
-      loadData(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('DB timeout 3s')), 3000))
-    ]);
-  } catch (e) {
-    console.warn('DB load failed, using seed:', e);
-  }
-
   // Clock + status
   updateClock(); setInterval(updateClock, 1000); updateOnlineStatus();
 
@@ -9141,6 +9131,15 @@ async function initApp() {
 
   if (sessionOk) {
     if (APP.role === 'employee') { emp_loadSession(); if (!empState.active) { empState.page = 'login'; } }
+    // Load data WITH token now set by loadSession — ensures correct server data on every refresh
+    try {
+      await Promise.race([
+        loadData(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('DB timeout 5s')), 5000))
+      ]);
+    } catch (e) {
+      console.warn('DB load failed, using seed:', e);
+    }
     enterApp();
   } else {
     showLoginScreen();
