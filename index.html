@@ -3043,7 +3043,7 @@ function renderPumps(D) {
       return `<tr>
         ${i === 0 ? `<td class="fw-600" rowspan="${labels.length}" style="vertical-align:middle">${p.name}</td>` : ''}
         <td style="color:${fuel.color};padding-left:${i>0?'28':''}px" class="fw-600">N${n}: ${fuel.short}</td>
-        <td class="r mono">${fmt(openR)}</td><td class="r mono">${fmt(closeR)}</td>
+        <td class="r mono">${fmt(open)}</td><td class="r mono">${fmt(close)}</td>
         <td class="r mono fw-700" style="color:var(--green)">${fmt(meterSold)}</td>
         <td class="r mono fw-700">${cur(meterRev)}</td>
       </tr>`;
