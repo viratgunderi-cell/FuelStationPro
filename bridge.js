@@ -158,18 +158,30 @@
         }
       }
 
+      // Show loading state on button
+      const btn = document.querySelector('[onclick*="mt_saveTenant"]');
+      const origText = btn ? btn.textContent : '';
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving...'; }
+
       try {
         if (isEdit && id) {
           await TenantAPI.update(id, { name, location, ownerName, phone, icon });
           if (typeof mt_toast === 'function') mt_toast(name + ' updated', 'success');
         } else {
           await TenantAPI.create({ name, location, ownerName, phone, icon, adminUser, adminPass });
-          if (typeof mt_toast === 'function') mt_toast(name + ' created!', 'success');
+          if (typeof mt_toast === 'function') mt_toast('✅ ' + name + ' created successfully!', 'success');
         }
         await mt_getTenants_async();
         if (typeof mt_showSelector === 'function') mt_showSelector();
       } catch (e) {
-        if (typeof mt_toast === 'function') mt_toast(e.message || 'Failed to save', 'error');
+        console.error('[mt_saveTenant] error:', e);
+        const msg = e.message || 'Failed to save station';
+        if (typeof mt_toast === 'function') {
+          mt_toast('❌ ' + msg, 'error');
+        } else {
+          alert('Error: ' + msg);
+        }
+        if (btn) { btn.disabled = false; btn.textContent = origText; }
       }
     };
   }
@@ -471,6 +483,7 @@
     window.mt_saveTenant = _buildSaveTenant();
     window.doAdminLogin = _buildDoAdminLogin();
     window.doEmpLogin = _buildDoEmpLogin();
+    console.log('[Bridge] DOMContentLoaded — overrides applied, token:', !!getAuthToken());
 
     // Fetch tenants; show selector only if no tenant is active
     const activeTenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;

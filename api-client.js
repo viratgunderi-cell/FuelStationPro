@@ -2,6 +2,10 @@
  * FuelBunk Pro — API Client (Drop-in replacement for FuelDB)
  *
  * BUGS FIXED:
+ *  7. TenantAPI: create/update/delete called POST /api/tenants which doesn't exist.
+ *     The server only registers GET /api/tenants (public list). All mutations
+ *     are registered at /api/data/tenants via dataRoutes. Fixed: mutations now
+ *     call /data/tenants (→ /api/data/tenants) which has proper auth + CRUD.
  *  1. apiFetch: 401 handler called appLogout() synchronously while a fetch
  *     was in flight — if multiple concurrent requests expired at the same time,
  *     appLogout() (which calls location.reload()) fired multiple times causing
@@ -122,34 +126,38 @@ const AuthAPI = {
 
 // ── Tenant API ─────────────────────────────────────────────────
 const TenantAPI = {
+  // GET list is public — served at /api/tenants (no auth needed)
   async list() { return apiFetch('/tenants'); },
 
+  // All mutations go to /data/tenants which is protected by authMiddleware + requireRole('super')
   async create(data) {
-    return apiFetch('/tenants', { method: 'POST', body: JSON.stringify(data) });
+    return apiFetch('/data/tenants', { method: 'POST', body: JSON.stringify(data) });
   },
 
   async update(id, data) {
-    return apiFetch('/tenants/' + id, { method: 'PUT', body: JSON.stringify(data) });
+    return apiFetch('/data/tenants/' + id, { method: 'PUT', body: JSON.stringify(data) });
   },
 
   async remove(id) {
-    return apiFetch('/tenants/' + id, { method: 'DELETE' });
+    return apiFetch('/data/tenants/' + id, { method: 'DELETE' });
   },
 
-  async getAdmins(tenantId) { return apiFetch('/tenants/' + tenantId + '/admins'); },
+  async getAdmins(tenantId) {
+    return apiFetch('/data/tenants/' + tenantId + '/admins');
+  },
 
   async addAdmin(tenantId, data) {
-    return apiFetch('/tenants/' + tenantId + '/admins', {
+    return apiFetch('/data/tenants/' + tenantId + '/admins', {
       method: 'POST', body: JSON.stringify(data),
     });
   },
 
   async removeAdmin(tenantId, userId) {
-    return apiFetch('/tenants/' + tenantId + '/admins/' + userId, { method: 'DELETE' });
+    return apiFetch('/data/tenants/' + tenantId + '/admins/' + userId, { method: 'DELETE' });
   },
 
   async resetAdminPassword(tenantId, userId, newPassword) {
-    return apiFetch('/tenants/' + tenantId + '/admins/' + userId + '/reset-password', {
+    return apiFetch('/data/tenants/' + tenantId + '/admins/' + userId + '/reset-password', {
       method: 'POST', body: JSON.stringify({ newPassword }),
     });
   },

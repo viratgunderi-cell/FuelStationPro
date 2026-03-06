@@ -31,11 +31,18 @@ const authRoutes = require('./auth');
 const dataRoutes = require('./data');
 
 async function startServer() {
-  const db = await initDatabase();
+  let db;
+  try {
+    db = await initDatabase();
+  } catch (err) {
+    console.error('[DB] Database init failed:', err.message);
+    console.error('[DB] Starting server without DB — set DATABASE_URL in Railway Variables');
+    db = null;
+  }
   const app = express();
   const PORT = process.env.PORT || 3000;
 
-  app.locals.db = db;
+  if (db) app.locals.db = db;
   app.set('trust proxy', 1);
 
   // ── Security headers ───────────────────────────────────────
@@ -83,7 +90,13 @@ async function startServer() {
   });
   // ── Health check (public) ──────────────────────────────────
   app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', database: 'postgresql', uptime: Math.floor(process.uptime()) });
+    res.json({
+      status: 'ok',
+      database: db ? 'postgresql' : 'not_connected',
+      uptime: Math.floor(process.uptime()),
+      env: process.env.NODE_ENV || 'development',
+      has_db_url: !!(process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.PGHOST)
+    });
   });
 
   // ── Public tenant list (multiple URL aliases for compatibility) ──
@@ -113,11 +126,17 @@ async function startServer() {
 
   // NOTE: do NOT add app.use("/api", ...) here - it would intercept /api/auth/* routes.
 
-  // SPA fallback: serve index.html for non-API routes.
-  // Exclude static asset extensions to prevent serving index.html as JS/CSS.
-  app.get('*', (req, res) => {
+  // SPA fallback + API 404 handler for ALL HTTP methods.
+  // BUG FIX: was app.get('*') — POST/PUT/DELETE to unknown /api/* routes
+  // received no response, causing apiFetch to hang forever (silent failure).
+  // Fixed: app.all('*') catches every method; API paths always get a JSON 404.
+  app.all('*', (req, res) => {
     if (req.path.startsWith('/api/')) {
-      return res.status(404).json({ error: 'API endpoint not found' });
+      return res.status(404).json({ error: 'API endpoint not found: ' + req.method + ' ' + req.path });
+    }
+    // Only serve index.html for GET requests (SPA routing)
+    if (req.method !== 'GET') {
+      return res.status(405).json({ error: 'Method not allowed' });
     }
     const _staticExts = ['.js', '.css', '.json', '.png', '.jpg', '.ico', '.svg', '.woff', '.woff2'];
     if (_staticExts.some(ext => req.path.endsWith(ext))) {
