@@ -31,7 +31,7 @@ const WRITE_ALIAS = {
   limit:          'credit_limit',
   lastPayment:    'last_payment',
   desc:           'description',
-  total:          'amount',
+  // total → amount mapping removed (no table has 'total' column)
   invoice:        'invoice_no',
   // 'start' and 'end' are legacy shorthand; use startTime/endTime for clarity
   calculated:     'computed_volume',
@@ -94,7 +94,6 @@ const READ_ALIAS = {
   station_code:    'stationCode',
   join_date:       'joinDate',
   description:     'desc',
-  amount:          'total',
   last_dip:        'lastDip',
 };
 

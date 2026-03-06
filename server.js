@@ -154,8 +154,8 @@ async function startServer() {
       await pool.query(
         `INSERT INTO sales
           (tenant_id, date, time, fuel_type, liters, amount, mode, pump, nozzle,
-           vehicle, customer, shift, employee, employee_id, employee_name)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+           vehicle, customer, shift, employee_id, employee_name)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [
           tenantId,
           s.date || new Date().toISOString().slice(0,10),
@@ -165,7 +165,7 @@ async function startServer() {
           String(s.pump || ''), s.nozzle || 'A',
           s.vehicle || '', s.customer || '',
           s.shift || 'Employee',
-          s.employee || '', s.employeeId || 0, s.employeeName || ''
+          s.employeeId || 0, s.employeeName || (s.employee || '')
         ]
       );
       res.json({ success: true });
@@ -214,6 +214,34 @@ async function startServer() {
   };
 
   app.get(['/api/tenants', '/api/tenants/list', '/api/data/tenants', '/api/data/tenants/list'], listTenantsPublic);
+
+
+  // ── PUBLIC: save employee sale (tenantId auth only — no JWT needed as fallback) ──
+  app.post('/api/public/sales/:tenantId', async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      const sale = req.body;
+      if (!tenantId || !sale || !sale.fuelType || !sale.liters || !sale.amount) {
+        return res.status(400).json({ error: 'Missing required fields' });
+      }
+      // Verify tenant exists
+      const tenantCheck = await pool.query('SELECT id FROM tenants WHERE id = $1', [tenantId]);
+      if (!tenantCheck.rows.length) return res.status(404).json({ error: 'Tenant not found' });
+
+      // Insert sale into DB
+      const r = await pool.query(
+        `INSERT INTO sales (tenant_id, date, time, fuel_type, liters, amount, mode, pump, nozzle, vehicle, customer, shift, employee, employee_id, employee_name)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+        [tenantId, sale.date||'', sale.time||'', sale.fuelType||'', sale.liters||0, sale.amount||0,
+         sale.mode||'cash', sale.pump||'', sale.nozzle||'A', sale.vehicle||'',
+         sale.customer||'', sale.shift||'', sale.employee||'', sale.employeeId||0, sale.employeeName||'']
+      );
+      res.json({ id: r.rows[0].id });
+    } catch (e) {
+      console.error('[public/sales]', e.message);
+      res.status(500).json({ error: 'Failed to save sale' });
+    }
+  });
 
   const authLimiter = rateLimit({ windowMs: 300000, max: 30 });
   app.use('/api/auth', authLimiter, authRoutes(db));

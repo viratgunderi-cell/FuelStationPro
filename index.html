@@ -4091,6 +4091,25 @@ function renderPage() {
     return;
   }
 
+  // Dashboard: auto-refresh sales + tank data to pick up employee submissions
+  if (APP.page === 'dashboard' && APP.role === 'admin') {
+    setTimeout(function() {
+      Promise.all([
+        db.getAll('sales'),
+        db.getAll('tanks'),
+      ]).then(function(results) {
+        var freshSales = results[0], freshTanks = results[1];
+        var changed = false;
+        if (freshSales.length !== (APP.data.sales || []).length) { APP.data.sales = freshSales.sort((a,b)=>b.id-a.id); changed = true; }
+        if (freshTanks.length) { APP.data.tanks = freshTanks.map(_normTank); changed = true; }
+        if (changed) {
+          var el2 = document.getElementById('content');
+          if (el2 && APP.page === 'dashboard') try { el2.innerHTML = renderDashboard(APP.data); } catch(e) {}
+        }
+      }).catch(() => {});
+    }, 500);
+  }
+
   // Tanks page: do a quick async refresh to pick up any external changes
   // but only AFTER initial render to avoid layout flash
   if (APP.page === 'tanks' && APP.role === 'admin') {
