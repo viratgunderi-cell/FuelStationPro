@@ -170,6 +170,11 @@
 
   const _origDeleteTenant = window.mt_deleteTenant;
   window.mt_deleteTenant = async function(id) {
+    // MUST use super admin token — admin token doesn't have permission to delete stations
+    const superToken = sessionStorage.getItem('fb_super_token') || localStorage.getItem('fb_super_token');
+    if (!superToken) { mt_toast('Super admin session expired. Please log in again.', 'error'); mt_showSelector(); return; }
+    const prevToken = getAuthToken();
+    setAuthToken(superToken);
     try {
       await TenantAPI.remove(id);
       const active = mt_getActiveTenant();
@@ -179,6 +184,9 @@
       mt_showSelector();
     } catch (e) {
       mt_toast(e.message || 'Failed to delete', 'error');
+    } finally {
+      // Restore previous token
+      if (prevToken) setAuthToken(prevToken); else clearAuth();
     }
   };
 
@@ -216,10 +224,16 @@
     const t = tenants.find(x => x.id === id);
     if (!t) return;
     const newActive = t.active === false ? true : false;
+    // Restore super token for this privileged operation
+    const superToken = sessionStorage.getItem('fb_super_token') || localStorage.getItem('fb_super_token');
+    const prevToken = getAuthToken();
+    if (superToken) setAuthToken(superToken);
     try {
       await TenantAPI.update(id, { active: newActive });
     } catch(e) {
       console.warn('[Bridge] Failed to update station active status on server:', e.message);
+    } finally {
+      if (prevToken) setAuthToken(prevToken);
     }
     // Also update localStorage immediately for UI
     if (_origToggleStation) _origToggleStation(id);
