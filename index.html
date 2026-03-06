@@ -6528,9 +6528,10 @@ function getEmpList() {
       shift: e.shift,
       permissions: e.permissions || {},
       pinHash: getEmpPinHash(e.id),
-    })).filter(e => e.pinHash); // only employees with a PIN set
+    })).filter(e => e.pinHash);
   }
-  // APP.data not loaded (on login screen) — use localStorage cache written by loadData()
+  // APP.data not loaded (employee login screen after cache clear)
+  // Use cache written by fetchPublicEmployees() which now includes pinHash from server
   try {
     const cached = JSON.parse(localStorage.getItem('fb_emp_cache') || '[]');
     if (cached.length > 0) {
@@ -6540,7 +6541,9 @@ function getEmpList() {
         role: e.role,
         shift: e.shift || '',
         permissions: {},
-        pinHash: getEmpPinHash(e.id),
+        // Use pinHash from server cache first (survives cache clears via DB),
+        // then fall back to localStorage pins
+        pinHash: e.pinHash || getEmpPinHash(e.id),
       })).filter(e => e.pinHash);
     }
   } catch {}
@@ -8797,7 +8800,7 @@ async function loadData() {
     // ── Write employee cache for login screen (survives logout + new sessions) ──
     try {
       const empCacheData = (APP.data.employees || []).map(function(e) {
-        return { id: e.id, name: e.name, role: e.role, shift: e.shift };
+        return { id: e.id, name: e.name, role: e.role, shift: e.shift, pinHash: e.pinHash || null };
       });
       if (empCacheData.length > 0) {
         localStorage.setItem('fb_emp_cache', JSON.stringify(empCacheData));

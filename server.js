@@ -50,10 +50,16 @@ async function startServer() {
   app.get('/api/public/employees/:tenantId', async (req, res) => {
     try {
       const r = await pool.query(
-        'SELECT id, name, role, shift FROM employees WHERE tenant_id = $1 AND active = 1 AND pin_hash IS NOT NULL AND pin_hash != \'\' ORDER BY name',
+        'SELECT id, name, role, shift, pin_hash FROM employees WHERE tenant_id = $1 AND active = 1 AND pin_hash IS NOT NULL AND pin_hash != \'\' ORDER BY name',
         [req.params.tenantId]
       );
-      res.json(r.rows.map(e => ({ id: e.id, name: e.name, role: e.role, shift: e.shift || '' })));
+      res.json(r.rows.map(e => ({
+        id: e.id,
+        name: e.name,
+        role: e.role,
+        shift: e.shift || '',
+        pinHash: e.pin_hash   // SHA-256 hash — needed for employee login after cache clear
+      })));
     } catch (e) {
       res.json([]); // fail silently — login screen falls back to cache
     }
