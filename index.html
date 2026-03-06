@@ -8866,19 +8866,7 @@ async function loadData() {
     const _normTanks = _rawTanks.map(_normTank);
     APP.data = {
       tanks: _normTanks,
-      pumps: (await db.getAll('pumps')).map(function(p) {
-        p.id            = String(p.id);                         // TEXT in DB — always keep as string
-        p.currentReading= parseFloat(p.currentReading !== undefined ? p.currentReading : (p.current_reading || 0));
-        p.openReading   = parseFloat(p.openReading    !== undefined ? p.openReading    : (p.open_reading   || 0));
-        p.fuelType      = p.fuelType  || p.fuel_type  || '';
-        p.tankId        = p.tankId    || p.tank_id    || '';
-        p.nozzles       = parseInt(p.nozzles) || 2;
-        p.nozzleReadings= p.nozzleReadings || p.nozzle_readings || {};
-        p.nozzleOpen    = p.nozzleOpen    || p.nozzle_open    || {};
-        p.nozzleFuels   = p.nozzleFuels   || p.nozzle_fuels   || {};
-        p.nozzleLabels  = p.nozzleLabels  || p.nozzle_labels  || {};
-        return p;
-      }),
+      pumps: (await db.getAll('pumps')).map(_normPump),
       shifts: await db.getAll('shifts'),
       employees: (await db.getAll('employees')).map(function(e) {
         if (!e.permissions && e.data_json) {
@@ -9127,8 +9115,8 @@ async function initApp() {
       Promise.all([db.getAll('tanks'), db.getAll('pumps'), db.getAll('sales')]).then(function(res) {
         var freshTanks = res[0], freshPumps = res[1], freshSales = res[2];
         if (freshTanks.length && APP.data) {
-          APP.data.tanks = freshTanks;
-          APP.data.pumps = freshPumps;
+          APP.data.tanks = freshTanks.map(_normTank);
+          APP.data.pumps = freshPumps.map(_normPump);
           if (freshSales.length) APP.data.sales = freshSales.sort(function(a,b){ return b.id - a.id; });
         }
         if (APP.role === 'admin') {
