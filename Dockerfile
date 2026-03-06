@@ -24,12 +24,14 @@ USER appuser
 
 # Environment
 ENV NODE_ENV=production
+# PORT is injected by Railway automatically — don't hardcode it
+# Fallback to 3000 for local development only
 ENV PORT=3000
 
 EXPOSE 3000
 
-# Health check so Railway/Docker knows when the app is ready
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3000/api/health', r => { process.exit(r.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1))"
+# Health check — uses $PORT via node process.env.PORT
+HEALTHCHECK --interval=30s --timeout=15s --start-period=60s --retries=5 \
+  CMD node -e "const p=process.env.PORT||3000; require('http').get('http://localhost:'+p+'/api/health', r => { process.exit(r.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1))"
 
 CMD ["node", "server.js"]
