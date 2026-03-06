@@ -19,3 +19,6 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Let Railway generate its own lock file to avoid EINTEGRITY errors
+package-lock.json

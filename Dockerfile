@@ -6,10 +6,12 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 WORKDIR /app
 
 # Copy package files first for better layer caching
-COPY package*.json ./
+COPY package.json ./
 
-# Install production dependencies only
-RUN npm install --production --no-audit --no-fund
+# Install production dependencies — no lock file to avoid EINTEGRITY errors
+# Railway generates a fresh install each build from package.json only
+RUN npm cache clean --force && \
+    npm install --production --no-audit --no-fund --no-package-lock
 
 # Copy application files
 COPY . .
