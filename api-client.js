@@ -173,9 +173,13 @@ class FuelDB {
     this._dbName = dbName;
   }
 
+  // All data routes are mounted at /api/data/* on the server.
+  // apiFetch prepends /api, so we must use /data/storeName here.
+  _path(storeName) { return '/data/' + storeName; }
+
   async getAll(storeName) {
     try {
-      return await apiFetch('/' + storeName);
+      return await apiFetch(this._path(storeName));
     } catch (e) {
       console.warn('[FuelDB] getAll error:', storeName, e.message);
       return [];
@@ -184,9 +188,8 @@ class FuelDB {
 
   async get(storeName, key) {
     try {
-      return await apiFetch('/' + storeName + '/' + encodeURIComponent(key));
+      return await apiFetch(this._path(storeName) + '/' + encodeURIComponent(key));
     } catch (e) {
-      // BUG FIX: only swallow 404 (not found), rethrow real errors
       if (e.message && e.message.includes('404')) return undefined;
       if (e.message === 'Not found') return undefined;
       throw e;
@@ -194,27 +197,27 @@ class FuelDB {
   }
 
   async put(storeName, data) {
-    const result = await apiFetch('/' + storeName, {
+    const result = await apiFetch(this._path(storeName), {
       method: 'PUT',
       body: JSON.stringify(data),
     });
-    return result.id;
+    return result?.id;
   }
 
   async add(storeName, data) {
-    const result = await apiFetch('/' + storeName, {
+    const result = await apiFetch(this._path(storeName), {
       method: 'POST',
       body: JSON.stringify(data),
     });
-    return result.id;
+    return result?.id;
   }
 
   async delete(storeName, key) {
-    await apiFetch('/' + storeName + '/' + encodeURIComponent(key), { method: 'DELETE' });
+    await apiFetch(this._path(storeName) + '/' + encodeURIComponent(key), { method: 'DELETE' });
   }
 
   async clear(storeName) {
-    await apiFetch('/' + storeName, { method: 'DELETE' });
+    await apiFetch(this._path(storeName), { method: 'DELETE' });
   }
 
   async count(storeName) {
@@ -224,10 +227,9 @@ class FuelDB {
 
   async getByIndex(storeName, indexName, value) {
     try {
-      // BUG FIX: convert camelCase index names to snake_case to match DB columns
       const snakeIndex = camelToSnake(indexName);
       return await apiFetch(
-        '/' + storeName + '/by-index/' +
+        this._path(storeName) + '/by-index/' +
         encodeURIComponent(snakeIndex) + '/' +
         encodeURIComponent(value)
       );
@@ -238,10 +240,35 @@ class FuelDB {
   }
 
   async bulkPut(storeName, items) {
-    await apiFetch('/' + storeName + '/bulk', {
+    await apiFetch(this._path(storeName) + '/bulk', {
       method: 'PUT',
       body: JSON.stringify(items),
     });
+  }
+
+  // ── Settings helpers (special route: /data/settings/key/:key) ──────────
+  // getSetting/setSetting must use /key/ prefix because settings table
+  // uses 'key' as primary key, not 'id'. The generic /:store/:id route
+  // looks for WHERE id=? which would fail for settings.
+  async getSetting(key, defaultVal = null) {
+    try {
+      const row = await apiFetch('/data/settings/key/' + encodeURIComponent(key));
+      if (!row || row.value === undefined || row.value === null) return defaultVal;
+      return row.value;
+    } catch (e) {
+      return defaultVal;
+    }
+  }
+
+  async setSetting(key, value) {
+    try {
+      await apiFetch('/data/settings/key/' + encodeURIComponent(key), {
+        method: 'PUT',
+        body: JSON.stringify({ value }),
+      });
+    } catch (e) {
+      console.warn('[FuelDB] setSetting error:', key, e.message);
+    }
   }
 
   async getSetting(key, defaultVal = null) {
