@@ -60,6 +60,42 @@ async function startServer() {
   const authLimiter = rateLimit({ windowMs: 300000, max: 30 });
   app.use('/api/auth', authLimiter, authRoutes(db));
 
+  // ── Settings routes (direct pool.query — bypass PgDbWrapper) ────────────
+  // Registered BEFORE app.use('/api/data',...) to guarantee priority.
+  const { pool: pgPool } = require('./schema');
+
+  app.get('/api/data/settings/key/:key', authMiddleware(db), async (req, res) => {
+    try {
+      const r = await pgPool.query(
+        'SELECT value FROM settings WHERE key = $1 AND tenant_id = $2',
+        [req.params.key, req.tenantId || '']
+      );
+      if (!r.rows[0]) return res.json({ value: null });
+      let val = r.rows[0].value;
+      try { val = JSON.parse(val); } catch {}
+      res.json({ value: val });
+    } catch (e) {
+      console.error('[Settings GET]', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put('/api/data/settings/key/:key', authMiddleware(db), async (req, res) => {
+    const { value } = req.body;
+    const serialized = (value !== null && value !== undefined && typeof value === 'object')
+      ? JSON.stringify(value) : String(value ?? '');
+    try {
+      await pgPool.query(
+        'INSERT INTO settings (key, tenant_id, value, updated_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT (key, tenant_id) DO UPDATE SET value = $3, updated_at = NOW()',
+        [req.params.key, req.tenantId || '', serialized]
+      );
+      res.json({ success: true });
+    } catch (e) {
+      console.error('[Settings PUT]', req.params.key, e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Explicit tenant CRUD routes (authenticated, requireRole super) ───────
   // These are registered BEFORE the generic dataRoutes mounts to avoid
   // any routing ambiguity from double-mounting.

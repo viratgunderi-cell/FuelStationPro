@@ -4061,8 +4061,14 @@ function renderPage() {
     setTimeout(function() {
       db.getAll('tanks').then(function(freshTanks) {
         if (freshTanks.length) {
+          // Normalize server response: current_level → current (handle both old and new server)
+          freshTanks = freshTanks.map(function(ft) {
+            if (ft.current === undefined && ft.current_level !== undefined) ft.current = ft.current_level;
+            if (ft.fuelType === undefined && ft.fuel_type !== undefined) ft.fuelType = ft.fuel_type;
+            return ft;
+          });
           var changed = freshTanks.some(function(ft) {
-            var existing = APP.data.tanks.find(function(t) { return t.id === ft.id; });
+            var existing = APP.data.tanks.find(function(t) { return String(t.id) === String(ft.id); });
             return !existing || existing.current !== ft.current;
           });
           if (changed) {
@@ -5012,16 +5018,6 @@ function savePurchase() {
   closeModal();
   toast(`✅ ${fmt(liters)}L ${fuelInfo.short} purchased — ₹${cur(total)} added to expenses`, 'success');
   renderPage();
-  // Reload tanks from server to confirm the current_level update persisted
-  setTimeout(async () => {
-    try {
-      const fresh = await db.getAll('tanks');
-      if (fresh && fresh.length) {
-        APP.data.tanks = fresh;
-        if (APP.page === 'tanks' || APP.page === 'dashboard') renderPage();
-      }
-    } catch(e) {}
-  }, 1500);
 }
 
 // ── PUMP EDIT — per-nozzle fuel type ─────────────────────────
@@ -7627,7 +7623,7 @@ function showLoginScreen() {
         '<div style="width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent-light));display:grid;place-items:center;font-size:18px">\uD83D\uDD11</div>' +
         '<div><div class="fw-800" style="color:var(--text-0);font-size:16px">Admin / Owner Login</div><div style="font-size:11px;color:var(--text-3)">Full access to management dashboard</div></div>' +
       '</div>' +
-      '<div class="form-group"><label class="form-label">Username</label><input class="form-input" id="adminUser" placeholder="Enter username" autocomplete="off" /></div>' +
+      '<div class="form-group"><label class="form-label">Username</label><input class="form-input" id="adminUser" placeholder="Enter username" autocomplete="username" /></div>' +
       '<div class="form-group"><label class="form-label">Password</label><input class="form-input" id="adminPass" type="password" placeholder="Enter password" autocomplete="current-password" onkeydown="if(event.key===\'Enter\')doAdminLogin()" /></div>' +
       '<button class="btn btn-accent btn-block" style="padding:14px;font-size:14px;margin-top:6px" onclick="doAdminLogin()">\uD83D\uDD10 Login as Admin</button>' +
     '</div>' +
@@ -7644,12 +7640,7 @@ function showLoginScreen() {
     '<div class="login-footer">FuelBunk Pro v3.0 &copy; 2026 &nbsp;·&nbsp; <a href="#" onclick="mt_switchStation();return false;" style="color:var(--accent-light);text-decoration:none;font-weight:600;">🏪 Switch Station</a></div>' +
     '</div></div>';
 
-  setTimeout(function() {
-    var u = document.getElementById('adminUser');
-    var p = document.getElementById('adminPass');
-    if (u) { u.value = ''; u.setAttribute('autocomplete','off'); u.focus(); }
-    if (p) { p.value = ''; p.setAttribute('autocomplete','new-password'); }
-  }, 50);
+  setTimeout(function() { var f = document.getElementById('adminUser'); if (f) f.focus(); }, 300);
 }
 
 function switchLoginTab(tab) {
@@ -8242,15 +8233,37 @@ async function loadData() {
   if (!seeded) await seedDatabase().catch(() => {});
 
   try {
+    const _rawTanks = await db.getAll('tanks');
+    // Normalize server response fields (current_level→current, fuel_type→fuelType)
+    const _normTanks = _rawTanks.map(function(t) {
+      if (t.current === undefined || t.current === null) t.current = t.current_level || 0;
+      if (t.fuelType === undefined) t.fuelType = t.fuel_type || '';
+      if (t.lowAlert === undefined) t.lowAlert = t.low_alert || 500;
+      return t;
+    });
     APP.data = {
-      tanks: await db.getAll('tanks'),
-      pumps: await db.getAll('pumps'),
+      tanks: _normTanks,
+      pumps: (await db.getAll('pumps')).map(function(p) {
+        if (p.currentReading === undefined) p.currentReading = p.current_reading || 0;
+        if (p.fuelType === undefined) p.fuelType = p.fuel_type || '';
+        if (p.tankId === undefined) p.tankId = p.tank_id || '';
+        return p;
+      }),
       shifts: await db.getAll('shifts'),
       employees: await db.getAll('employees'),
       sales: (await db.getAll('sales')).sort((a, b) => b.id - a.id),
-      creditCustomers: await db.getAll('creditCustomers'),
+      creditCustomers: (await db.getAll('creditCustomers')).map(function(c) {
+        if (c.outstanding === undefined) c.outstanding = c.balance || 0;
+        if (c.limit === undefined) c.limit = c.credit_limit || 0;
+        return c;
+      }),
       expenses: (await db.getAll('expenses')).sort((a, b) => b.id - a.id),
-      fuelPurchases: (await db.getAll('fuelPurchases')).sort((a, b) => b.id - a.id),
+      fuelPurchases: (await db.getAll('fuelPurchases')).sort((a, b) => b.id - a.id).map(function(p) {
+        if (p.total === undefined) p.total = p.amount || 0;
+        if (p.invoice === undefined && p.invoiceNo !== undefined) p.invoice = p.invoiceNo;
+        if (p.fuelType === undefined) p.fuelType = p.fuel_type || '';
+        return p;
+      }),
       dipReadings: (await db.getAll('dipReadings')).sort((a, b) => b.id - a.id),
       prices: await db.getSetting('prices') || SEED.prices,
       purchasePrices: await db.getSetting('purchasePrices') || SEED.purchasePrices,

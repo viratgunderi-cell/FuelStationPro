@@ -1,0 +1,12 @@
+# Exclude lock file to prevent EINTEGRITY errors
+package-lock.json
+node_modules/
+.env
+.env.*
+*.local
+*.db
+*.sqlite
+.DS_Store
+.git
+.gitignore
+README.md
