@@ -3541,7 +3541,8 @@ function renderReports(D) {
   const totalStock = D.tanks.reduce((a, t) => a + (t.current || 0), 0);
 
   const todayIso2 = new Date().toISOString().slice(0,10);
-  const todaySalesOnly = D.sales.filter(s => (s.date||'').slice(0,10) === todayIso2);
+  const dsrFilterDate = reportDate || todayIso2;
+  const todaySalesOnly = D.sales.filter(s => (s.date||'').slice(0,10) === dsrFilterDate);
   const totalSoldToday = todaySalesOnly.reduce((a,s) => a + (s.liters||0), 0);
   const openingStock = totalStock + totalSoldToday; // closing stock + what was sold = opening stock
   const todayLiters = totalSoldToday;
@@ -3590,7 +3591,16 @@ function renderReports(D) {
     <div class="page-hdr"><h3>📄 Reports & Analytics</h3></div>
     <div class="g g-2 gap-16 mb-24">
       <div class="card card-pad">
-        <h4 class="mb-16 fw-700" style="color:var(--text-0);font-size:13px">📋 Daily Shift Report (DSR)</h4>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <h4 class="fw-700" style="color:var(--text-0);font-size:13px">📋 Daily Shift Report (DSR)</h4>
+          <div style="display:flex;align-items:center;gap:6px">
+            <button class="btn btn-ghost btn-sm" onclick="reportDate=new Date(new Date(reportDate).getTime()-86400000).toISOString().slice(0,10);renderPage()">&#8249;</button>
+            <input type="date" value="${dsrFilterDate}" onchange="reportDate=this.value;renderPage()"
+              style="background:var(--bg-0);border:1px solid var(--border);border-radius:6px;padding:3px 8px;color:var(--text-1);font-size:12px;cursor:pointer" />
+            <button class="btn btn-ghost btn-sm" onclick="reportDate=new Date(new Date(reportDate).getTime()+86400000).toISOString().slice(0,10);renderPage()">&#8250;</button>
+            ${reportDate!==todayIso2?`<button class="btn btn-ghost btn-sm" onclick="reportDate='${todayIso2}';renderPage()">Today</button>`:''}
+          </div>
+        </div>
         <div class="g" style="grid-template-columns:1fr 1fr;gap:10px">${dsrItems}</div>
         <div style="display:flex;gap:8px;margin-top:16px">
         <button class="btn btn-accent" style="flex:2" onclick="generateDSRReport()">📄 PDF Report</button>
@@ -3989,7 +3999,8 @@ function empInitials(name) { return (name||'').split(' ').map(w=>w[0]).join('').
 function empColor(emp) { return emp.color || EMP_COLORS[(emp.id || 0) % EMP_COLORS.length]; }
 
 let allocShift = 'Morning'; // default — loadData() auto-selects shift with assignments from server
-let allocDate = new Date().toISOString().slice(0,10); // current date for allocation
+let allocDate = new Date().toISOString().slice(0,10);
+let reportDate = new Date().toISOString().slice(0,10); // date filter for Reports DSR // current date for allocation
 
 function loadAllocations() {
   // localStorage allocations are no longer used — server DB is source of truth
@@ -6588,7 +6599,38 @@ let empState = {
 let empSaleFuel = 'petrol', empPayMode = 'cash';
 
 function emp_loadHistory() { try { return JSON.parse(localStorage.getItem('fb_emp_history') || '[]'); } catch { return []; } }
-function emp_saveHistory() { try { localStorage.setItem('fb_emp_history', JSON.stringify(empState.sessionHistory.slice(0, 50))); } catch {} }
+function emp_saveHistory() {
+  try { localStorage.setItem('fb_emp_history', JSON.stringify(empState.sessionHistory.slice(0, 50))); } catch {}
+}
+async function emp_saveHistoryToServer(entry) {
+  try {
+    const tenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
+    if (!tenant || !tenant.id || !entry.employeeId) return;
+    await fetch('/api/public/shift-history/' + encodeURIComponent(tenant.id), {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(entry)
+    }).catch(() => {});
+  } catch(e) {}
+}
+async function emp_loadHistoryFromServer() {
+  try {
+    const tenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
+    const uid = empState.user?.id;
+    if (!tenant || !tenant.id || !uid) return;
+    const resp = await fetch('/api/public/shift-history/' + encodeURIComponent(tenant.id) + '/' + uid);
+    if (!resp.ok) return;
+    const serverHistory = await resp.json();
+    if (Array.isArray(serverHistory) && serverHistory.length > 0) {
+      // Merge with local, deduplicate by timestamp
+      const localTs = new Set(empState.sessionHistory.map(h => h.timestamp));
+      const newEntries = serverHistory.filter(h => !localTs.has(h.timestamp));
+      empState.sessionHistory = [...empState.sessionHistory, ...newEntries]
+        .sort((a,b) => (b.timestamp||0) - (a.timestamp||0)).slice(0, 50);
+      emp_saveHistory();
+      renderPage();
+    }
+  } catch(e) {}
+}
 function emp_loadSession() {
   try {
     const raw = localStorage.getItem('fb_emp_session');
@@ -6716,7 +6758,11 @@ function emp_nozzleRecon(pumpId, nozzle, fuelType) {
 const emp_totalNozzles = () => emp_myNozzleCount();
 
 // ── Employee sub-page navigation ──
-function emp_go(page) { empState.page = page; renderPage(); if (page === 'sales') { setTimeout(() => { emp_refreshNozzles(); }, 50); } }
+function emp_go(page) {
+  if (page === 'history' && empState.user) {
+    // Load server history in background so employee sees all past shifts
+    emp_loadHistoryFromServer().catch(() => {});
+  } empState.page = page; renderPage(); if (page === 'sales') { setTimeout(() => { emp_refreshNozzles(); }, 50); } }
 
 // ── MAIN RENDER ──
 function renderEmployeePortal() {
@@ -7455,6 +7501,18 @@ function emp_recordSale() {
   const customerEl = document.getElementById('empSaleCustomer');
   const customer = customerEl ? customerEl.value.trim() : '';
   if (empPayMode === 'credit' && !customer) { toast('Select a credit customer', 'error'); return; }
+  // ── Credit limit enforcement ──
+  if (empPayMode === 'credit' && customer) {
+    const creditCust = (APP.data?.creditCustomers || []).find(c => c.name === customer);
+    if (creditCust) {
+      const used = creditCust.outstanding || 0;
+      const limit = creditCust.limit || creditCust.credit_limit || 0;
+      if (limit > 0 && (used + amt) > limit) {
+        toast(`Credit limit exceeded! Used: ${cur(used)} / Limit: ${cur(limit)}`, 'error');
+        return;
+      }
+    }
+  }
 
   const sale = {
     id: Date.now(), date: today(), time: emp_time(),
@@ -7491,11 +7549,13 @@ function emp_recordSale() {
     db.add('sales', sale).catch(() => {});
   }
 
-  // ── If credit sale, update customer outstanding balance ──
+  // ── If credit sale, update customer outstanding balance locally ──
   if (empPayMode === 'credit' && sale.customer) {
     const creditCust = APP.data?.creditCustomers?.find(c => c.name === sale.customer);
     if (creditCust) {
       creditCust.outstanding = (creditCust.outstanding || 0) + sale.amount;
+      // Server update happens via /api/public/sale endpoint (already included above)
+      // Auth update as fallback if admin is on same device
       db.put('creditCustomers', creditCust).catch(() => {});
     }
   }
@@ -7657,12 +7717,23 @@ async function emp_submit() {
       tank.current = Math.max(0, tank.current - liters);
       tank.lastDip = emp_today();
       deductLog.push(getFuel(ft).short + ': -' + fmt(liters) + 'L (' + fmt(before) + 'L → ' + fmt(tank.current) + 'L)');
-      tankWritePromises.push(db.put('tanks', _tankForPut(tank)));
+      // Try authenticated path first (same device as admin)
+      tankWritePromises.push(db.put('tanks', _tankForPut(tank)).catch(() => {}));
     }
   }
   if (tankWritePromises.length > 0) {
-    await Promise.all(tankWritePromises).catch(e => console.error('[Tank] Write failed:', e));
+    await Promise.all(tankWritePromises).catch(() => {});
   }
+  // ── Always use public endpoint so tank deduction reaches DB even without auth ──
+  try {
+    const tenantTank = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
+    if (tenantTank && tenantTank.id && Object.keys(tankDeductionsTotalByFuel).length > 0) {
+      await fetch('/api/public/tank-deduct/' + encodeURIComponent(tenantTank.id), {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ deductions: tankDeductionsTotalByFuel })
+      }).catch(e => console.warn('[Tank deduct] server call failed:', e.message));
+    }
+  } catch(e) { console.warn('[Tank deduct] failed:', e); }
   // Broadcast to admin tab
   try { var bc2=new BroadcastChannel('fuelbunk_sync'); bc2.postMessage({type:'EMP_SUBMITTED',deductions:tankDeductionsTotalByFuel,employee:empState.user?empState.user.name:''}); bc2.close(); } catch(e) {}
   console.log('[FuelBunk] Deductions:', JSON.stringify(tankDeductionsTotalByFuel), '| Results:', deductLog.join(', '));
@@ -7709,14 +7780,19 @@ async function emp_submit() {
   }
 
   const submitLiters = emp_totalSold(), submitRev = emp_totalRev();
-  empState.sessionHistory.unshift({
+  const histEntry = {
     date: emp_today(), user: empUser?.name || '',
     liters: submitLiters, revenue: submitRev, salesCount: empState.sales.length,
     openReadings: { ...empState.openReadings }, closeReadings: { ...empState.closeReadings },
     sales: [...empState.sales], dipReadings: [...empState.dipReadings], timestamp: Date.now(),
     mismatches: mismatchEntries,
-  });
-  emp_saveHistory(); empState.active = false; emp_clearSession();
+    employeeId: empUser?.id || 0,
+  };
+  empState.sessionHistory.unshift(histEntry);
+  emp_saveHistory();
+  // Also save to server so history persists across devices and cache clears
+  emp_saveHistoryToServer(histEntry).catch(() => {});
+  empState.active = false; emp_clearSession();
   auditLog('reading_submit', { employee: empUser?.name, liters: submitLiters, revenue: submitRev, salesCount: empState.sales.length, mismatches: mismatchEntries.length });
   const msg = mismatchEntries.length > 0
     ? `Submitted with ${mismatchEntries.length} difference(s) — Admin notified.`
@@ -8007,23 +8083,12 @@ async function doEmpLogin() {
   } catch(e) { console.error('[doEmpLogin] restore error:', e); }
 
   if (!restored) {
-    // Fresh session — pre-fill opening readings from last closing readings stored on pumps
-    // Use APP.data.pumps directly because getEmpPumps() strips nozzleReadings
-    var freshOpenings = {};
-    (APP.data?.pumps || []).forEach(function(p) {
-      var nr = p.nozzleReadings || {};
-      var labels = p.nozzleLabels || (p.nozzles === 1 ? ['A'] : p.nozzles === 2 ? ['A','B'] : ['A','B','C'].slice(0, p.nozzles));
-      labels.forEach(function(n) {
-        var k = emp_key(p.id, n);
-        if (nr[n] !== undefined && nr[n] > 0) freshOpenings[k] = nr[n];
-      });
-    });
+    // Fresh session — openings will be filled from server pump data AFTER fetch below
     empState.user = { id: emp.id, name: emp.name, role: emp.role, permissions: emp.permissions || {} };
     empState.active = true;
-    empState.openReadings = freshOpenings; // last close becomes this shift's open
+    empState.openReadings = {}; // will be filled from server nozzleReadings after fetch
     empState.closeReadings = {}; empState.sales = []; empState.dipReadings = [];
     empState.page = 'readings';
-    console.log('[doEmpLogin] Pre-filled openings from last close:', JSON.stringify(freshOpenings));
   } else {
     // Restore user object with latest data (in case name/perms changed)
     empState.user = { id: emp.id, name: emp.name, role: emp.role, permissions: emp.permissions || {} };
@@ -8049,6 +8114,22 @@ async function doEmpLogin() {
       // Populate APP.data.pumps so EMP_PUMPS returns real pump data
       if (serverPumps && serverPumps.length > 0) {
         APP.data.pumps = serverPumps;
+        // Pre-fill opening readings from server pump nozzleReadings (= previous shift's close)
+        if (!restored && Object.keys(empState.openReadings).length === 0) {
+          var freshOpenings = {};
+          serverPumps.forEach(function(p) {
+            var nr = p.nozzleReadings || {};
+            var labels = p.nozzleLabels || ['A','B'];
+            labels.forEach(function(n) {
+              var k = emp_key(p.id, n);
+              if (nr[n] !== undefined && nr[n] > 0) freshOpenings[k] = nr[n];
+            });
+          });
+          if (Object.keys(freshOpenings).length > 0) {
+            empState.openReadings = freshOpenings;
+            console.log('[doEmpLogin] Pre-filled openings from server:', JSON.stringify(freshOpenings));
+          }
+        }
       }
       // Load allocations so emp_myPumps filters correctly — server only, no localStorage
       // Only update if server has at least one shift with real employee assignments

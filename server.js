@@ -168,6 +168,19 @@ async function startServer() {
           s.employeeId || 0, s.employeeName || (s.employee || '')
         ]
       );
+      // ── If credit sale, update customer outstanding balance ──
+      if ((s.mode || 'cash') === 'credit' && s.customer) {
+        try {
+          await pool.query(
+            `UPDATE credit_customers
+             SET balance = COALESCE(balance, 0) + $1
+             WHERE tenant_id = $2 AND name = $3 AND active = 1`,
+            [s.amount, tenantId, s.customer]
+          );
+        } catch (credErr) {
+          console.warn('[public/sale] credit update failed:', credErr.message);
+        }
+      }
       res.json({ success: true });
     } catch (e) {
       console.error('[public/sale]', e.message);
@@ -374,6 +387,100 @@ async function startServer() {
   // Keep legacy /api/data/* and new /api/* route styles working together.
   app.use('/api/data', authMiddleware(db), dataRoutes(db));
   // NOTE: /api/data is the canonical path — do not add /api/* catch-all to avoid double processing
+
+
+  // ── PUBLIC: Tank deduction after employee shift submit ──────────────────────
+  app.post('/api/public/tank-deduct/:tenantId', async (req, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const { deductions } = req.body; // { petrol: 100, diesel: 200, premium_petrol: 50 }
+      if (!deductions || typeof deductions !== 'object') {
+        return res.status(400).json({ error: 'Missing deductions' });
+      }
+      const today = new Date().toISOString().slice(0, 10);
+      for (const [fuelType, liters] of Object.entries(deductions)) {
+        if (!liters || liters <= 0) continue;
+        await pool.query(
+          `UPDATE tanks
+           SET current_level = GREATEST(0, COALESCE(current_level, 0) - $1),
+               last_dip = $2
+           WHERE tenant_id = $3 AND fuel_type = $4`,
+          [liters, today, tenantId, fuelType]
+        );
+      }
+      res.json({ success: true });
+    } catch (e) {
+      console.error('[public/tank-deduct]', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+
+  // ── PUBLIC: Save employee shift history summary ──────────────────────────────
+  app.post('/api/public/shift-history/:tenantId', async (req, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const h = req.body;
+      if (!h || !h.employeeId || !h.date) {
+        return res.status(400).json({ error: 'Missing required fields' });
+      }
+      // Store in settings table as JSON array keyed by tenantId+employeeId
+      const key = 'shift_history_' + h.employeeId;
+      const existing = await pool.query(
+        "SELECT value FROM settings WHERE key = $1 AND tenant_id = $2",
+        [key, tenantId]
+      );
+      let history = [];
+      if (existing.rows[0]) {
+        try { history = JSON.parse(existing.rows[0].value); } catch {}
+      }
+      // Prepend new entry, keep last 30
+      history.unshift({
+        date: h.date,
+        user: h.user || '',
+        liters: h.liters || 0,
+        revenue: h.revenue || 0,
+        salesCount: h.salesCount || 0,
+        sales: h.sales || [],
+        openReadings: h.openReadings || {},
+        closeReadings: h.closeReadings || {},
+        timestamp: h.timestamp || Date.now(),
+      });
+      history = history.slice(0, 30);
+      if (existing.rows[0]) {
+        await pool.query(
+          "UPDATE settings SET value=$1 WHERE key=$2 AND tenant_id=$3",
+          [JSON.stringify(history), key, tenantId]
+        );
+      } else {
+        await pool.query(
+          "INSERT INTO settings (tenant_id, key, value) VALUES ($1,$2,$3)",
+          [tenantId, key, JSON.stringify(history)]
+        );
+      }
+      res.json({ success: true });
+    } catch (e) {
+      console.error('[public/shift-history]', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── PUBLIC: Get employee shift history ───────────────────────────────────────
+  app.get('/api/public/shift-history/:tenantId/:employeeId', async (req, res) => {
+    try {
+      const key = 'shift_history_' + req.params.employeeId;
+      const r = await pool.query(
+        "SELECT value FROM settings WHERE key=$1 AND tenant_id=$2",
+        [key, req.params.tenantId]
+      );
+      if (!r.rows[0]) return res.json([]);
+      let history = [];
+      try { history = JSON.parse(r.rows[0].value); } catch {}
+      res.json(history);
+    } catch (e) {
+      res.json([]);
+    }
+  });
 
   app.get('*', (req, res) => {
     if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Not found' });
