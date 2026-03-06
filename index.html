@@ -3156,7 +3156,7 @@ function renderStaff(D) {
 
   // Shift tabs
   const shiftTabs = D.shifts.map(s =>
-    `<button class="shift-tab ${allocShift === s.name ? 'active' : ''}" onclick="allocShift='${s.name}';renderPage()">${s.name} <span style="font-size:10px;opacity:0.6;margin-left:3px">${s.start}–${s.end}</span></button>`
+    `<button class="shift-tab ${allocShift === s.name ? 'active' : ''}" onclick="allocShift='${s.name}'; try{localStorage.setItem('fb_alloc_shift',allocShift);}catch{}; renderPage()">${s.name} <span style="font-size:10px;opacity:0.6;margin-left:3px">${s.start}–${s.end}</span></button>`
   ).join('');
   // Date navigation for allocation
   const prevDate = new Date(new Date(allocDate).getTime() - 86400000).toISOString().slice(0,10);
@@ -3987,7 +3987,13 @@ const EMP_COLORS = ['#22c55e','#3b82f6','#a855f7','#f97316','#06b6d4','#eab308',
 function empInitials(name) { return (name||'').split(' ').map(w=>w[0]).join('').toUpperCase(); }
 function empColor(emp) { return emp.color || EMP_COLORS[(emp.id || 0) % EMP_COLORS.length]; }
 
-let allocShift = 'Morning'; // current shift tab on allocation board
+let allocShift = (function() {
+  try {
+    const saved = localStorage.getItem('fb_alloc_shift');
+    if (saved) return saved;
+  } catch {}
+  return 'Morning';
+})();  // restored from localStorage (or default 'Morning')
 let allocDate = new Date().toISOString().slice(0,10); // current date for allocation
 
 function loadAllocations() {
@@ -4001,7 +4007,13 @@ function getDefaultAllocations() {
   };
 }
 let allocations = loadAllocations() || getDefaultAllocations();
-function saveAllocations() { try { localStorage.setItem('fb_allocations', JSON.stringify(allocations)); } catch {} }
+function saveAllocations() {
+  try { localStorage.setItem('fb_allocations', JSON.stringify(allocations)); } catch {}
+  // Also persist to server so allocations survive on different browsers/devices
+  if (window.db && typeof window.db.setSetting === 'function') {
+    window.db.setSetting('allocations', allocations).catch(() => {});
+  }
+}
 
 // ── NAVIGATION ───────────────────────────────────────────────
 const PAGES = [
@@ -6223,6 +6235,8 @@ async function saveEmployeePIN() {
     saveEmpPins(pins);
     const freshEmps = await db.getAll('employees').catch(() => null);
     if (freshEmps && freshEmps.length) APP.data.employees = freshEmps;
+    // Refresh employee cache so login screen picks up new PIN immediately
+    getEmpList(); // triggers cache update
     closeModal();
     toast(`PIN set for ${emp.name}`, 'success');
     renderPage();
@@ -6484,15 +6498,39 @@ function getEmpPinHash(empId) {
 
 // Build EMP_LIST dynamically from APP.data.employees + stored pins
 function getEmpList() {
-  const emps = APP.data?.employees || [];
-  return emps.map(e => ({
-    id: e.id,
-    name: e.name,
-    role: e.role,
-    shift: e.shift,
-    permissions: e.permissions || {},
-    pinHash: getEmpPinHash(e.id),
-  })).filter(e => e.pinHash); // only employees with a PIN set
+  const emps = APP.data?.employees;
+  // When APP.data is loaded, build list from it and cache for login screen
+  if (emps && emps.length > 0) {
+    const list = emps.map(e => ({
+      id: e.id,
+      name: e.name,
+      role: e.role,
+      shift: e.shift,
+      permissions: e.permissions || {},
+      pinHash: getEmpPinHash(e.id),
+    })).filter(e => e.pinHash); // only employees with a PIN set
+    // Cache the basic info (no pinHash) so login screen works after logout
+    try {
+      const cacheData = emps.map(e => ({ id: e.id, name: e.name, role: e.role, shift: e.shift }));
+      localStorage.setItem('fb_emp_cache', JSON.stringify(cacheData));
+    } catch {}
+    return list;
+  }
+  // APP.data not loaded yet (login screen) — use cached employee list
+  try {
+    const cached = JSON.parse(localStorage.getItem('fb_emp_cache') || '[]');
+    if (cached.length > 0) {
+      return cached.map(e => ({
+        id: e.id,
+        name: e.name,
+        role: e.role,
+        shift: e.shift,
+        permissions: {},
+        pinHash: getEmpPinHash(e.id),
+      })).filter(e => e.pinHash);
+    }
+  } catch {}
+  return [];
 }
 
 // EMP_LIST — always reads live from APP.data (reflects admin edits immediately)
@@ -8197,6 +8235,14 @@ async function resetData() {
   for (const s of stores) { await db.clear(s).catch(() => {}); }
   await seedDatabase();
   APP.data = { ...SEED };
+  // Clear cached allocations and employee list (fresh start)
+  try {
+    localStorage.removeItem('fb_allocations');
+    localStorage.removeItem('fb_emp_cache');
+    localStorage.removeItem('fb_alloc_shift');
+  } catch {}
+  allocations = getDefaultAllocations();
+  allocShift = 'Morning';
   closeModal();
   toast('Data reset to demo', 'info');
   renderPage();
@@ -8578,6 +8624,29 @@ async function loadData() {
 
     // Note: empty tanks is valid (fresh install, no tanks added yet)
     // Do NOT wipe sales/employees/pumps just because tanks is empty
+
+    // ── Load allocations from server (survives logout + cross-device) ──────────
+    try {
+      const serverAlloc = await db.getSetting('allocations');
+      if (serverAlloc && typeof serverAlloc === 'object' && Object.keys(serverAlloc).length > 0) {
+        // Merge server allocations (source of truth) with any local-only data
+        const localAlloc = loadAllocations() || {};
+        // Server wins for any overlapping shift keys
+        allocations = Object.assign({}, localAlloc, serverAlloc);
+        saveAllocations(); // sync merged version back to localStorage too
+      } else {
+        // No server data yet — use localStorage as fallback
+        const localAlloc = loadAllocations();
+        if (localAlloc && Object.keys(localAlloc).length > 0) allocations = localAlloc;
+      }
+      // Restore last active shift tab from localStorage
+      try {
+        const savedShift = localStorage.getItem('fb_alloc_shift');
+        if (savedShift) allocShift = savedShift;
+      } catch {}
+    } catch(allocErr) {
+      console.warn('[Alloc] Failed to load from server:', allocErr.message);
+    }
 
     // ── Backfill: ensure every fuel purchase has a matching expense entry ──
     // This handles purchases entered before the auto-expense feature was added
