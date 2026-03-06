@@ -3151,8 +3151,9 @@ function renderStaff(D) {
   const allocKey = allocShift + '_' + allocDate;
   const shiftAlloc = allocations[allocKey] || allocations[allocShift] || {};
   const assignedCount = Object.values(shiftAlloc).filter(v => v && D.employees.some(e => parseInt(e.id) === parseInt(v))).length;
-  const shiftEmps = D.employees.filter(e => (e.shift||'').split(',').map(s=>s.trim()).includes(allocShift));
-  const empOptions = shiftEmps.map(e => `<option value="${e.id}">${e.name} (${e.role})</option>`).join('');
+  // Show ALL employees in dropdown so admin can freely assign anyone to any shift
+  const shiftEmps = D.employees; // used for summary table below
+  const empOptions = D.employees.map(e => `<option value="${e.id}">${e.name} (${e.role})</option>`).join('');
 
   // Shift tabs
   const shiftTabs = D.shifts.map(s =>
@@ -5927,9 +5928,7 @@ function assignNozzle(pumpId, nozzle, empIdStr) {
 }
 
 function removeAlloc(pumpId, nozzle) {
-  const key = allocShift + '_' + allocDate;
   const allocKey = `${String(pumpId)}_${nozzle}`;
-  if (allocations[key]) delete allocations[key][allocKey];
   if (allocations[allocShift]) delete allocations[allocShift][allocKey];
   saveAllocations();
   toast('Assignment removed', 'info');
@@ -5962,8 +5961,9 @@ function openChangeAllocModal(pumpId, nozzle) {
 
 function autoAssignAlloc() {
   const D = APP.data;
-  const shiftEmps = D.employees.filter(e => (e.shift||'').split(',').map(s=>s.trim()).includes(allocShift));
-  if (shiftEmps.length === 0) { toast('No employees in ' + allocShift + ' shift', 'error'); return; }
+  // Use all active employees for auto-assign (not filtered by shift field)
+  const shiftEmps = D.employees.filter(e => e.status !== 'inactive');
+  if (shiftEmps.length === 0) { toast('No employees found', 'error'); return; }
 
   if (!allocations[allocShift]) allocations[allocShift] = {};
   let idx = 0;
@@ -5987,7 +5987,8 @@ function clearShiftAllocConfirm() {
 }
 
 function doClearAlloc() {
-  delete allocations[allocShift]; // fully remove the shift key (not just empty it)
+  const clearedShift = allocShift; // save name before we switch away
+  delete allocations[allocShift];
   saveAllocations();
   // Auto-select next shift with allocations
   const next = Object.keys(allocations).find(sh =>
@@ -5996,7 +5997,7 @@ function doClearAlloc() {
   );
   if (next) allocShift = next;
   closeModal();
-  toast('All allocations cleared for ' + allocShift, 'info');
+  toast('All allocations cleared for ' + clearedShift, 'info');
   renderPage();
 }
 
@@ -7911,7 +7912,7 @@ async function doEmpLogin() {
   var id = parseInt(document.getElementById('empLoginName2').value);
   var pin = document.getElementById('empLoginPin2').value || '';
   var emp = null;
-  for (var i = 0; i < EMP_LIST.length; i++) { if (EMP_LIST[i].id === id) { emp = EMP_LIST[i]; break; } }
+  for (var i = 0; i < EMP_LIST.length; i++) { if (parseInt(EMP_LIST[i].id) === id) { emp = EMP_LIST[i]; break; } }
   if (!emp) { toast('Select employee', 'error'); return; }
   if (!checkRateLimit('emp_' + id)) return;
   var pinHash = await hashPassword(pin);
@@ -7983,8 +7984,16 @@ async function doEmpLogin() {
         APP.data.pumps = serverPumps;
       }
       // Load allocations so emp_myPumps filters correctly — server only, no localStorage
-      if (serverAlloc && typeof serverAlloc === 'object' && Object.keys(serverAlloc).length > 0) {
+      // Only update if server has at least one shift with real employee assignments
+      const serverHasAssignments = serverAlloc && typeof serverAlloc === 'object' &&
+        Object.values(serverAlloc).some(sa => typeof sa === 'object' &&
+          Object.values(sa).some(v => v && parseInt(v) > 0));
+      if (serverHasAssignments) {
         allocations = serverAlloc;
+      } else {
+        // Server has no assignments yet — clear local allocations so emp_myPumps
+        // falls into the "totalAllocations===0 → show all pumps" branch
+        allocations = {};
       }
       // Load prices so sale amounts calculate correctly
       if (serverPrices && typeof serverPrices === 'object') {
