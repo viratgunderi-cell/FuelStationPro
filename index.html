@@ -6061,9 +6061,11 @@ async function saveEditEmployee() {
     // Update audit log
     if (APP.auditLog) APP.auditLog.forEach(a => { if (a.user === oldName) a.user = name; if (a.details?.employee === oldName) a.details.employee = name; });
     // Update shift manager names
-    if (D.shifts) D.shifts.forEach(s => {
-      if (s.manager === oldName) { s.manager = name; try { await db.put('shifts', s); } catch(e) {} }
-    });
+    if (D.shifts) {
+      for (const s of D.shifts) {
+        if (s.manager === oldName) { s.manager = name; try { await db.put('shifts', s); } catch(e) {} }
+      }
+    }
   }
 
   // FIX 7: if shift changed, de-allocate that employee from all nozzles
