@@ -1,0 +1,21 @@
+node_modules/
+npm-debug.log*
+.env
+.env.*
+*.local
+
+# Never commit local DB or session files
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
