@@ -2913,15 +2913,17 @@ function renderTanks(D) {
     const diff = r.reading - r.calculated;
     const diffHtml = diff === 0 ? `<span style="color:var(--green)" class="fw-700">OK</span>` :
       `<span style="color:${diff < 0 ? 'var(--red)' : 'var(--orange)'}" class="fw-700">${diff > 0 ? '+' : ''}${fmt(diff)} L</span>`;
-    const dipTank = D.tanks.find(t => t.id === r.tankId);
+    const dipTank = D.tanks.find(t => parseInt(t.id) === parseInt(r.tankId));
     const dipFuel = dipTank ? getFuel(dipTank.fuelType) : null;
     const tankLabel = dipTank ? `Tank ${r.tankId} <span style="font-size:10px;color:${dipFuel?.color||'var(--text-3)'}">${dipFuel?.short||''}</span>` : `Tank ${r.tankId}`;
     return `<tr><td>${r.date}</td><td class="mono">${r.time}</td><td>${tankLabel}</td><td class="r mono fw-700" style="color:var(--accent-light)">${fmt(r.reading)}</td><td class="r mono" style="color:var(--text-3)">${fmt(r.calculated)}</td><td class="r">${diffHtml}</td></tr>`;
   }).join('');
 
   const purchaseRows = D.fuelPurchases.map(r => {
-    const fuel = getFuel(r.fuelType);
-    return `<tr><td>${r.date}</td><td style="color:${fuel.color}" class="fw-600">${fuel.name}</td><td class="r mono">${fmt(r.liters)}</td><td class="r mono">${cur(r.rate)}</td><td class="r mono fw-700">${cur(r.total)}</td><td class="mono" style="font-size:12px">${r.invoice}</td></tr>`;
+    const ft = r.fuelType || r.fuel_type || '';
+    const fuel = getFuel(ft);
+    const total = r.total || r.amount || (r.liters * r.rate) || 0;
+    return `<tr><td>${r.date}</td><td style="color:${fuel.color}" class="fw-600">${fuel.name}</td><td class="r mono">${fmt(r.liters)}</td><td class="r mono">${cur(r.rate)}</td><td class="r mono fw-700">${cur(total)}</td><td class="mono" style="font-size:12px">${r.invoice||'—'}</td><td class="mono" style="font-size:11px;color:var(--text-3)">${r.supplier||''}</td></tr>`;
   }).join('');
 
   return `
@@ -2940,7 +2942,7 @@ function renderTanks(D) {
     </div>
     <div class="card">
       <div class="card-head"><h4>🚛 Fuel Purchases</h4></div>
-      <div class="card-body"><div class="tbl-wrap"><table><thead><tr><th>Date</th><th>Fuel</th><th class="r">Qty (L)</th><th class="r">Rate/L</th><th class="r">Total</th><th>Invoice</th></tr></thead><tbody>${purchaseRows}</tbody></table></div></div>
+      <div class="card-body"><div class="tbl-wrap"><table><thead><tr><th>Date</th><th>Fuel</th><th class="r">Qty (L)</th><th class="r">Rate/L</th><th class="r">Total</th><th>Invoice</th><th>Supplier</th></tr></thead><tbody>${purchaseRows}</tbody></table></div></div>
     </div>`;
 }
 
@@ -4334,7 +4336,8 @@ async function saveNewTank() {
       lastDip: new Date().toISOString().split('T')[0]
     };
     await db.put('tanks', newTank);
-    APP.data.tanks = await db.getAll('tanks');
+    const freshNew = await db.getAll('tanks');
+    APP.data.tanks = freshNew.map(_normTank);
     closeModal();
     toast(`Tank ${newId} (${getFuel(fuelType).short}, ${fmt(capacity)}L) added`, 'success');
     renderPage();
@@ -4350,7 +4353,7 @@ async function saveNewTank() {
 }
 
 function openEditTankModal(tankId) {
-  const tank = APP.data.tanks.find(t => t.id === tankId);
+  const tank = APP.data.tanks.find(t => parseInt(t.id) === parseInt(tankId));
   if (!tank) return;
   const fuel = getFuel(tank.fuelType);
 
@@ -4439,14 +4442,15 @@ async function saveEditTank(tankId) {
   if (!capacity) { toast('Select capacity', 'error'); return; }
   if (current > capacity) { toast(`Current level (${fmt(current)}L) exceeds new capacity (${fmt(capacity)}L). Reduce current level first.`, 'error'); return; }
 
-  const updatedTank = { id: tankId, fuelType, capacity, current, lastDip: APP.data.tanks.find(t=>t.id===tankId)?.lastDip || '' };
+  const updatedTank = { id: parseInt(tankId), fuelType, capacity, current, lastDip: APP.data.tanks.find(t=>parseInt(t.id)===parseInt(tankId))?.lastDip || '' };
 
   try {
     await db.put('tanks', updatedTank);
-    APP.data.tanks = await db.getAll('tanks');
+    const freshEdited = await db.getAll('tanks');
+    APP.data.tanks = freshEdited.map(_normTank);
   } catch(e) {
-    const idx = APP.data.tanks.findIndex(t => t.id === tankId);
-    if (idx >= 0) APP.data.tanks[idx] = updatedTank;
+    const idx = APP.data.tanks.findIndex(t => parseInt(t.id) === parseInt(tankId));
+    if (idx >= 0) APP.data.tanks[idx] = _normTank(updatedTank);
   }
   closeModal();
   toast(`Tank ${tankId} updated — ${getFuel(fuelType).short}, ${fmt(capacity)}L capacity`, 'success');
@@ -4454,7 +4458,7 @@ async function saveEditTank(tankId) {
 }
 
 function confirmDeleteTank(tankId) {
-  const tank = APP.data.tanks.find(t => t.id === tankId);
+  const tank = APP.data.tanks.find(t => parseInt(t.id) === parseInt(tankId));
   if (!tank) return;
   const fuel = getFuel(tank.fuelType);
   openModal('🗑 Delete Tank',
@@ -4474,15 +4478,15 @@ function confirmDeleteTank(tankId) {
 
 async function deleteTank(tankId) {
   try {
-    // Delete tank
     await db.delete('tanks', tankId);
-    // Also delete dip readings for this tank
-    const dips = (APP.data.dipReadings || []).filter(d => d.tankId !== tankId);
-    APP.data.tanks = await db.getAll('tanks');
-    APP.data.dipReadings = dips;
+    const tid = parseInt(tankId);
+    const freshDeleted = await db.getAll('tanks');
+    APP.data.tanks = freshDeleted.map(_normTank);
+    APP.data.dipReadings = (APP.data.dipReadings || []).filter(d => parseInt(d.tankId) !== tid);
   } catch(e) {
-    APP.data.tanks = APP.data.tanks.filter(t => t.id !== tankId);
-    APP.data.dipReadings = (APP.data.dipReadings || []).filter(d => d.tankId !== tankId);
+    const tid = parseInt(tankId);
+    APP.data.tanks = APP.data.tanks.filter(t => parseInt(t.id) !== tid);
+    APP.data.dipReadings = (APP.data.dipReadings || []).filter(d => parseInt(d.tankId) !== tid);
   }
   closeModal();
   toast(`Tank ${tankId} deleted`, 'success');
@@ -4491,9 +4495,21 @@ async function deleteTank(tankId) {
 
 // ── DIP CHART HELPER ─────────────────────────────────────────
 // Returns: '10K' | '20K' | null
+// ── Normalize a tank object from server (fixes type mismatches) ──
+function _normTank(t) {
+  if (!t) return t;
+  t.id       = parseInt(t.id)       || 0;
+  t.capacity = parseInt(t.capacity) || 0;
+  t.current  = parseFloat(t.current  !== undefined ? t.current  : (t.current_level  || 0));
+  t.fuelType = t.fuelType || t.fuel_type || '';
+  t.lowAlert = parseFloat(t.lowAlert !== undefined ? t.lowAlert : (t.low_alert || 500));
+  if (!t.lastDip) t.lastDip = t.last_dip || '';
+  return t;
+}
+
 function _tankChartType(tank) {
   if (!tank) return null;
-  const cap = Number(tank.capacity);
+  const cap = parseInt(tank.capacity);
   if (cap === 10000) return '10K';
   if (cap === 20000) return '20K';
   return null;
@@ -4602,7 +4618,7 @@ function openDipModal(preselect) {
 
 function onDipTankChange() {
   const tankId = parseInt(document.getElementById('dipTank')?.value);
-  const tank = APP.data.tanks.find(t => t.id === tankId);
+  const tank = APP.data.tanks.find(t => parseInt(t.id) === tankId);
   const ct = _tankChartType(tank);
   const useChart = !!ct;
   const cmR = _cmRange(ct) || { min:1, max:999 };
@@ -4638,9 +4654,9 @@ function updateDipPreview() {
   if (!preview || !volEl) return;
 
   const tankId = parseInt(document.getElementById('dipTank')?.value);
-  const tank = APP.data.tanks.find(t => t.id === tankId);
+  const tank = APP.data.tanks.find(t => parseInt(t.id) === tankId);
   const ct = _tankChartType(tank);
-  const capacity = tank?.capacity || 10000;
+  const capacity = parseInt(tank?.capacity) || 10000;
 
   if (!cm || isNaN(cm)) { preview.style.display = 'none'; return; }
 
@@ -4681,7 +4697,7 @@ function updateDipPreview() {
 
 async function saveDip() {
   const tankId = parseInt(document.getElementById('dipTank').value);
-  const tank = APP.data.tanks.find(t => t.id === tankId);
+  const tank = APP.data.tanks.find(t => parseInt(t.id) === tankId);
   const ct = _tankChartType(tank);
 
   let reading;
@@ -4706,10 +4722,11 @@ async function saveDip() {
   } else {
     reading = parseFloat(document.getElementById('dipReading')?.value);
     if (isNaN(reading) || reading < 0) { toast('Enter valid dip reading', 'error'); return; }
-    if (tank && reading > tank.capacity) { toast('Reading exceeds tank capacity (' + fmt(tank.capacity) + 'L)', 'error'); return; }
+    if (tank && reading > parseInt(tank.capacity)) { toast('Reading exceeds tank capacity (' + fmt(tank.capacity) + 'L)', 'error'); return; }
   }
 
-  if (reading > (tank?.capacity || 99999) * 1.15) {
+  const tankCap = parseInt(tank?.capacity) || 99999;
+  if (reading > tankCap * 1.15) {
     toast('Reading seems too high — check dip measurement', 'error'); return;
   }
 
@@ -4728,13 +4745,7 @@ async function saveDip() {
       await db.put('tanks', tank);
       // Reload tanks from server to confirm persistence
       const freshTanks = await db.getAll('tanks');
-      if (freshTanks && freshTanks.length) {
-        APP.data.tanks = freshTanks.map(ft => {
-          if (ft.current === undefined || ft.current === null) ft.current = ft.current_level || 0;
-          if (ft.fuelType === undefined) ft.fuelType = ft.fuel_type || '';
-          return ft;
-        });
-      }
+      if (freshTanks && freshTanks.length) APP.data.tanks = freshTanks.map(_normTank);
     } catch(e) { console.warn('[Tank dip]', e.message); }
   }
   auditLog('dip_reading', { tankId, reading, method });
@@ -5014,30 +5025,70 @@ async function saveExpense() {
 
 function openPurchaseModal() {
   const fuelOpts = FUEL_TYPES.map(f => `<option value="${f.id}">${f.name}</option>`).join('');
-  openModal('Record Fuel Purchase', `
+  openModal('🚛 Record Fuel Purchase', `
     <div class="form-row">
-      <div class="form-group"><label class="form-label">Fuel Type</label><select class="form-input" id="purchFuel">${fuelOpts}</select></div>
-      <div class="form-group"><label class="form-label">Quantity (L)</label><input class="form-input" id="purchQty" type="number" placeholder="Liters" /></div>
+      <div class="form-group">
+        <label class="form-label">Fuel Type *</label>
+        <select class="form-input" id="purchFuel" onchange="calcPurchTotal()">${fuelOpts}</select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Quantity (Litres) *</label>
+        <input class="form-input" id="purchQty" type="number" min="1" max="25000" step="1" placeholder="e.g. 5000" oninput="calcPurchTotal()" />
+      </div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label class="form-label">Rate per Liter (₹)</label><input class="form-input" id="purchRate" type="number" step="0.01" /></div>
-      <div class="form-group"><label class="form-label">Invoice No.</label><input class="form-input" id="purchInvoice" placeholder="INV-XXXX" /></div>
+      <div class="form-group">
+        <label class="form-label">Rate per Litre (₹) *</label>
+        <input class="form-input" id="purchRate" type="number" min="1" max="300" step="0.01" placeholder="e.g. 94.50" oninput="calcPurchTotal()" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Invoice No.</label>
+        <input class="form-input" id="purchInvoice" placeholder="INV-XXXX (optional)" />
+      </div>
     </div>
-  `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-accent" onclick="savePurchase()">💾 Save</button>`);
+    <div class="form-group">
+      <label class="form-label">Supplier Name (optional)</label>
+      <input class="form-input" id="purchSupplier" placeholder="e.g. IOCL Depot" />
+    </div>
+    <div id="purchTotalPreview" style="display:none;background:rgba(212,148,15,0.08);border:1px solid rgba(212,148,15,0.3);border-radius:10px;padding:14px 16px;margin-top:4px">
+      <div style="font-size:11px;font-weight:700;color:var(--accent-light);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">💰 Purchase Total</div>
+      <div style="font-size:28px;font-weight:900;color:var(--text-0)" id="purchTotalAmt">—</div>
+      <div style="font-size:11px;color:var(--text-3);margin-top:4px" id="purchTotalFml"></div>
+    </div>
+  `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-accent" onclick="savePurchase()">💾 Save Purchase</button>`);
+}
+
+function calcPurchTotal() {
+  const qty  = parseFloat(document.getElementById('purchQty')?.value);
+  const rate = parseFloat(document.getElementById('purchRate')?.value);
+  const prev = document.getElementById('purchTotalPreview');
+  const amt  = document.getElementById('purchTotalAmt');
+  const fml  = document.getElementById('purchTotalFml');
+  if (!prev) return;
+  if (!isNaN(qty) && qty > 0 && !isNaN(rate) && rate > 0) {
+    const total = qty * rate;
+    if (amt) amt.textContent = '₹' + total.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    if (fml) fml.textContent = qty.toLocaleString('en-IN') + ' L × ₹' + rate + '/L';
+    if (prev) prev.style.display = '';
+  } else {
+    if (prev) prev.style.display = 'none';
+  }
 }
 
 async function savePurchase() {
   const fuelType = document.getElementById('purchFuel').value;
   const liters = parseFloat(document.getElementById('purchQty').value);
   const rate = parseFloat(document.getElementById('purchRate').value);
-  const invoice = (document.getElementById('purchInvoice').value || '').trim();
-  if (!fuelType || !['petrol','diesel','premium_petrol'].includes(fuelType)) { toast('Invalid fuel type', 'error'); return; }
-  if (isNaN(liters) || liters <= 0) { toast('Liters must be positive', 'error'); return; }
-  if (liters > 25000) { toast('Purchase cannot exceed 25,000 liters', 'error'); return; }
-  if (isNaN(rate) || rate <= 0) { toast('Rate must be positive', 'error'); return; }
+  const invoice = (document.getElementById('purchInvoice')?.value || '').trim();
+  const supplier = sanitize((document.getElementById('purchSupplier')?.value || '').trim());
+  const validFuels = FUEL_TYPES.map(f => f.id);
+  if (!fuelType || !validFuels.includes(fuelType)) { toast('Select a valid fuel type', 'error'); return; }
+  if (isNaN(liters) || liters <= 0) { toast('Enter quantity in litres', 'error'); return; }
+  if (liters > 25000) { toast('Purchase cannot exceed 25,000 litres', 'error'); return; }
+  if (isNaN(rate) || rate <= 0) { toast('Enter rate per litre', 'error'); return; }
   if (rate > 300) { toast('Rate exceeds ₹300/L limit', 'error'); return; }
-  const total = liters * rate;
-  const purchase = { id: Date.now(), date: today(), fuelType, liters, rate, total, invoice: sanitize(invoice) };
+  const total = Math.round(liters * rate * 100) / 100;
+  const purchase = { id: Date.now(), date: today(), fuelType, liters, rate, total, invoice: sanitize(invoice), supplier };
   APP.data.fuelPurchases.unshift(purchase);
   const fuelInfo = getFuel(fuelType);
   const expEntry = {
@@ -5049,22 +5100,17 @@ async function savePurchase() {
   APP.data.expenses.unshift(expEntry);
   try { await db.add('fuelPurchases', purchase); } catch(e) { console.warn('[Purchase]', e.message); }
   try { await db.add('expenses', expEntry); } catch(e) { console.warn('[Expense]', e.message); }
-  const tank = APP.data.tanks.find(t => t.fuelType === fuelType);
+  const tank = APP.data.tanks.find(t => (t.fuelType || t.fuel_type) === fuelType);
   if (tank) {
-    tank.current = Math.min(tank.capacity, (tank.current || 0) + liters);
+    tank.current = Math.min(parseInt(tank.capacity) || 0, (parseFloat(tank.current) || 0) + liters);
     tank.lastDip = today();
     try {
       await db.put('tanks', tank);
       const freshTanks = await db.getAll('tanks');
-      if (freshTanks && freshTanks.length) {
-        APP.data.tanks = freshTanks.map(function(ft) {
-          if (ft.current === undefined || ft.current === null) ft.current = ft.current_level || 0;
-          if (ft.fuelType === undefined) ft.fuelType = ft.fuel_type || '';
-          if (ft.lowAlert === undefined) ft.lowAlert = ft.low_alert || 500;
-          return ft;
-        });
-      }
-    } catch(e) { console.warn('[Tank]', e.message); }
+      if (freshTanks && freshTanks.length) APP.data.tanks = freshTanks.map(_normTank);
+    } catch(e) { console.warn('[Tank purchase update]', e.message); }
+  } else {
+    console.warn('[Purchase] No tank found for fuelType:', fuelType, '— tanks:', APP.data.tanks.map(t => t.fuelType));
   }
   auditLog('purchase_add', { fuelType, liters, rate, total, invoice });
   closeModal();
@@ -8366,13 +8412,8 @@ async function loadData() {
 
   try {
     const _rawTanks = await db.getAll('tanks');
-    // Normalize server response fields (current_level→current, fuel_type→fuelType)
-    const _normTanks = _rawTanks.map(function(t) {
-      if (t.current === undefined || t.current === null) t.current = t.current_level || 0;
-      if (t.fuelType === undefined) t.fuelType = t.fuel_type || '';
-      if (t.lowAlert === undefined) t.lowAlert = t.low_alert || 500;
-      return t;
-    });
+    // Normalize server response — ensures IDs are ints, all fields camelCase
+    const _normTanks = _rawTanks.map(_normTank);
     APP.data = {
       tanks: _normTanks,
       pumps: (await db.getAll('pumps')).map(function(p) {
