@@ -3188,7 +3188,7 @@ function renderStaff(D) {
 
     const pNozzleFuels = p.nozzleFuels || {};
     const nozzleRows = nLabels.map(n => {
-      const key = `${p.id}_${n}`;
+      const key = `${String(p.id)}_${n}`;
       const empId = shiftAlloc[key];
       const emp = empId ? D.employees.find(e => parseInt(e.id) === parseInt(empId)) : null;
       const isAssigned = !!emp;
@@ -3775,7 +3775,7 @@ window.renderSales = renderSales;
 window.renderCredit = renderCredit;
 // ── Employee Balance Modal — admin review & settle ────────────
 function openEmpBalanceModal(empId) {
-  const emp = APP.data.employees.find(e => e.id === empId);
+  const emp = APP.data.employees.find(e => parseInt(e.id) === parseInt(empId));
   if (!emp) return;
 
   const pending = (emp.balanceEntries || []).filter(b => b.status === 'pending');
@@ -3849,7 +3849,7 @@ function openEmpBalanceModal(empId) {
 }
 
 async function settleEmpBalance(empId, balanceId, method, note) {
-  const emp = APP.data.employees.find(e => e.id === empId);
+  const emp = APP.data.employees.find(e => parseInt(e.id) === parseInt(empId));
   if (!emp || !emp.balanceEntries) return;
 
   const entry = emp.balanceEntries.find(b => b.id === balanceId);
@@ -3871,7 +3871,7 @@ async function settleEmpBalance(empId, balanceId, method, note) {
 }
 
 async function settleAllEmpBalance(empId) {
-  const emp = APP.data.employees.find(e => e.id === empId);
+  const emp = APP.data.employees.find(e => parseInt(e.id) === parseInt(empId));
   if (!emp || !emp.balanceEntries) return;
 
   const pending = emp.balanceEntries.filter(b => b.status === 'pending');
@@ -4000,11 +4000,10 @@ function loadAllocations() {
   try { return JSON.parse(localStorage.getItem('fb_allocations')) || null; } catch { return null; }
 }
 function getDefaultAllocations() {
-  return {
-    Morning: { '1_A':4,'1_B':5,'2_A':4,'2_B':5,'3_A':4,'3_B':5,'4_A':4,'4_B':5,'5_A':5 },
-    Afternoon: { '1_A':6,'1_B':6,'2_A':6,'2_B':6,'3_A':6,'3_B':6,'4_A':6,'4_B':6,'5_A':6 },
-    Night: { '1_A':7,'1_B':7,'2_A':7,'2_B':7,'3_A':7,'3_B':7,'4_A':7,'4_B':7,'5_A':7 },
-  };
+  // Return empty — phantom seed IDs (4,5,6,7) caused all employees to see all pumps.
+  // Fresh install: totalAllocations===0 → emp_myPumps shows all pumps (correct behavior).
+  // Admin must assign nozzles on Staff & Allocation page to restrict access.
+  return {};
 }
 let allocations = loadAllocations() || getDefaultAllocations();
 function saveAllocations() {
@@ -5907,12 +5906,12 @@ function assignNozzle(pumpId, nozzle, empIdStr) {
   const empId = parseInt(empIdStr);
   if (!allocations[allocShift]) allocations[allocShift] = {};
   if (empId) {
-    allocations[allocShift][`${pumpId}_${nozzle}`] = empId;
+    allocations[allocShift][`${String(pumpId)}_${nozzle}`] = empId;
     const emp = APP.data.employees.find(e => parseInt(e.id) === parseInt(empId));
     const pump = APP.data.pumps.find(p => String(p.id) === String(pumpId));
     toast(`${emp?.name} → ${pump?.name} Nozzle ${nozzle}`, 'success');
   } else {
-    delete allocations[allocShift][`${pumpId}_${nozzle}`];
+    delete allocations[allocShift][`${String(pumpId)}_${nozzle}`];
   }
   // Prune stale keys — remove entries for pumps/nozzles that no longer exist
   const validKeys = new Set();
@@ -5933,8 +5932,9 @@ function assignNozzle(pumpId, nozzle, empIdStr) {
 
 function removeAlloc(pumpId, nozzle) {
   const key = allocShift + '_' + allocDate;
-  if (allocations[key]) delete allocations[key][`${pumpId}_${nozzle}`];
-  if (allocations[allocShift]) delete allocations[allocShift][`${pumpId}_${nozzle}`];
+  const allocKey = `${String(pumpId)}_${nozzle}`;
+  if (allocations[key]) delete allocations[key][allocKey];
+  if (allocations[allocShift]) delete allocations[allocShift][allocKey];
   saveAllocations();
   toast('Assignment removed', 'info');
   renderPage();
@@ -5974,7 +5974,7 @@ function autoAssignAlloc() {
   D.pumps.forEach(p => {
     const nLabels = p.nozzleLabels || (p.nozzles === 1 ? ['A'] : ['A','B']);
     nLabels.forEach(n => {
-      allocations[allocShift][`${p.id}_${n}`] = shiftEmps[idx % shiftEmps.length].id;
+      allocations[allocShift][`${String(p.id)}_${n}`] = shiftEmps[idx % shiftEmps.length].id;
       idx++;
     });
   });
@@ -6209,7 +6209,7 @@ async function saveEditEmployee() {
 }
 
 function openSetPINModal(empId) {
-  const emp = APP.data.employees.find(e => e.id === empId);
+  const emp = APP.data.employees.find(e => parseInt(e.id) === parseInt(empId));
   if (!emp) { toast('Employee not found', 'error'); return; }
   const hasPIN = !!getEmpPinHash(empId);
   openModal(`🔑 Set PIN — ${sanitize(emp.name)}`,
@@ -6233,7 +6233,7 @@ async function saveEmployeePIN() {
   const confirm = document.getElementById('confirmPIN')?.value?.trim();
   if (!pin || pin.length !== 4 || !/^\d{4}$/.test(pin)) { toast('PIN must be exactly 4 digits', 'error'); return; }
   if (pin !== confirm) { toast('PINs do not match', 'error'); return; }
-  const emp = APP.data.employees.find(e => e.id === empId);
+  const emp = APP.data.employees.find(e => parseInt(e.id) === parseInt(empId));
   if (!emp) { toast('Employee not found', 'error'); return; }
   try {
     const hash = await sha256(pin);
@@ -6260,7 +6260,7 @@ async function sha256(str) {
 }
 
 function confirmDeleteEmployee(empId) {
-  const emp = APP.data.employees.find(e => e.id === empId);
+  const emp = APP.data.employees.find(e => parseInt(e.id) === parseInt(empId));
   if (!emp) return;
   openModal('🗑 Delete Employee',
     `<div style="text-align:center;padding:20px 0">
@@ -6276,7 +6276,7 @@ function confirmDeleteEmployee(empId) {
 async function deleteEmployee() {
   const empId = parseInt(document.getElementById('deleteEmpId')?.value);
   const D = APP.data;
-  const emp = D.employees.find(e => e.id === empId);
+  const emp = D.employees.find(e => parseInt(e.id) === parseInt(empId));
   if (!emp) return;
   const name = emp.name;
   D.employees = D.employees.filter(e => e.id !== empId);
@@ -6605,18 +6605,22 @@ function emp_myPumps() {
   const myKeys = new Set();
   Object.values(allocations).forEach(shiftAlloc => {
     Object.entries(shiftAlloc).forEach(([key, empId]) => {
-      if (parseInt(empId) === parseInt(uid)) myKeys.add(key);
+      if (parseInt(empId) === parseInt(uid)) {
+        // Normalize key: ensure pumpId part is always a string number
+        const [pid, nozzle] = key.split('_');
+        myKeys.add(`${String(parseInt(pid) || pid)}_${nozzle}`);
+      }
     });
   });
   // If no allocations ever configured (fresh install), show all pumps
-  const totalAllocations = Object.values(allocations).reduce((a, sa) => a + Object.keys(sa).length, 0);
+  const totalAllocations = Object.values(allocations).reduce((a, sa) => a + Object.values(sa).filter(v => v && parseInt(v) > 0).length, 0);
   if (totalAllocations === 0) return EMP_PUMPS;
   // If this specific employee has no allocations yet, return empty (admin must assign)
   if (myKeys.size === 0) return [];
   // Build filtered pump list with only assigned nozzles
   const result = [];
   EMP_PUMPS.forEach(p => {
-    const myNozzles = p.nozzles.filter(n => myKeys.has(emp_key(p.id, n)));
+    const myNozzles = p.nozzles.filter(n => myKeys.has(`${String(p.id)}_${n}`));
     if (myNozzles.length > 0) {
       result.push({ ...p, nozzles: myNozzles });
     }
@@ -7958,18 +7962,8 @@ async function doEmpLogin() {
     if (!empState.page || empState.page === 'login') empState.page = 'readings';
   }
 
-  // Set correct default fuel for this employee's allocation (use emp_myPumps for consistency)
-  var rPumps = emp_myPumps();
-  var rFuels = [];
-  rPumps.forEach(function(p) {
-    (p.nozzles || []).forEach(function(n) {
-      var ft = (p.nozzleFuels || {})[n] || p.fuelType;
-      if (!rFuels.includes(ft)) rFuels.push(ft);
-    });
-  });
-  if (rFuels.length > 0) empSaleFuel = rFuels[0];
-
   // ── Fetch real data from server so employee sees correct pumps/nozzles ───
+  // NOTE: fuel default set AFTER fetch so emp_myPumps uses updated allocations + pumps
   try {
     const tenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
     if (tenant && tenant.id) {
@@ -8003,6 +7997,19 @@ async function doEmpLogin() {
   } catch(fetchErr) {
     console.warn('[empLogin] Failed to fetch public data:', fetchErr.message);
   }
+
+  // Set correct default fuel now that server allocations + pumps are loaded
+  try {
+    var rPumps2 = emp_myPumps();
+    var rFuels2 = [];
+    rPumps2.forEach(function(p) {
+      (p.nozzles || []).forEach(function(n) {
+        var ft = (p.nozzleFuels || {})[n] || p.fuelType;
+        if (!rFuels2.includes(ft)) rFuels2.push(ft);
+      });
+    });
+    if (rFuels2.length > 0) empSaleFuel = rFuels2[0];
+  } catch(_e) {}
 
   emp_saveSession();
   enterApp();
@@ -8725,19 +8732,21 @@ async function loadData() {
         const savedShift = localStorage.getItem('fb_alloc_shift');
         if (savedShift) allocShift = savedShift;
       } catch {}
-      // Prune stale allocation keys (pumps removed from station)
+      // Prune stale allocation keys (pumps removed from station) + empty shift shells
       if (APP.data?.pumps) {
         const validKeys = new Set();
         APP.data.pumps.forEach(p => {
           const labels = p.nozzleLabels || (p.nozzles === 1 ? ['A'] : p.nozzles === 2 ? ['A','B'] : ['A','B','C'].slice(0, p.nozzles));
-          labels.forEach(n => validKeys.add(`${p.id}_${n}`));
+          labels.forEach(n => validKeys.add(`${String(p.id)}_${n}`));
         });
         if (validKeys.size > 0) {
           let pruned = false;
           Object.keys(allocations).forEach(shift => {
+            if (typeof allocations[shift] !== 'object') { delete allocations[shift]; pruned = true; return; }
             Object.keys(allocations[shift]).forEach(key => {
               if (!validKeys.has(key)) { delete allocations[shift][key]; pruned = true; }
             });
+            if (Object.keys(allocations[shift]).length === 0) { delete allocations[shift]; pruned = true; }
           });
           if (pruned) saveAllocations();
         }
@@ -8975,7 +8984,7 @@ async function saveMyPassword() {
 }
 
 function openResetEmployeePasswordModal(empId) {
-  const emp = APP.data.employees.find(e => e.id === empId);
+  const emp = APP.data.employees.find(e => parseInt(e.id) === parseInt(empId));
   if (!emp) return;
   openModal(`🔑 Reset PIN — ${sanitize(emp.name)}`,
     `<div style="margin-bottom:12px;font-size:12px;color:var(--text-2);padding:10px;background:var(--bg-0);border-radius:8px">
@@ -8999,7 +9008,7 @@ async function doResetEmployeePin() {
   const conf = document.getElementById('confEmpPIN')?.value?.trim();
   if (!pin || pin.length !== 4 || !/^\d{4}$/.test(pin)) { toast('PIN must be exactly 4 digits', 'error'); return; }
   if (pin !== conf) { toast('PINs do not match', 'error'); return; }
-  const emp = APP.data.employees.find(e => e.id === empId);
+  const emp = APP.data.employees.find(e => parseInt(e.id) === parseInt(empId));
   if (!emp) { toast('Employee not found', 'error'); return; }
   try {
     const hash = await sha256(pin);

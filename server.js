@@ -85,14 +85,17 @@ async function startServer() {
       const pumps = r.rows.map(row => {
         let d = {};
         try { d = JSON.parse(row.data_json || '{}'); } catch {}
-        const nozzles = d.nozzleLabels || ['A', 'B'];
+        // Return nozzleLabels as array AND nozzles as integer count
+        // getEmpPumps() in client checks p.nozzleLabels first, then falls back to integer p.nozzles
+        const nozzleLabels = d.nozzleLabels || ['A', 'B'];
         const nozzleFuels = d.nozzleFuels || {};
         const nozzleReadings = d.nozzleReadings || {};
         return {
-          id: row.id,
+          id: String(row.id),
           name: row.name,
           fuelType: row.fuel_type,
-          nozzles: nozzles,
+          nozzles: nozzleLabels.length,       // integer count — used by getEmpPumps fallback
+          nozzleLabels: nozzleLabels,          // explicit array — used by getEmpPumps primary path
           nozzleFuels: nozzleFuels,
           nozzleReadings: nozzleReadings,
         };
