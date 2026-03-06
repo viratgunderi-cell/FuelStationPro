@@ -43,6 +43,19 @@ async function startServer() {
     res.json({ status: 'ok', database: 'postgresql', uptime: process.uptime() });
   });
 
+  // ── PUBLIC: employee names for login screen (no auth required, no PINs) ─
+  app.get('/api/public/employees/:tenantId', async (req, res) => {
+    try {
+      const r = await pool.query(
+        'SELECT id, name, role, shift FROM employees WHERE tenant_id = $1 AND active = 1 AND pin_hash IS NOT NULL AND pin_hash != \'\' ORDER BY name',
+        [req.params.tenantId]
+      );
+      res.json(r.rows.map(e => ({ id: e.id, name: e.name, role: e.role, shift: e.shift || '' })));
+    } catch (e) {
+      res.json([]); // fail silently — login screen falls back to cache
+    }
+  });
+
   // Public tenant list aliases (supports both legacy and new frontend clients)
   const listTenantsPublic = async (req, res) => {
     try {

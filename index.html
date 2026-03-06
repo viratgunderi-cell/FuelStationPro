@@ -7769,6 +7769,34 @@ function clearSession() {
   clearTimeout(idleTimer);
 }
 
+async function fetchPublicEmployees() {
+  // Fetch employee names from public endpoint (no auth required)
+  // Used to populate employee login dropdown even after localStorage is cleared
+  try {
+    const tenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
+    if (!tenant || !tenant.id) return;
+    const resp = await fetch('/api/public/employees/' + encodeURIComponent(tenant.id));
+    if (!resp.ok) return;
+    const emps = await resp.json();
+    if (Array.isArray(emps) && emps.length > 0) {
+      // Update cache
+      try { localStorage.setItem('fb_emp_cache', JSON.stringify(emps)); } catch {}
+      // Refresh the employee dropdown if it's currently visible
+      const sel = document.getElementById('empLoginName2') || document.getElementById('empLoginName');
+      if (sel) {
+        const currentVal = sel.value;
+        sel.innerHTML = emps.map(e =>
+          '<option value="' + e.id + '">' + sanitize(e.name) + ' — ' + sanitize(e.role) + '</option>'
+        ).join('');
+        if (currentVal) sel.value = currentVal;
+        // Remove the "No employees" message if present
+        const noEmpMsg = document.getElementById('noEmpMsg');
+        if (noEmpMsg) noEmpMsg.style.display = 'none';
+      }
+    }
+  } catch {}
+}
+
 function showLoginScreen() {
   // Hide app shell
   document.getElementById('sidebar').style.display = 'none';
@@ -7825,6 +7853,8 @@ function showLoginScreen() {
     '<div class="login-footer">FuelBunk Pro v3.0 &copy; 2026 &nbsp;·&nbsp; <a href="#" onclick="mt_switchStation();return false;" style="color:var(--accent-light);text-decoration:none;font-weight:600;">🏪 Switch Station</a></div>' +
     '</div></div>';
 
+  // Fetch employee list from server in background (refreshes dropdown even after cache clear)
+  setTimeout(fetchPublicEmployees, 100);
   setTimeout(function() { var f = document.getElementById('adminUser'); if (f) f.focus(); }, 300);
 }
 
@@ -7833,6 +7863,8 @@ function switchLoginTab(tab) {
   document.getElementById('ltEmp').className = 'login-tab' + (tab === 'employee' ? ' active' : '');
   document.getElementById('adminLoginForm').style.display = tab === 'admin' ? '' : 'none';
   document.getElementById('empLoginForm').style.display = tab === 'employee' ? '' : 'none';
+  // Re-fetch employee list when user opens the employee tab
+  if (tab === 'employee') fetchPublicEmployees();
 }
 
 async function doAdminLogin() {
