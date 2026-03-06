@@ -6540,7 +6540,7 @@ function getEmpList() {
         name: e.name,
         role: e.role,
         shift: e.shift || '',
-        permissions: {},
+        permissions: e.permissions || {},
         // Use pinHash from server cache first (survives cache clears via DB),
         // then fall back to localStorage pins
         pinHash: e.pinHash || getEmpPinHash(e.id),
@@ -7453,9 +7453,24 @@ function emp_recordSale() {
   empState.sales.unshift(sale);
   emp_saveSession();
 
-  // ── Save to admin APP.data.sales + IndexedDB (shows in Sales History) ──
+  // ── Save to admin APP.data.sales + server DB via public endpoint ──
   if (APP.data?.sales) APP.data.sales.unshift(sale);
-  db.add('sales', sale).catch(() => {});
+  // Use public endpoint so sale reaches server DB even when employee has no auth token
+  try {
+    const tenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
+    if (tenant && tenant.id) {
+      fetch('/api/public/sale/' + encodeURIComponent(tenant.id), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sale)
+      }).catch(err => console.warn('[emp sale] Server save failed:', err.message));
+    } else {
+      // Fallback: try authenticated route (same device as admin)
+      db.add('sales', sale).catch(() => {});
+    }
+  } catch(e) {
+    db.add('sales', sale).catch(() => {});
+  }
 
   // ── If credit sale, update customer outstanding balance ──
   if (empPayMode === 'credit' && sale.customer) {
@@ -7599,6 +7614,16 @@ async function emp_submit() {
       if (adminPump.nozzleReadings && Object.keys(adminPump.nozzleReadings).length) {
         adminPump.currentReading = Object.values(adminPump.nozzleReadings).reduce((a, v) => a + v, 0);
       }
+      // Save pump reading via public endpoint so it persists regardless of auth state
+      try {
+        const tenant2 = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
+        if (tenant2 && tenant2.id) {
+          fetch('/api/public/reading/' + encodeURIComponent(tenant2.id), {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ pumpId: adminPump.id, nozzleReadings: adminPump.nozzleReadings || {} })
+          }).catch(() => {});
+        }
+      } catch(e) {}
       db.put('pumps', _pumpForPut(adminPump)).catch(() => {});
     }
   });
@@ -7922,6 +7947,26 @@ async function doEmpLogin() {
   if (pinHash !== emp.pinHash) { recordFailedLogin('emp_' + id); toast('Incorrect PIN.', 'error'); return; }
   recordSuccessLogin('emp_' + id);
   APP.loggedIn = true; APP.role = 'employee'; saveSession();
+
+  // ── Get JWT token so employee can write to server DB (sales, readings) ──
+  // Without a token, all db.add/db.put calls fail silently with 401
+  try {
+    const tenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
+    if (tenant && tenant.id) {
+      const tokenResult = await AuthAPI.employeeLogin(pin, tenant.id).catch(() => null);
+      if (tokenResult && tokenResult.token) {
+        // Token is set in api-client via setAuthToken() inside AuthAPI.employeeLogin
+        // Also refresh this employee's permissions from server response
+        if (tokenResult.employeeId) {
+          const freshPerms = tokenResult.permissions || emp.permissions || {};
+          emp = { ...emp, permissions: freshPerms };
+        }
+      }
+    }
+  } catch(tokenErr) {
+    console.warn('[doEmpLogin] Token fetch failed:', tokenErr.message);
+    // Continue — employee can still use cached data even without token
+  }
 
   // Try to restore existing session for this employee (re-login during same shift)
   var restored = false;
@@ -8800,7 +8845,7 @@ async function loadData() {
     // ── Write employee cache for login screen (survives logout + new sessions) ──
     try {
       const empCacheData = (APP.data.employees || []).map(function(e) {
-        return { id: e.id, name: e.name, role: e.role, shift: e.shift, pinHash: e.pinHash || null };
+        return { id: e.id, name: e.name, role: e.role, shift: e.shift, pinHash: e.pinHash || null, permissions: e.permissions || {} };
       });
       if (empCacheData.length > 0) {
         localStorage.setItem('fb_emp_cache', JSON.stringify(empCacheData));

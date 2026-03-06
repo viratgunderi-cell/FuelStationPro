@@ -50,16 +50,18 @@ async function startServer() {
   app.get('/api/public/employees/:tenantId', async (req, res) => {
     try {
       const r = await pool.query(
-        'SELECT id, name, role, shift, pin_hash FROM employees WHERE tenant_id = $1 AND active = 1 AND pin_hash IS NOT NULL AND pin_hash != \'\' ORDER BY name',
+        'SELECT id, name, role, shift, pin_hash, data_json FROM employees WHERE tenant_id = $1 AND active = 1 AND pin_hash IS NOT NULL AND pin_hash != \'\' ORDER BY name',
         [req.params.tenantId]
       );
-      res.json(r.rows.map(e => ({
-        id: e.id,
-        name: e.name,
-        role: e.role,
-        shift: e.shift || '',
-        pinHash: e.pin_hash   // SHA-256 hash — needed for employee login after cache clear
-      })));
+      res.json(r.rows.map(e => {
+        let permissions = {};
+        try { const d = JSON.parse(e.data_json || '{}'); permissions = d.permissions || {}; } catch {}
+        return {
+          id: e.id, name: e.name, role: e.role, shift: e.shift || '',
+          pinHash: e.pin_hash,   // SHA-256 hash — needed for employee login after cache clear
+          permissions             // portal permissions (dip, credit, etc.)
+        };
+      }));
     } catch (e) {
       res.json([]); // fail silently — login screen falls back to cache
     }
@@ -138,6 +140,64 @@ async function startServer() {
       res.json(r.rows.map(c => ({ id: c.id, name: c.name, limit: parseFloat(c.credit_limit)||0, outstanding: parseFloat(c.balance)||0 })));
     } catch (e) {
       res.json([]);
+    }
+  });
+
+  // ── PUBLIC: employee sale submission (no auth — validated by tenantId) ──────
+  app.post('/api/public/sale/:tenantId', async (req, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const s = req.body;
+      if (!s || !s.fuelType || !s.liters || !s.amount) {
+        return res.status(400).json({ error: 'Missing required sale fields' });
+      }
+      await pool.query(
+        `INSERT INTO sales
+          (tenant_id, date, time, fuel_type, liters, amount, mode, pump, nozzle,
+           vehicle, customer, shift, employee, employee_id, employee_name)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+        [
+          tenantId,
+          s.date || new Date().toISOString().slice(0,10),
+          s.time || new Date().toTimeString().slice(0,8),
+          s.fuelType, s.liters, s.amount,
+          s.mode || 'cash',
+          String(s.pump || ''), s.nozzle || 'A',
+          s.vehicle || '', s.customer || '',
+          s.shift || 'Employee',
+          s.employee || '', s.employeeId || 0, s.employeeName || ''
+        ]
+      );
+      res.json({ success: true });
+    } catch (e) {
+      console.error('[public/sale]', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── PUBLIC: employee pump reading update (no auth) ──────────────────────
+  app.post('/api/public/reading/:tenantId', async (req, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const { pumpId, nozzleReadings } = req.body;
+      if (!pumpId || !nozzleReadings) return res.status(400).json({ error: 'Missing fields' });
+      // Get current pump data_json and merge readings
+      const r = await pool.query(
+        'SELECT data_json FROM pumps WHERE tenant_id=$1 AND id=$2',
+        [tenantId, String(pumpId)]
+      );
+      if (!r.rows[0]) return res.status(404).json({ error: 'Pump not found' });
+      let d = {};
+      try { d = JSON.parse(r.rows[0].data_json || '{}'); } catch {}
+      d.nozzleReadings = { ...(d.nozzleReadings || {}), ...nozzleReadings };
+      await pool.query(
+        'UPDATE pumps SET data_json=$1 WHERE tenant_id=$2 AND id=$3',
+        [JSON.stringify(d), tenantId, String(pumpId)]
+      );
+      res.json({ success: true });
+    } catch (e) {
+      console.error('[public/reading]', e.message);
+      res.status(500).json({ error: e.message });
     }
   });
 
