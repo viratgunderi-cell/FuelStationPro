@@ -7718,33 +7718,46 @@ async function emp_submit() {
       });
     }
 
-    // Update pump aggregate currentReading
-    if (adminPump) {
-      if (adminPump.nozzleReadings && Object.keys(adminPump.nozzleReadings).length) {
-        adminPump.currentReading = Object.values(adminPump.nozzleReadings).reduce((a, v) => a + v, 0);
-      }
-      // Save pump reading via public endpoint so it persists regardless of auth state
+    // ── Save pump readings to server (always, using empState data directly) ──
+    // Build nozzleReadings from empState.closeReadings (the actual meter values employee entered)
+    const nozzleReadingsForServer = {};
+    const nozzleOpenForServer = {};
+    let hasAnyReading = false;
+    (pump.nozzleLabels || pump.nozzles || ['A','B']).forEach ? 
+      (pump.nozzleLabels || ['A','B']).forEach(n => {
+        const k = emp_key(pump.id, n);
+        if (empState.closeReadings[k] !== undefined && empState.closeReadings[k] !== '') {
+          nozzleReadingsForServer[n] = parseFloat(empState.closeReadings[k]) || 0;
+          hasAnyReading = true;
+        }
+        if (empState.openReadings[k] !== undefined && empState.openReadings[k] !== '') {
+          nozzleOpenForServer[n] = parseFloat(empState.openReadings[k]) || 0;
+        }
+      }) : null;
+
+    if (hasAnyReading) {
       try {
         const tenant2 = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
         if (tenant2 && tenant2.id) {
-          // Build nozzleOpen map from empState.openReadings for this pump
-          const nozzleOpenForPump = {};
-          (pump.nozzleLabels || ['A','B']).forEach(n => {
-            const k = emp_key(pump.id, n);
-            if (empState.openReadings[k] !== undefined) {
-              nozzleOpenForPump[n] = parseFloat(empState.openReadings[k]) || 0;
-            }
-          });
           fetch('/api/public/reading/' + encodeURIComponent(tenant2.id), {
             method: 'POST', headers: {'Content-Type':'application/json'},
             body: JSON.stringify({
-              pumpId: adminPump.id,
-              nozzleReadings: adminPump.nozzleReadings || {},
-              nozzleOpen: nozzleOpenForPump
+              pumpId: String(pump.id),
+              nozzleReadings: nozzleReadingsForServer,
+              nozzleOpen: nozzleOpenForServer
             })
-          }).catch(() => {});
+          }).catch(e => console.warn('[emp reading] save failed:', e.message));
         }
-      } catch(e) {}
+      } catch(e) { console.warn('[emp reading]', e); }
+    }
+
+    // Update adminPump if available (same device as admin)
+    if (adminPump) {
+      Object.assign(adminPump.nozzleReadings = adminPump.nozzleReadings || {}, nozzleReadingsForServer);
+      if (Object.keys(adminPump.nozzleReadings).length) {
+        adminPump.currentReading = Object.values(adminPump.nozzleReadings).reduce((a, v) => a + v, 0);
+        adminPump.openReading = Object.values(nozzleOpenForServer).reduce((a,v)=>a+(parseFloat(v)||0),0);
+      }
       db.put('pumps', _pumpForPut(adminPump)).catch(() => {});
     }
   });

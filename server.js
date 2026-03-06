@@ -193,7 +193,8 @@ async function startServer() {
     try {
       const tenantId = req.params.tenantId;
       const { pumpId, nozzleReadings } = req.body;
-      if (!pumpId || !nozzleReadings) return res.status(400).json({ error: 'Missing fields' });
+      if (!pumpId) return res.status(400).json({ error: 'Missing pumpId' });
+      if (!nozzleReadings) nozzleReadings = {};
       // Get current pump data_json and merge readings
       const r = await pool.query(
         'SELECT data_json FROM pumps WHERE tenant_id=$1 AND id=$2',
