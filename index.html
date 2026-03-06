@@ -3144,7 +3144,8 @@ function renderCredit(D) {
 function renderStaff(D) {
   const payroll = D.employees.reduce((a, e) => a + e.salary, 0);
   const totalNozzles = D.pumps.reduce((a, p) => a + (p.nozzleLabels || ['A','B']).length, 0);
-  const shiftAlloc = allocations[allocShift] || {};
+  const allocKey = allocShift + '_' + allocDate;
+  const shiftAlloc = allocations[allocKey] || allocations[allocShift] || {};
   const assignedCount = Object.values(shiftAlloc).filter(v => v).length;
   const shiftEmps = D.employees.filter(e => (e.shift||'').split(',').map(s=>s.trim()).includes(allocShift));
   const empOptions = shiftEmps.map(e => `<option value="${e.id}">${e.name} (${e.role})</option>`).join('');
@@ -3153,6 +3154,21 @@ function renderStaff(D) {
   const shiftTabs = D.shifts.map(s =>
     `<button class="shift-tab ${allocShift === s.name ? 'active' : ''}" onclick="allocShift='${s.name}';renderPage()">${s.name} <span style="font-size:10px;opacity:0.6;margin-left:3px">${s.start}–${s.end}</span></button>`
   ).join('');
+  // Date navigation for allocation
+  const prevDate = new Date(new Date(allocDate).getTime() - 86400000).toISOString().slice(0,10);
+  const nextDate = new Date(new Date(allocDate).getTime() + 86400000).toISOString().slice(0,10);
+  const todayIsoAlloc = new Date().toISOString().slice(0,10);
+  const allocDateLabel = allocDate === todayIsoAlloc ? 'Today' : new Date(allocDate).toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short'});
+  const dateNavHTML = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+    <button class="btn btn-ghost btn-sm" onclick="allocDate='${prevDate}';renderPage()">&#8249;</button>
+    <div style="display:flex;align-items:center;gap:6px;flex:1">
+      <span style="font-weight:700;font-size:13px;color:var(--text-1)">${allocDateLabel}</span>
+      <input type="date" value="${allocDate}" onchange="allocDate=this.value;renderPage()"
+        style="background:var(--bg-0);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text-1);font-size:12px;cursor:pointer" />
+    </div>
+    <button class="btn btn-ghost btn-sm" onclick="allocDate='${nextDate}';renderPage()">&#8250;</button>
+    ${allocDate !== todayIsoAlloc ? `<button class="btn btn-ghost btn-sm" onclick="allocDate='${todayIsoAlloc}';renderPage()">Today</button>` : ''}
+  </div>`;
 
   // Fuel info helper
   const fuelInfo = {
@@ -3536,16 +3552,19 @@ function renderReports(D) {
   ].map(i => `<div class="dbox"><div class="dbox-label">${i.l}</div><div class="dbox-value mono" style="font-size:14px;${i.cls || ''}">${i.v}</div></div>`).join('');
 
   const reports = [
-    { n: 'Monthly P&L Statement', d: 'Revenue, COGS, expenses, net profit', fn: 'generatePLReport()' },
-    { n: 'Daily Shift Report', d: 'Complete DSR with pump readings', fn: 'generateDSRReport()' },
-    { n: 'Credit Outstanding', d: 'Customer-wise aging report', fn: 'generateCreditReport()' },
-    { n: 'Tank Reconciliation', d: 'Dip vs book stock variance', fn: 'generateTankReport()' },
-    { n: 'Pump Sales Report', d: 'Per-pump meter & sales data', fn: 'generatePumpReport()' },
-    { n: 'GST Summary', d: 'Tax computation for filing', fn: 'generateGSTReport()' },
-    { n: 'Employee Shift Report', d: 'Monthly attendance & shift history per employee', fn: 'generateShiftReport()' },
-  ].map(r => `<div class="flex-between" style="padding:12px 0;border-bottom:1px solid var(--border-light)">
+    { n: 'Monthly P&L Statement', d: 'Revenue, COGS, expenses, net profit', fn: 'generatePLReport()', csv: 'exportPLCSV()' },
+    { n: 'Daily Shift Report', d: 'Complete DSR with pump readings', fn: 'generateDSRReport()', csv: 'exportDSRCSV()' },
+    { n: 'Credit Outstanding', d: 'Customer-wise aging report', fn: 'generateCreditReport()', csv: 'exportCreditCSV()' },
+    { n: 'Tank Reconciliation', d: 'Dip vs book stock variance', fn: 'generateTankReport()', csv: 'exportDipCSV()' },
+    { n: 'Pump Sales Report', d: 'Per-pump meter & sales data', fn: 'generatePumpReport()', csv: 'exportPumpCSV()' },
+    { n: 'GST Summary', d: 'Tax computation for filing', fn: 'generateGSTReport()', csv: 'exportGSTCSV()' },
+    { n: 'Employee Shift Report', d: 'Monthly attendance & shift history per employee', fn: 'generateShiftReport()', csv: 'exportShiftCSV()' },
+  ].map(r => `<div class="flex-between" style="padding:10px 0;border-bottom:1px solid var(--border-light)">
     <div><div class="fw-600" style="font-size:13px;color:var(--text-1)">${r.n}</div><div style="font-size:11px;color:var(--text-3)">${r.d}</div></div>
-    <button class="btn btn-ghost btn-sm" onclick="${r.fn}">📄 Generate</button>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-ghost btn-sm" onclick="${r.fn}" style="font-size:11px">📄 PDF</button>
+      <button class="btn btn-ghost btn-sm" onclick="${r.csv}" style="font-size:11px;color:var(--green)">📊 Excel</button>
+    </div>
   </div>`).join('');
 
   const creditPct = totalRevenue ? ((D.sales.filter(s => s.mode === 'credit').reduce((a, s) => a + s.amount, 0) / totalRevenue) * 100).toFixed(1) : 0;
@@ -3568,7 +3587,10 @@ function renderReports(D) {
       <div class="card card-pad">
         <h4 class="mb-16 fw-700" style="color:var(--text-0);font-size:13px">📋 Daily Shift Report (DSR)</h4>
         <div class="g" style="grid-template-columns:1fr 1fr;gap:10px">${dsrItems}</div>
-        <button class="btn btn-accent btn-block mt-16" onclick="generateDSRReport()">📄 Generate Full DSR</button>
+        <div style="display:flex;gap:8px;margin-top:16px">
+        <button class="btn btn-accent" style="flex:2" onclick="generateDSRReport()">📄 PDF Report</button>
+        <button class="btn btn-ghost" style="flex:1;font-size:12px;color:var(--green)" onclick="exportDSRCSV()">📊 Excel</button>
+      </div>
       </div>
       <div class="card card-pad">
         <h4 class="mb-16 fw-700" style="color:var(--text-0);font-size:13px">⚡ Quick Reports</h4>
@@ -3628,6 +3650,7 @@ function renderSettings(D) {
       <div class="card card-pad">
         <h4 class="mb-16 fw-700" style="color:var(--text-0);font-size:13px">🏢 Station Information</h4>
         ${info}
+        <button class="btn btn-ghost btn-block mt-12" onclick="openChangeMyPasswordModal()" style="font-size:12px">🔑 Change My Password</button>
       </div>
     </div>
     <div class="g g-2 gap-16">
@@ -3961,6 +3984,7 @@ function empInitials(name) { return (name||'').split(' ').map(w=>w[0]).join('').
 function empColor(emp) { return emp.color || EMP_COLORS[(emp.id || 0) % EMP_COLORS.length]; }
 
 let allocShift = 'Morning'; // current shift tab on allocation board
+let allocDate = new Date().toISOString().slice(0,10); // current date for allocation
 
 function loadAllocations() {
   try { return JSON.parse(localStorage.getItem('fb_allocations')) || null; } catch { return null; }
@@ -4061,7 +4085,7 @@ function renderPage() {
     setTimeout(function() {
       db.getAll('tanks').then(function(freshTanks) {
         if (freshTanks.length) {
-          // Normalize server response: current_level → current (handle both old and new server)
+          // Normalize server response: current_level → current
           freshTanks = freshTanks.map(function(ft) {
             if (ft.current === undefined && ft.current_level !== undefined) ft.current = ft.current_level;
             if (ft.fuelType === undefined && ft.fuel_type !== undefined) ft.fuelType = ft.fuel_type;
@@ -4978,7 +5002,7 @@ function openPurchaseModal() {
   `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-accent" onclick="savePurchase()">💾 Save</button>`);
 }
 
-function savePurchase() {
+async function savePurchase() {
   const fuelType = document.getElementById('purchFuel').value;
   const liters = parseFloat(document.getElementById('purchQty').value);
   const rate = parseFloat(document.getElementById('purchRate').value);
@@ -4991,28 +5015,32 @@ function savePurchase() {
   const total = liters * rate;
   const purchase = { id: Date.now(), date: today(), fuelType, liters, rate, total, invoice: sanitize(invoice) };
   APP.data.fuelPurchases.unshift(purchase);
-  db.add('fuelPurchases', purchase).catch(() => {});
-
-  // Auto-create expense register entry for this fuel purchase
   const fuelInfo = getFuel(fuelType);
   const expEntry = {
-    id: Date.now() + 1,
-    date: today(),
-    category: 'Fuel Purchase',
+    id: Date.now() + 1, date: today(), category: 'Fuel Purchase',
     desc: `${fuelInfo.short} — ${fmt(liters)}L @ ₹${rate}/L${invoice ? ' · ' + sanitize(invoice) : ''}`,
-    amount: total,
-    source: 'fuel_purchase',
-    purchaseId: purchase.id,
+    amount: total, source: 'fuel_purchase', purchaseId: purchase.id,
   };
   if (!APP.data.expenses) APP.data.expenses = [];
   APP.data.expenses.unshift(expEntry);
-  db.add('expenses', expEntry).catch(() => {});
-
+  try { await db.add('fuelPurchases', purchase); } catch(e) { console.warn('[Purchase]', e.message); }
+  try { await db.add('expenses', expEntry); } catch(e) { console.warn('[Expense]', e.message); }
   const tank = APP.data.tanks.find(t => t.fuelType === fuelType);
   if (tank) {
-    tank.current = Math.min(tank.capacity, tank.current + liters);
+    tank.current = Math.min(tank.capacity, (tank.current || 0) + liters);
     tank.lastDip = today();
-    db.put('tanks', tank).catch(() => {});
+    try {
+      await db.put('tanks', tank);
+      const freshTanks = await db.getAll('tanks');
+      if (freshTanks && freshTanks.length) {
+        APP.data.tanks = freshTanks.map(function(ft) {
+          if (ft.current === undefined || ft.current === null) ft.current = ft.current_level || 0;
+          if (ft.fuelType === undefined) ft.fuelType = ft.fuel_type || '';
+          if (ft.lowAlert === undefined) ft.lowAlert = ft.low_alert || 500;
+          return ft;
+        });
+      }
+    } catch(e) { console.warn('[Tank]', e.message); }
   }
   auditLog('purchase_add', { fuelType, liters, rate, total, invoice });
   closeModal();
@@ -5766,6 +5794,8 @@ function assignNozzle(pumpId, nozzle, empIdStr) {
 }
 
 function removeAlloc(pumpId, nozzle) {
+  const key = allocShift + '_' + allocDate;
+  if (allocations[key]) delete allocations[key][`${pumpId}_${nozzle}`];
   if (allocations[allocShift]) delete allocations[allocShift][`${pumpId}_${nozzle}`];
   saveAllocations();
   toast('Assignment removed', 'info');
@@ -6057,7 +6087,7 @@ function openSetPINModal(empId) {
   );
 }
 
-async function saveEmployeePIN() {
+async async function saveEmployeePIN() {
   const empId = parseInt(document.getElementById('setPINEmpId')?.value);
   const pin = document.getElementById('newPIN')?.value?.trim();
   const confirm = document.getElementById('confirmPIN')?.value?.trim();
@@ -6067,14 +6097,18 @@ async function saveEmployeePIN() {
   if (!emp) { toast('Employee not found', 'error'); return; }
   try {
     const hash = await sha256(pin);
+    emp.pinHash = hash;
+    await db.put('employees', emp);
     const pins = loadEmpPins();
     pins[empId] = hash;
     saveEmpPins(pins);
+    const freshEmps = await db.getAll('employees').catch(() => null);
+    if (freshEmps && freshEmps.length) APP.data.employees = freshEmps;
     closeModal();
     toast(`PIN set for ${emp.name}`, 'success');
     renderPage();
   } catch(err) {
-    toast('Failed to set PIN', 'error');
+    toast('Failed to set PIN: ' + (err.message||err), 'error');
   }
 }
 
@@ -7885,6 +7919,79 @@ function exportExpenseCSV() {
     APP.data.expenses.map(e => [e.date, e.category, e.desc, e.amount]));
 }
 
+// ── REPORT-SPECIFIC CSV/EXCEL EXPORTS ────────────────────
+function exportPLCSV() {
+  const D = APP.data;
+  const totalRev = D.sales.reduce((a,s) => a+s.amount, 0);
+  const cogs = D.sales.reduce((a,s) => a+s.liters*(D.purchasePrices[s.fuelType]||0), 0);
+  const gross = totalRev - cogs;
+  const salary = D.employees.reduce((a,e) => a+(e.salary||0), 0);
+  const expenseMap = {};
+  D.expenses.forEach(e => {
+    if (e.source === 'fuel_purchase') return;
+    const cat = e.category || 'Other';
+    expenseMap[cat] = (expenseMap[cat]||0) + (e.amount||0);
+  });
+  const totalExp = salary + Object.values(expenseMap).reduce((a,v)=>a+v,0);
+  const rows = [
+    ['Total Revenue', totalRev],
+    ['Cost of Goods Sold', cogs],
+    ['Gross Profit', gross],
+    ['Staff Salaries', salary],
+    ...Object.entries(expenseMap).map(([k,v]) => [k, v]),
+    ['Total Expenses', totalExp],
+    ['NET PROFIT', gross - totalExp],
+  ];
+  exportCSV('pl-report-' + today() + '.csv',
+    ['Item', 'Amount (INR)'], rows);
+}
+
+function exportDSRCSV() {
+  const D = APP.data;
+  const todayIso = new Date().toISOString().slice(0,10);
+  const todaySales = D.sales.filter(s => (s.date||'').slice(0,10) === todayIso);
+  exportCSV('dsr-' + today() + '.csv',
+    ['Time', 'Vehicle', 'Fuel', 'Liters', 'Amount', 'Employee', 'Payment Mode'],
+    todaySales.map(s => [s.time||'', s.vehicle||'', getFuel(s.fuelType).short, s.liters, s.amount, s.employee||'', s.mode]));
+}
+
+function exportCreditCSV() {
+  exportCSV('credit-outstanding-' + today() + '.csv',
+    ['Customer', 'Phone', 'Vehicle/Company', 'Outstanding', 'Credit Limit'],
+    APP.data.creditCustomers.filter(c => (c.outstanding||c.balance||0) > 0).map(c => [
+      c.name, c.phone||'', c.company||c.vehicle||'',
+      c.outstanding||c.balance||0,
+      c.limit||c.credit_limit||0
+    ]));
+}
+
+function exportGSTCSV() {
+  const D = APP.data;
+  const gstRate = { petrol: 0, diesel: 0, premium_petrol: 0 };
+  const rows = ['petrol','diesel','premium_petrol'].map(ft => {
+    const ftSales = D.sales.filter(s => s.fuelType === ft);
+    const totalAmt = ftSales.reduce((a,s)=>a+s.amount,0);
+    const totalL = ftSales.reduce((a,s)=>a+s.liters,0);
+    return [getFuel(ft).short, ftSales.length, totalL.toFixed(2), totalAmt.toFixed(2), '0.00', totalAmt.toFixed(2)];
+  });
+  exportCSV('gst-summary-' + today() + '.csv',
+    ['Fuel Type', 'Transactions', 'Liters', 'Gross Amount', 'GST', 'Net Amount'], rows);
+}
+
+function exportShiftCSV() {
+  const D = APP.data;
+  const rows = [];
+  D.employees.forEach(emp => {
+    const empSales = D.sales.filter(s => (s.employeeId === emp.id || s.employee === emp.name));
+    const totalL = empSales.reduce((a,s)=>a+s.liters,0);
+    const totalAmt = empSales.reduce((a,s)=>a+s.amount,0);
+    rows.push([emp.name, emp.role, emp.shift||'', empSales.length, totalL.toFixed(2), totalAmt.toFixed(2), emp.salary||0]);
+  });
+  exportCSV('employee-shift-' + today() + '.csv',
+    ['Employee', 'Role', 'Shift', 'Transactions', 'Liters Sold', 'Revenue', 'Salary'], rows);
+}
+
+
 function shareSalesSummary() {
   const totalRev = APP.data.sales.reduce((a, s) => a + s.amount, 0);
   const totalL = APP.data.sales.reduce((a, s) => a + s.liters, 0);
@@ -8458,6 +8565,86 @@ async function initApp() {
 }
 
 // ── Admin User Management (Tenant level) ──
+// ── ADMIN/EMPLOYEE PASSWORD RESET ────────────────────────
+function openChangeMyPasswordModal() {
+  openModal('🔑 Change My Password',
+    `<div class="form-group"><label class="form-label">Current Password *</label>
+       <input class="form-input" id="curPass" type="password" placeholder="Enter current password" autocomplete="current-password" />
+     </div>
+     <div class="form-group"><label class="form-label">New Password *</label>
+       <input class="form-input" id="newPass" type="password" placeholder="Min 6 characters" autocomplete="new-password" />
+     </div>
+     <div class="form-group"><label class="form-label">Confirm New Password *</label>
+       <input class="form-input" id="confPass" type="password" placeholder="Re-enter new password" />
+     </div>`,
+    `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-accent" onclick="saveMyPassword()">🔑 Update Password</button>`
+  );
+}
+
+async function saveMyPassword() {
+  const curPass = document.getElementById('curPass')?.value || '';
+  const newPass = document.getElementById('newPass')?.value || '';
+  const confPass = document.getElementById('confPass')?.value || '';
+  if (!curPass) { toast('Enter current password', 'error'); return; }
+  if (!newPass || newPass.length < 6) { toast('New password must be at least 6 characters', 'error'); return; }
+  if (newPass !== confPass) { toast('Passwords do not match', 'error'); return; }
+  try {
+    // Try API call first (bridge.js overrides this for server auth)
+    if (typeof AuthAPI !== 'undefined') {
+      await AuthAPI.changePassword(newPass);
+      closeModal();
+      toast('Password updated successfully', 'success');
+    } else {
+      toast('Password change not available in offline mode', 'error');
+    }
+  } catch(e) {
+    toast(e.message || 'Failed to update password', 'error');
+  }
+}
+
+function openResetEmployeePasswordModal(empId) {
+  const emp = APP.data.employees.find(e => e.id === empId);
+  if (!emp) return;
+  openModal(`🔑 Reset PIN — ${sanitize(emp.name)}`,
+    `<div style="margin-bottom:12px;font-size:12px;color:var(--text-2);padding:10px;background:var(--bg-0);border-radius:8px">
+       Reset the 4-digit login PIN for <strong style="color:var(--accent-light)">${sanitize(emp.name)}</strong>.
+     </div>
+     <div class="form-group"><label class="form-label">New 4-Digit PIN *</label>
+       <input class="form-input mono" id="newEmpPIN" type="password" inputmode="numeric" maxlength="4" placeholder="••••" style="font-size:24px;letter-spacing:8px;text-align:center" />
+     </div>
+     <div class="form-group"><label class="form-label">Confirm PIN *</label>
+       <input class="form-input mono" id="confEmpPIN" type="password" inputmode="numeric" maxlength="4" placeholder="••••" style="font-size:24px;letter-spacing:8px;text-align:center" />
+     </div>
+     <input type="hidden" id="resetEmpId" value="${empId}" />`,
+    `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-accent" onclick="doResetEmployeePin()">🔑 Reset PIN</button>`
+  );
+}
+
+async function doResetEmployeePin() {
+  const empId = parseInt(document.getElementById('resetEmpId')?.value);
+  const pin = document.getElementById('newEmpPIN')?.value?.trim();
+  const conf = document.getElementById('confEmpPIN')?.value?.trim();
+  if (!pin || pin.length !== 4 || !/^\d{4}$/.test(pin)) { toast('PIN must be exactly 4 digits', 'error'); return; }
+  if (pin !== conf) { toast('PINs do not match', 'error'); return; }
+  const emp = APP.data.employees.find(e => e.id === empId);
+  if (!emp) { toast('Employee not found', 'error'); return; }
+  try {
+    const hash = await sha256(pin);
+    emp.pinHash = hash;
+    await db.put('employees', emp);
+    const pins = loadEmpPins();
+    pins[empId] = hash;
+    saveEmpPins(pins);
+    closeModal();
+    toast(`PIN reset for ${emp.name}`, 'success');
+    renderPage();
+  } catch(e) {
+    toast('Failed to reset PIN: ' + (e.message||e), 'error');
+  }
+}
+
 function openChangeAdminPassModal(userIdx) {
   const t = mt_getActiveTenant();
   if (!t) return;

@@ -655,6 +655,40 @@
       location.reload();
     };
 
+    // ── Super admin password change → API ─────────────────────────────────
+    window.mt_saveSupercreds = async function() {
+      const newUser = document.getElementById('scNewUser')?.value?.trim()?.toLowerCase();
+      const newPass = document.getElementById('scNewPass')?.value || '';
+      const confPass = document.getElementById('scConfPass')?.value || '';
+      if (!newUser || newUser.length < 3) { mt_toast('Username must be at least 3 characters', 'error'); return; }
+      if (newPass.length < 6) { mt_toast('Password must be at least 6 characters', 'error'); return; }
+      if (newPass !== confPass) { mt_toast('Passwords do not match', 'error'); return; }
+      try {
+        const superToken = sessionStorage.getItem('fb_super_token') || localStorage.getItem('fb_super_token');
+        if (superToken) setAuthToken(superToken);
+        await AuthAPI.changeSuperPassword(newUser, newPass, confPass);
+        document.getElementById('superCredsOverlay')?.remove();
+        mt_toast('Super admin credentials updated! Use new credentials next time.', 'success');
+      } catch(e) {
+        mt_toast(e.message || 'Failed to update credentials', 'error');
+      }
+    };
+
+    // ── Admin change-own-password → API ───────────────────────────────────
+    window.saveMyPassword = async function() {
+      const newPass = document.getElementById('newPass')?.value || '';
+      const confPass = document.getElementById('confPass')?.value || '';
+      if (!newPass || newPass.length < 6) { toast('New password must be at least 6 characters', 'error'); return; }
+      if (newPass !== confPass) { toast('Passwords do not match', 'error'); return; }
+      try {
+        await AuthAPI.changePassword(newPass);
+        if (typeof closeModal === 'function') closeModal();
+        toast('Password updated successfully', 'success');
+      } catch(e) {
+        toast(e.message || 'Failed to update password', 'error');
+      }
+    };
+
   });
 
   console.log('[Bridge] Backend integration bridge loaded');
