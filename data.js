@@ -161,11 +161,11 @@ async function upsertRow(meta, tenantId, data, isInsert) {
     const snake = camelToSnake(k);
 
     if (aliased && cols.includes(aliased)) {
-      known[aliased] = sv;
+      known[aliased] = sv;                                    // camelCase → DB column (highest priority)
     } else if (cols.includes(snake) && snake !== 'tenant_id' && snake !== 'data_json') {
-      known[snake] = sv;
+      if (!(snake in known)) known[snake] = sv;              // snake_case — only if not already set by alias above
     } else if (cols.includes(k) && k !== 'tenant_id' && k !== 'data_json') {
-      known[k] = sv;
+      if (!(k in known)) known[k] = sv;                     // original key — only if not already set
     } else {
       extra[k] = v;
     }

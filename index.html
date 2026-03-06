@@ -4190,7 +4190,7 @@ async function saveSale() {
       const tank = APP.data.tanks.find(t => t.fuelType === fuelType);
       if (tank) {
         tank.current = Math.max(0, (tank.current || 0) - liters);
-        try { await db.put('tanks', tank); } catch(e) { console.warn('[Tank]', e.message); }
+        try { await db.put('tanks', _tankForPut(tank)); } catch(e) { console.warn('[Tank]', e.message); }
       }
       const pumpData = APP.data.pumps.find(p => p.id === pump);
       if (pumpData) {
@@ -4215,7 +4215,7 @@ async function saveSale() {
   const tank = APP.data.tanks.find(t => t.fuelType === fuelType);
   if (tank) {
     tank.current = Math.max(0, (tank.current || 0) - liters);
-    try { await db.put('tanks', tank); } catch(e) { console.warn('[Tank]', e.message); }
+    try { await db.put('tanks', _tankForPut(tank)); } catch(e) { console.warn('[Tank]', e.message); }
   }
 
   // Update pump reading
@@ -4335,7 +4335,7 @@ async function saveNewTank() {
       current,
       lastDip: new Date().toISOString().split('T')[0]
     };
-    await db.put('tanks', newTank);
+    await db.put('tanks', _tankForPut(newTank));
     const freshNew = await db.getAll('tanks');
     APP.data.tanks = freshNew.map(_normTank);
     closeModal();
@@ -4445,7 +4445,7 @@ async function saveEditTank(tankId) {
   const updatedTank = { id: parseInt(tankId), fuelType, capacity, current, lastDip: APP.data.tanks.find(t=>parseInt(t.id)===parseInt(tankId))?.lastDip || '' };
 
   try {
-    await db.put('tanks', updatedTank);
+    await db.put('tanks', _tankForPut(updatedTank));
     const freshEdited = await db.getAll('tanks');
     APP.data.tanks = freshEdited.map(_normTank);
   } catch(e) {
@@ -4503,8 +4503,23 @@ function _normTank(t) {
   t.current  = parseFloat(t.current  !== undefined ? t.current  : (t.current_level  || 0));
   t.fuelType = t.fuelType || t.fuel_type || '';
   t.lowAlert = parseFloat(t.lowAlert !== undefined ? t.lowAlert : (t.low_alert || 500));
-  if (!t.lastDip) t.lastDip = t.last_dip || '';
+  t.lastDip  = t.lastDip || t.last_dip || '';
   return t;
+}
+
+// Strip snake_case duplicate fields before PUT — prevents old snake_case from
+// overwriting the correctly aliased camelCase value in upsertRow
+function _tankForPut(t) {
+  return {
+    id:       t.id,
+    fuelType: t.fuelType,
+    capacity: t.capacity,
+    current:  t.current,
+    lowAlert: t.lowAlert,
+    lastDip:  t.lastDip,
+    name:     t.name || '',
+    unit:     t.unit || 'L',
+  };
 }
 
 function _tankChartType(tank) {
@@ -4742,7 +4757,7 @@ async function saveDip() {
     tank.current = reading;
     tank.lastDip = today() + ' ' + now();
     try {
-      await db.put('tanks', tank);
+      await db.put('tanks', _tankForPut(tank));
       // Reload tanks from server to confirm persistence
       const freshTanks = await db.getAll('tanks');
       if (freshTanks && freshTanks.length) APP.data.tanks = freshTanks.map(_normTank);
@@ -5105,7 +5120,7 @@ async function savePurchase() {
     tank.current = Math.min(parseInt(tank.capacity) || 0, (parseFloat(tank.current) || 0) + liters);
     tank.lastDip = today();
     try {
-      await db.put('tanks', tank);
+      await db.put('tanks', _tankForPut(tank));
       const freshTanks = await db.getAll('tanks');
       if (freshTanks && freshTanks.length) APP.data.tanks = freshTanks.map(_normTank);
     } catch(e) { console.warn('[Tank purchase update]', e.message); }
@@ -5447,7 +5462,7 @@ function saveReading(pumpId) {
     if (tank && liters > 0) {
       const before = tank.current;
       tank.current = Math.max(0, tank.current - liters);
-      db.put('tanks', tank).catch(() => {});
+      db.put('tanks', _tankForPut(tank)).catch(() => {});
       msgs.push(`${getFuel(ft).short}: −${fmt(liters)}L → ${fmt(tank.current)}L left`);
       if (tank.current < before * 0.15 && before > 0)
         toast(`⚠️ ${getFuel(ft).short} tank critically low: ${fmt(tank.current)} L`, 'warning');
@@ -5716,7 +5731,7 @@ function recordSaleWithUPI(saleData) {
     APP.data.sales.unshift(saleData);
     db.add('sales', saleData).catch(() => {});
     const tank = APP.data.tanks.find(t => t.fuelType === saleData.fuelType);
-    if (tank && saleData.liters) { tank.current = Math.max(0, tank.current - saleData.liters); db.put('tanks', tank).catch(() => {}); }
+    if (tank && saleData.liters) { tank.current = Math.max(0, tank.current - saleData.liters); db.put('tanks', _tankForPut(tank)).catch(() => {}); }
     auditLog('sale_add', { ...saleData, note: 'UPI payment' + (txnId ? ' UTR:' + txnId : '') });
     toast(`Sale ₹${saleData.amount.toLocaleString('en-IN')} recorded via UPI`, 'success');
     renderPage();
@@ -7392,7 +7407,7 @@ function emp_recordDip() {
   APP.data?.dipReadings?.unshift(dip);
   db.add('dipReadings', dip).catch(() => {});
   const tank = APP.data?.tanks?.find(t => t.id === tankId);
-  if (tank) { tank.current = r; tank.lastDip = emp_today() + ' ' + emp_time(); db.put('tanks', tank).catch(() => {}); }
+  if (tank) { tank.current = r; tank.lastDip = emp_today() + ' ' + emp_time(); db.put('tanks', _tankForPut(tank)).catch(() => {}); }
 
   toast(`✅ Dip saved: Tank ${tankId} = ${fmt(r)} L`, 'success');
   emp_go('overview');
@@ -7511,7 +7526,7 @@ async function emp_submit() {
       tank.current = Math.max(0, tank.current - liters);
       tank.lastDip = emp_today();
       deductLog.push(getFuel(ft).short + ': -' + fmt(liters) + 'L (' + fmt(before) + 'L → ' + fmt(tank.current) + 'L)');
-      tankWritePromises.push(db.put('tanks', tank));
+      tankWritePromises.push(db.put('tanks', _tankForPut(tank)));
     }
   }
   if (tankWritePromises.length > 0) {
@@ -8375,7 +8390,7 @@ window.expCalcTotal = expCalcTotal;
 
 // ── DATA INIT ────────────────────────────────────────────────
 async function seedDatabase() {
-  for (const t of SEED.tanks) await db.put('tanks', t).catch(() => {});
+  for (const t of SEED.tanks) await db.put('tanks', _tankForPut(t)).catch(() => {});
   for (const p of SEED.pumps) await db.put('pumps', p).catch(() => {});
   for (const s of SEED.shifts) await db.put('shifts', s).catch(() => {});
   await db.bulkPut('employees', SEED.employees).catch(() => {});
@@ -8432,9 +8447,11 @@ async function loadData() {
       }),
       expenses: (await db.getAll('expenses')).sort((a, b) => b.id - a.id),
       fuelPurchases: (await db.getAll('fuelPurchases')).sort((a, b) => b.id - a.id).map(function(p) {
-        if (p.total === undefined) p.total = p.amount || 0;
-        if (p.invoice === undefined && p.invoiceNo !== undefined) p.invoice = p.invoiceNo;
-        if (p.fuelType === undefined) p.fuelType = p.fuel_type || '';
+        if (p.total === undefined || p.total === null) p.total = p.amount || 0;
+        if (!p.invoice) p.invoice = p.invoice_no || p.invoiceNo || '';
+        if (!p.fuelType) p.fuelType = p.fuel_type || '';
+        if (p.liters === undefined) p.liters = 0;
+        if (p.rate === undefined) p.rate = 0;
         return p;
       }),
       dipReadings: (await db.getAll('dipReadings')).sort((a, b) => b.id - a.id),
