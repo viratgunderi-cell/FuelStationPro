@@ -3156,7 +3156,7 @@ function renderStaff(D) {
 
   // Shift tabs
   const shiftTabs = D.shifts.map(s =>
-    `<button class="shift-tab ${allocShift === s.name ? 'active' : ''}" onclick="allocShift='${s.name}'; try{localStorage.setItem('fb_alloc_shift',allocShift);}catch{}; renderPage()">${s.name} <span style="font-size:10px;opacity:0.6;margin-left:3px">${s.start}–${s.end}</span></button>`
+    `<button class="shift-tab ${allocShift === s.name ? 'active' : ''}" onclick="allocShift='${s.name}'; renderPage()">${s.name} <span style="font-size:10px;opacity:0.6;margin-left:3px">${s.start}–${s.end}</span></button>`
   ).join('');
   // Date navigation for allocation
   const prevDate = new Date(new Date(allocDate).getTime() - 86400000).toISOString().slice(0,10);
@@ -3987,17 +3987,13 @@ const EMP_COLORS = ['#22c55e','#3b82f6','#a855f7','#f97316','#06b6d4','#eab308',
 function empInitials(name) { return (name||'').split(' ').map(w=>w[0]).join('').toUpperCase(); }
 function empColor(emp) { return emp.color || EMP_COLORS[(emp.id || 0) % EMP_COLORS.length]; }
 
-let allocShift = (function() {
-  try {
-    const saved = localStorage.getItem('fb_alloc_shift');
-    if (saved) return saved;
-  } catch {}
-  return 'Morning';
-})();  // restored from localStorage (or default 'Morning')
+let allocShift = 'Morning'; // default — loadData() auto-selects shift with assignments from server
 let allocDate = new Date().toISOString().slice(0,10); // current date for allocation
 
 function loadAllocations() {
-  try { return JSON.parse(localStorage.getItem('fb_allocations')) || null; } catch { return null; }
+  // localStorage allocations are no longer used — server DB is source of truth
+  // This function kept for compatibility but always returns null
+  return null;
 }
 function getDefaultAllocations() {
   // Return empty — phantom seed IDs (4,5,6,7) caused all employees to see all pumps.
@@ -4007,8 +4003,8 @@ function getDefaultAllocations() {
 }
 let allocations = loadAllocations() || getDefaultAllocations();
 function saveAllocations() {
-  try { localStorage.setItem('fb_allocations', JSON.stringify(allocations)); } catch {}
-  // Also persist to server so allocations survive on different browsers/devices
+  // Server DB is the single source of truth — do NOT write to localStorage
+  // (localStorage caused stale allocations to survive cache clears)
   if (window.db && typeof window.db.setSetting === 'function') {
     window.db.setSetting('allocations', allocations).catch(() => {});
   }
@@ -5991,8 +5987,14 @@ function clearShiftAllocConfirm() {
 }
 
 function doClearAlloc() {
-  allocations[allocShift] = {};
+  delete allocations[allocShift]; // fully remove the shift key (not just empty it)
   saveAllocations();
+  // Auto-select next shift with allocations
+  const next = Object.keys(allocations).find(sh =>
+    typeof allocations[sh] === 'object' &&
+    Object.values(allocations[sh]).some(v => v && parseInt(v) > 0)
+  );
+  if (next) allocShift = next;
   closeModal();
   toast('All allocations cleared for ' + allocShift, 'info');
   renderPage();
@@ -7980,10 +7982,9 @@ async function doEmpLogin() {
       if (serverPumps && serverPumps.length > 0) {
         APP.data.pumps = serverPumps;
       }
-      // Load allocations so emp_myPumps filters correctly
+      // Load allocations so emp_myPumps filters correctly — server only, no localStorage
       if (serverAlloc && typeof serverAlloc === 'object' && Object.keys(serverAlloc).length > 0) {
         allocations = serverAlloc;
-        try { localStorage.setItem('fb_allocations', JSON.stringify(allocations)); } catch {}
       }
       // Load prices so sale amounts calculate correctly
       if (serverPrices && typeof serverPrices === 'object') {
@@ -8717,20 +8718,24 @@ async function loadData() {
     try {
       const serverAlloc = await db.getSetting('allocations');
       if (serverAlloc && typeof serverAlloc === 'object' && Object.keys(serverAlloc).length > 0) {
-        // Merge server allocations (source of truth) with any local-only data
-        const localAlloc = loadAllocations() || {};
-        // Server wins for any overlapping shift keys
-        allocations = Object.assign({}, localAlloc, serverAlloc);
-        saveAllocations(); // sync merged version back to localStorage too
-      } else {
-        // No server data yet — use localStorage as fallback
-        const localAlloc = loadAllocations();
-        if (localAlloc && Object.keys(localAlloc).length > 0) allocations = localAlloc;
+        // Server is the SOLE source of truth — never merge with stale localStorage data
+        allocations = serverAlloc;
       }
-      // Restore last active shift tab from localStorage
+      // Auto-select the shift that has actual nozzle assignments
+      // (don't rely on localStorage fb_alloc_shift which may point to a stale shift)
       try {
-        const savedShift = localStorage.getItem('fb_alloc_shift');
-        if (savedShift) allocShift = savedShift;
+        const shiftsWithData = Object.keys(allocations).filter(sh =>
+          typeof allocations[sh] === 'object' &&
+          Object.values(allocations[sh]).some(v => v && parseInt(v) > 0)
+        );
+        if (shiftsWithData.length > 0) {
+          // Pick the shift with the most assignments (most likely the active one)
+          shiftsWithData.sort((a, b) =>
+            Object.values(allocations[b]).filter(v => v && parseInt(v) > 0).length -
+            Object.values(allocations[a]).filter(v => v && parseInt(v) > 0).length
+          );
+          allocShift = shiftsWithData[0];
+        }
       } catch {}
       // Prune stale allocation keys (pumps removed from station) + empty shift shells
       if (APP.data?.pumps) {
