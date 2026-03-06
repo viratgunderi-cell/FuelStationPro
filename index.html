@@ -2,6 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <!-- Excel export (SheetJS) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <!-- PDF export (jsPDF + AutoTable) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#d4940f">
@@ -3638,16 +3643,20 @@ function renderReports(D) {
   ].map(i => `<div class="dbox"><div class="dbox-label">${i.l}</div><div class="dbox-value mono" style="font-size:14px;${i.cls || ''}">${i.v}</div></div>`).join('');
 
   const reports = [
-    { n: 'Monthly P&L Statement', d: 'Revenue, COGS, expenses, net profit', fn: 'generatePLReport()' },
-    { n: 'Daily Shift Report', d: 'Complete DSR with pump readings', fn: 'generateDSRReport()' },
-    { n: 'Credit Outstanding', d: 'Customer-wise aging report', fn: 'generateCreditReport()' },
-    { n: 'Tank Reconciliation', d: 'Dip vs book stock variance', fn: 'generateTankReport()' },
-    { n: 'Pump Sales Report', d: 'Per-pump meter & sales data', fn: 'generatePumpReport()' },
-    { n: 'GST Summary', d: 'Tax computation for filing', fn: 'generateGSTReport()' },
-    { n: 'Employee Shift Report', d: 'Monthly attendance & shift history per employee', fn: 'generateShiftReport()' },
-  ].map(r => `<div class="flex-between" style="padding:12px 0;border-bottom:1px solid var(--border-light)">
-    <div><div class="fw-600" style="font-size:13px;color:var(--text-1)">${r.n}</div><div style="font-size:11px;color:var(--text-3)">${r.d}</div></div>
-    <button class="btn btn-ghost btn-sm" onclick="${r.fn}">📄 Generate</button>
+    { n: 'Monthly P&L Statement',   d: 'Revenue, COGS, expenses, net profit',          pdf: 'downloadPLPdf()',     xls: 'downloadPLExcel()' },
+    { n: 'Daily Shift Report (DSR)', d: 'Complete DSR with pump readings',               pdf: 'downloadDSRPdf()',    xls: 'downloadDSRExcel()' },
+    { n: 'Credit Outstanding',       d: 'Customer-wise credit aging report',             pdf: 'downloadCreditPdf()', xls: 'downloadCreditExcel()' },
+    { n: 'Tank Reconciliation',      d: 'Stock levels, dip readings & variances',        pdf: 'downloadTankPdf()',   xls: 'downloadTankExcel()' },
+    { n: 'Pump Sales Report',        d: 'Per-pump meter readings & nozzle sales',        pdf: 'downloadPumpPdf()',   xls: 'downloadPumpExcel()' },
+    { n: 'Employee Shift Report',    d: 'Monthly attendance & shift history',             pdf: 'downloadShiftPdf()', xls: 'downloadShiftExcel()' },
+    { n: 'GST Summary',              d: 'Tax computation for filing (coming soon)',       pdf: "generateGSTReport()", xls: "toast('GST Excel coming soon','info')" },
+    { n: 'Audit Trail',              d: 'Full system activity log',                      pdf: null,                  xls: 'downloadAuditExcel()' },
+  ].map(r => `<div class="flex-between" style="padding:11px 0;border-bottom:1px solid var(--border-light);gap:10px;align-items:center">
+    <div style="flex:1;min-width:0"><div class="fw-600" style="font-size:13px;color:var(--text-1)">${r.n}</div><div style="font-size:11px;color:var(--text-3);margin-top:1px">${r.d}</div></div>
+    <div style="display:flex;gap:5px;flex-shrink:0">
+      ${r.pdf ? `<button class="btn btn-sm" style="background:#dc2626;color:#fff;border:none;font-size:11px;padding:5px 10px;border-radius:5px;cursor:pointer;font-weight:700" onclick="${r.pdf}">⬇ PDF</button>` : ''}
+      <button class="btn btn-sm" style="background:#16a34a;color:#fff;border:none;font-size:11px;padding:5px 10px;border-radius:5px;cursor:pointer;font-weight:700" onclick="${r.xls}">⬇ Excel</button>
+    </div>
   </div>`).join('');
 
   const creditPct = totalRevenue ? ((D.sales.filter(s => s.mode === 'credit').reduce((a, s) => a + s.amount, 0) / totalRevenue) * 100).toFixed(1) : 0;
@@ -3670,7 +3679,10 @@ function renderReports(D) {
       <div class="card card-pad">
         <h4 class="mb-16 fw-700" style="color:var(--text-0);font-size:13px">📋 Daily Shift Report (DSR)</h4>
         <div class="g" style="grid-template-columns:1fr 1fr;gap:10px">${dsrItems}</div>
-        <button class="btn btn-accent btn-block mt-16" onclick="generateDSRReport()">📄 Generate Full DSR</button>
+        <div style="display:flex;gap:8px;margin-top:16px">
+        <button class="btn btn-block" style="background:#dc2626;color:#fff;border:none;font-weight:700;padding:10px;border-radius:var(--radius-sm);cursor:pointer;flex:1" onclick="downloadDSRPdf()">⬇ PDF</button>
+        <button class="btn btn-block" style="background:#16a34a;color:#fff;border:none;font-weight:700;padding:10px;border-radius:var(--radius-sm);cursor:pointer;flex:1" onclick="downloadDSRExcel()">⬇ Excel</button>
+      </div>
       </div>
       <div class="card card-pad">
         <h4 class="mb-16 fw-700" style="color:var(--text-0);font-size:13px">⚡ Quick Reports</h4>
@@ -6921,29 +6933,59 @@ function emp_renderSales() {
     </div>
     <div class="card" style="margin-bottom:16px"><div class="card-body">
       <div class="form-group"><label class="form-label">Fuel Type</label><div style="display:flex;gap:6px;flex-wrap:wrap">${fuels.map(f=>`<button class="btn btn-sm ${empSaleFuel===f?'btn-accent':'btn-ghost'}" data-fuelbtn="${f}" onclick="emp_selFuel('${f}')">${EMP_FUEL[f]?.split(' ')[0]||f}</button>`).join('')}</div></div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Pump</label>
-          <select class="form-input" id="empSalePump" onchange="emp_refreshNozzles()">
-            ${emp_myPumps().filter(p => {
+      <div class="form-group">
+        <label class="form-label">Pump</label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap" id="empPumpBtns">
+          ${(() => {
+            const pumps = emp_myPumps().filter(p => {
+              // Only show pumps where this employee's assigned nozzles match the selected fuel
               const nf = p.nozzleFuels || {};
-              return p.fuelType === empSaleFuel || Object.values(nf).includes(empSaleFuel);
-            }).map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}
-          </select>
+              return (p.nozzles || []).some(n => (nf[n] || p.fuelType) === empSaleFuel);
+            });
+            if (!pumps.length) return '<span style="color:var(--text-3);font-size:12px">No pump assigned for this fuel</span>';
+            const firstId = pumps[0].id;
+            return pumps.map(p => `<button class="btn btn-sm ${p.id===firstId?'btn-accent':'btn-ghost'}" data-pumpbtn="${p.id}" onclick="emp_selPump(${p.id})">${p.name}</button>`).join('');
+          })()}
         </div>
-        <div class="form-group"><label class="form-label">Nozzle</label>
-          <select class="form-input" id="empSaleNozzle">
-            ${(() => {
-              const p = emp_myPumps().find(p => {
-                const nf = p.nozzleFuels || {};
-                return p.fuelType === empSaleFuel || Object.values(nf).includes(empSaleFuel);
-              });
-              if (!p) return '';
+        <input type="hidden" id="empSalePump" value="${(() => {
+          const pumps = emp_myPumps().filter(p => {
+            const nf = p.nozzleFuels || {};
+            return (p.nozzles || []).some(n => (nf[n] || p.fuelType) === empSaleFuel);
+          });
+          return pumps.length ? pumps[0].id : '';
+        })()}" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Nozzle</label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap" id="empNozzleBtns">
+          ${(() => {
+            const pumps = emp_myPumps().filter(p => {
+              // Only show pumps where this employee's assigned nozzles match the selected fuel
               const nf = p.nozzleFuels || {};
-              return (p.nozzles || []).filter(n => (nf[n] || p.fuelType) === empSaleFuel)
-                .map(n => { const fuel = getFuel(nf[n]||p.fuelType); return `<option value="${n}">Nozzle ${n} <span style="color:${fuel?.color}">${fuel?.short||''}</span></option>`; }).join('');
-            })()}
-          </select>
+              return (p.nozzles || []).some(n => (nf[n] || p.fuelType) === empSaleFuel);
+            });
+            if (!pumps.length) return '';
+            const p = pumps[0];
+            const nf = p.nozzleFuels || {};
+            const nozzles = (p.nozzles || []).filter(n => (nf[n] || p.fuelType) === empSaleFuel);
+            if (!nozzles.length) return '<span style="color:var(--text-3);font-size:12px">—</span>';
+            return nozzles.map((n,i) => {
+              const fuel = getFuel(nf[n] || p.fuelType);
+              return `<button class="btn btn-sm ${i===0?'btn-accent':'btn-ghost'}" data-nozzlebtn="${n}" onclick="emp_selNozzle('${n}')">Nozzle ${n}</button>`;
+            }).join('');
+          })()}
         </div>
+        <input type="hidden" id="empSaleNozzle" value="${(() => {
+          const pumps = emp_myPumps().filter(p => {
+            const nf = p.nozzleFuels || {};
+            return (p.nozzles || []).some(n => (nf[n] || p.fuelType) === empSaleFuel);
+          });
+          if (!pumps.length) return 'A';
+          const p = pumps[0];
+          const nf = p.nozzleFuels || {};
+          const nozzles = (p.nozzles || []).filter(n => (nf[n] || p.fuelType) === empSaleFuel);
+          return nozzles[0] || 'A';
+        })()}" />
       </div>
       <div class="form-row"><div class="form-group"><label class="form-label">Liters</label><input class="form-input" id="empSaleLiters" type="number" inputmode="decimal" step="0.1" placeholder="0.0" oninput="emp_calcAmt()" style="font-family:var(--mono);font-weight:600" /></div>
       <div class="form-group"><label class="form-label">Amount (₹)</label><input class="form-input" id="empSaleAmt" type="number" inputmode="decimal" step="0.01" placeholder="${emp_hasPerm('prices')?'Auto — price applied':'Enter amount'}" style="font-family:var(--mono);font-weight:600" oninput="emp_calcLiters()" /></div></div>
@@ -6951,7 +6993,36 @@ function emp_renderSales() {
       <div class="form-group"><label class="form-label">Vehicle Number</label><input class="form-input" id="empSaleVeh" placeholder="KA00XX0000" oninput="this.value=this.value.toUpperCase()" onpaste="setTimeout(()=>this.value=this.value.toUpperCase(),0)" style="text-transform:uppercase;font-family:var(--mono);font-weight:600" /></div>
       <div class="form-group"><label class="form-label">Payment Mode</label><div style="display:flex;gap:6px;flex-wrap:wrap">${['cash','upi','card','credit']
         .map(m=>`<button class="btn btn-sm ${empPayMode===m?'btn-accent':'btn-ghost'}" data-paybtn="${m}" onclick="emp_selPay('${m}')">${{cash:'💵 Cash',upi:'📱 UPI',card:'💳 Card',credit:'📋 Credit'}[m]}</button>`).join('')}</div></div>
-      <div id="empCustWrap" style="display:${empPayMode==='credit'?'':'none'}"><div class="form-group"><label class="form-label">Credit Customer</label><select class="form-input" id="empSaleCustomer"><option value="">— Select Customer —</option>${(APP.data?.creditCustomers||[]).filter(c=>!c.inactive).map(c=>`<option value="${sanitize(c.name)}">${sanitize(c.name)}</option>`).join('')}</select></div></div><input type="hidden" id="empSaleCustomerHidden" value="" />
+      <div id="empCustWrap" style="display:${empPayMode==='credit'?'':'none'}">
+        <div class="form-group">
+          <label class="form-label">Credit Customer</label>
+          <select class="form-input" id="empSaleCustomer" onchange="emp_onCustChange()">
+            <option value="">— Select Customer —</option>
+            ${(APP.data?.creditCustomers||[]).filter(c=>!c.inactive).map(c=>{
+              const avail = Math.max(0,(c.limit||0)-(c.outstanding||0));
+              const over = (c.outstanding||0) >= (c.limit||0) && (c.limit||0) > 0;
+              return `<option value="${sanitize(c.name)}" ${over?'disabled style="color:#ef4444"':''} data-avail="${avail}" data-outstanding="${c.outstanding||0}" data-limit="${c.limit||0}">${sanitize(c.name)} — Avail: ${cur(avail)}${over?' (LIMIT REACHED)':''}</option>`;
+            }).join('')}
+          </select>
+          <div id="empCustInfo" style="display:none;margin-top:8px;padding:10px 12px;border-radius:8px;border:1px solid var(--border)">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+              <div style="font-size:11px;color:var(--text-3);font-weight:600">CREDIT LIMIT</div>
+              <div id="empCustLimit" class="mono fw-700" style="font-size:13px"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:4px">
+              <div style="font-size:11px;color:var(--text-3);font-weight:600">OUTSTANDING</div>
+              <div id="empCustOutstanding" class="mono fw-700" style="font-size:13px;color:var(--red)"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:4px">
+              <div style="font-size:11px;color:var(--text-3);font-weight:600">AVAILABLE</div>
+              <div id="empCustAvail" class="mono fw-800" style="font-size:15px;color:var(--green)"></div>
+            </div>
+            <div id="empCustBar" style="margin-top:8px;height:6px;background:var(--bg-2);border-radius:3px;overflow:hidden">
+              <div id="empCustBarFill" style="height:100%;border-radius:3px;transition:width 0.3s,background 0.3s"></div>
+            </div>
+          </div>
+        </div>
+      </div><input type="hidden" id="empSaleCustomerHidden" value="" />
       <button class="btn btn-accent btn-block" style="padding:14px;font-size:14px;margin-top:6px" onclick="emp_recordSale()">💾 Record Sale</button>
     </div></div>
     ${empState.sales.length>0?`<div class="card"><div class="card-head"><h4>Recent Sales</h4><span class="mono fw-700" style="color:var(--green);font-size:13px">${cur(total)}</span></div><div class="card-body">
@@ -7238,16 +7309,65 @@ function emp_switchMode(mode) {
 
 function emp_refreshNozzles() {
   const pumpId = parseInt(document.getElementById('empSalePump')?.value);
-  const nozzleSel = document.getElementById('empSaleNozzle');
-  if (!nozzleSel) return;
+  const nozzleHidden = document.getElementById('empSaleNozzle');
+  const nozzleWrap = document.getElementById('empNozzleBtns');
+  if (!nozzleWrap) return;
   const p = emp_myPumps().find(px => px.id === pumpId);
-  if (!p) return;
+  if (!p) { nozzleWrap.innerHTML = '<span style="color:var(--text-3);font-size:12px">—</span>'; return; }
   const nf = p.nozzleFuels || {};
-  const matchingNozzles = (p.nozzles || []).filter(n => (nf[n] || p.fuelType) === empSaleFuel);
-  nozzleSel.innerHTML = matchingNozzles.map(n => {
-    const fuel = getFuel(nf[n] || p.fuelType);
-    return `<option value="${n}">Nozzle ${n} — ${fuel?.short || ''}</option>`;
-  }).join('');
+  const nozzles = (p.nozzles || []).filter(n => (nf[n] || p.fuelType) === empSaleFuel);
+  if (!nozzles.length) { nozzleWrap.innerHTML = '<span style="color:var(--text-3);font-size:12px">—</span>'; return; }
+  const currentNozzle = nozzles[0];
+  if (nozzleHidden) nozzleHidden.value = currentNozzle;
+  nozzleWrap.innerHTML = nozzles.map((n, i) =>
+    `<button class="btn btn-sm ${i===0?'btn-accent':'btn-ghost'}" data-nozzlebtn="${n}" onclick="emp_selNozzle('${n}')">Nozzle ${n}</button>`
+  ).join('');
+}
+
+function emp_selPump(pumpId) {
+  // Update hidden input
+  const hidden = document.getElementById('empSalePump');
+  if (hidden) hidden.value = pumpId;
+  // Highlight selected pump button
+  document.querySelectorAll('[data-pumpbtn]').forEach(btn => {
+    const isSelected = parseInt(btn.dataset.pumpbtn) === pumpId;
+    btn.classList.toggle('btn-accent', isSelected);
+    btn.classList.toggle('btn-ghost', !isSelected);
+  });
+  // Rebuild nozzle buttons for this pump
+  emp_refreshNozzles();
+}
+
+function emp_selNozzle(nozzle) {
+  // Update hidden input
+  const hidden = document.getElementById('empSaleNozzle');
+  if (hidden) hidden.value = nozzle;
+  // Highlight selected nozzle button
+  document.querySelectorAll('[data-nozzlebtn]').forEach(btn => {
+    const isSelected = btn.dataset.nozzlebtn === nozzle;
+    btn.classList.toggle('btn-accent', isSelected);
+    btn.classList.toggle('btn-ghost', !isSelected);
+  });
+}
+
+function emp_onCustChange() {
+  const sel = document.getElementById('empSaleCustomer');
+  const info = document.getElementById('empCustInfo');
+  if (!sel || !info) return;
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt || !opt.value) { info.style.display = 'none'; return; }
+  const avail    = parseFloat(opt.dataset.avail || 0);
+  const outstand = parseFloat(opt.dataset.outstanding || 0);
+  const limit    = parseFloat(opt.dataset.limit || 0);
+  const pct      = limit > 0 ? Math.min(100, (outstand / limit) * 100) : 0;
+  const color    = pct >= 100 ? '#ef4444' : pct >= 80 ? '#f97316' : '#22c55e';
+  document.getElementById('empCustLimit').textContent      = cur(limit);
+  document.getElementById('empCustOutstanding').textContent = cur(outstand);
+  document.getElementById('empCustAvail').textContent       = cur(avail);
+  document.getElementById('empCustAvail').style.color       = color;
+  document.getElementById('empCustBarFill').style.width      = pct + '%';
+  document.getElementById('empCustBarFill').style.background = color;
+  info.style.display = '';
 }
 
 function emp_selFuel(f) {
@@ -7257,22 +7377,28 @@ function emp_selFuel(f) {
     btn.classList.toggle('btn-accent', btn.dataset.fuelbtn === f);
     btn.classList.toggle('btn-ghost', btn.dataset.fuelbtn !== f);
   });
-  // Rebuild pump dropdown to only show pumps that have a nozzle for this fuel
-  const pumpSel = document.getElementById('empSalePump');
-  if (pumpSel) {
+  // Rebuild pump BUTTONS for this fuel
+  const pumpHidden = document.getElementById('empSalePump');
+  const pumpWrap = document.getElementById('empPumpBtns');
+  if (pumpWrap) {
+    // Only show pumps where the employee's assigned nozzles match this fuel type
     const filtered = emp_myPumps().filter(p => {
       const nf = p.nozzleFuels || {};
-      return p.fuelType === f || Object.values(nf).includes(f);
+      return (p.nozzles || []).some(n => (nf[n] || p.fuelType) === f);
     });
-    pumpSel.innerHTML = filtered.length 
-      ? filtered.map(p => `<option value="${p.id}">${p.name}</option>`).join('')
-      : '<option value="">No pump assigned for this fuel</option>';
     if (!filtered.length) {
-      const ns = document.getElementById('empSaleNozzle');
-      if (ns) ns.innerHTML = '<option value="">—</option>';
+      pumpWrap.innerHTML = '<span style="color:var(--text-3);font-size:12px">No pump assigned for this fuel</span>';
+      if (pumpHidden) pumpHidden.value = '';
+      const nozzleWrap = document.getElementById('empNozzleBtns');
+      if (nozzleWrap) nozzleWrap.innerHTML = '<span style="color:var(--text-3);font-size:12px">—</span>';
+    } else {
+      if (pumpHidden) pumpHidden.value = filtered[0].id;
+      pumpWrap.innerHTML = filtered.map((p, i) =>
+        `<button class="btn btn-sm ${i===0?'btn-accent':'btn-ghost'}" data-pumpbtn="${p.id}" onclick="emp_selPump(${p.id})">${p.name}</button>`
+      ).join('');
+      emp_refreshNozzles();
     }
   }
-  emp_refreshNozzles();
   emp_calcAmt();
   // Update price display if visible
   const priceEl = document.getElementById('empFuelPrice');
@@ -7327,6 +7453,26 @@ function emp_recordSale() {
   const customerEl = document.getElementById('empSaleCustomer');
   const customer = customerEl ? customerEl.value.trim() : '';
   if (empPayMode === 'credit' && !customer) { toast('Select a credit customer', 'error'); return; }
+  // Credit limit enforcement
+  if (empPayMode === 'credit' && customer) {
+    const creditCust = APP.data?.creditCustomers?.find(c => c.name === customer);
+    if (creditCust && creditCust.limit > 0) {
+      const available = Math.max(0, (creditCust.limit || 0) - (creditCust.outstanding || 0));
+      const saleAmt = isNaN(a) || a <= 0 ? l * (EMP_PRICES[empSaleFuel] || 0) : a;
+      if (saleAmt > available) {
+        const over = saleAmt - available;
+        toast(
+          `❌ Credit limit exceeded! Available: ${cur(available)} | Sale: ${cur(saleAmt)} | Over by: ${cur(over)}`,
+          'error'
+        );
+        return;
+      }
+      if (available <= 0) {
+        toast(`❌ ${customer} has reached their credit limit of ${cur(creditCust.limit)}. No further credit allowed.`, 'error');
+        return;
+      }
+    }
+  }
 
   const sale = {
     id: Date.now(), date: today(), time: emp_time(),
@@ -8036,6 +8182,502 @@ async function resetData() {
 }
 
 // ── PDF REPORTS ──────────────────────────────────────────────
+
+// ═══════════════════════════════════════════════════════════
+// REPORT EXPORT ENGINE — PDF (jsPDF) + Excel (SheetJS)
+// ═══════════════════════════════════════════════════════════
+
+// ── Shared helpers ────────────────────────────────────────
+function _rStation() { return APP.data?.upiName || APP.tenant?.name || 'Fuel Station'; }
+function _rDate()    { return new Date().toLocaleDateString('en-IN', {day:'2-digit',month:'short',year:'numeric'}); }
+function _rNow()     { return new Date().toLocaleString('en-IN'); }
+function _rFmt(n)    { return parseFloat(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function _rCur(n)    { return '₹'+_rFmt(n); }
+function _rL(n)      { return parseFloat(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})+' L'; }
+
+// ── jsPDF helper: styled header ───────────────────────────
+function _pdfHeader(doc, title) {
+  const W = doc.internal.pageSize.getWidth();
+  doc.setFillColor(212, 148, 15);
+  doc.rect(0, 0, W, 28, 'F');
+  doc.setTextColor(0, 0, 0);
+  doc.setFontSize(16); doc.setFont('helvetica','bold');
+  doc.text(_rStation(), W/2, 11, {align:'center'});
+  doc.setFontSize(10); doc.setFont('helvetica','normal');
+  doc.text(title, W/2, 19, {align:'center'});
+  doc.setFontSize(8);
+  doc.text('Generated: '+_rNow(), W/2, 25, {align:'center'});
+  doc.setTextColor(30,30,30);
+  return 34; // y after header
+}
+function _pdfFooter(doc) {
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
+  doc.setFontSize(7); doc.setTextColor(150,150,150);
+  doc.line(14, H-14, W-14, H-14);
+  doc.text('FuelBunk Pro — Computer Generated Report | '+_rStation(), W/2, H-8, {align:'center'});
+  doc.setTextColor(30,30,30);
+}
+function _pdfSectionTitle(doc, text, y) {
+  doc.setFillColor(245,245,245);
+  doc.rect(14, y-4, doc.internal.pageSize.getWidth()-28, 8, 'F');
+  doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(212,148,15);
+  doc.text(text, 16, y+1);
+  doc.setFont('helvetica','normal'); doc.setTextColor(30,30,30);
+  return y + 8;
+}
+function _pdfTable(doc, head, body, y, opts) {
+  doc.autoTable({
+    startY: y,
+    head: [head],
+    body: body,
+    margin: {left:14, right:14},
+    headStyles: {fillColor:[40,40,40], textColor:[255,255,255], fontSize:8, fontStyle:'bold', cellPadding:3},
+    bodyStyles: {fontSize:8, cellPadding:3},
+    alternateRowStyles: {fillColor:[250,250,250]},
+    styles: {overflow:'linebreak', cellWidth:'auto'},
+    ...opts
+  });
+  return doc.lastAutoTable.finalY + 6;
+}
+function _pdfSummaryBoxes(doc, items, y) {
+  const W = doc.internal.pageSize.getWidth();
+  const boxW = (W - 28) / items.length;
+  items.forEach((item, i) => {
+    const x = 14 + i * boxW;
+    doc.setFillColor(248,249,250);
+    doc.roundedRect(x+1, y, boxW-2, 22, 2, 2, 'F');
+    doc.setFontSize(7); doc.setTextColor(130,130,130); doc.setFont('helvetica','normal');
+    doc.text(item.label.toUpperCase(), x + boxW/2, y+7, {align:'center'});
+    doc.setFontSize(11); doc.setTextColor(item.color||[30,30,30]); doc.setFont('helvetica','bold');
+    doc.text(String(item.value), x + boxW/2, y+17, {align:'center'});
+  });
+  doc.setFont('helvetica','normal'); doc.setTextColor(30,30,30);
+  return y + 28;
+}
+function _pdfSave(doc, filename) {
+  _pdfFooter(doc);
+  doc.save(filename);
+  toast('PDF downloaded: '+filename, 'success');
+}
+
+// ── SheetJS helper: download workbook ─────────────────────
+function _xlsSave(wb, filename) {
+  if (typeof XLSX === 'undefined') { toast('Excel library loading — try again', 'error'); return; }
+  XLSX.writeFile(wb, filename);
+  toast('Excel downloaded: '+filename, 'success');
+}
+function _xlsAddSheet(wb, sheetName, rows) {
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  // Auto-width
+  const colWidths = rows[0] ? rows[0].map((_, ci) => ({
+    wch: Math.max(...rows.map(r => String(r[ci]||'').length), 10)
+  })) : [];
+  ws['!cols'] = colWidths;
+  XLSX.utils.book_append_sheet(wb, ws, sheetName.substring(0,31));
+}
+function _xlsStationRow() { return [['Station:', _rStation(), 'Generated:', _rNow()], []]; }
+
+// ════════════════════════════════════════════════════════════
+// 1. DSR — Daily Shift Report
+// ════════════════════════════════════════════════════════════
+function downloadDSRPdf() {
+  const D = APP.data;
+  const todayIso = new Date().toISOString().slice(0,10);
+  const todaySales = D.sales.filter(s=>(s.date||'').slice(0,10)===todayIso);
+  const totalRev = todaySales.reduce((a,s)=>a+s.amount,0);
+  const totalL   = todaySales.reduce((a,s)=>a+s.liters,0);
+  const totalStock = D.tanks.reduce((a,t)=>a+(t.current||0),0);
+
+  const doc = new jspdf.jsPDF();
+  let y = _pdfHeader(doc, 'Daily Shift Report (DSR) — '+_rDate());
+
+  // Summary boxes
+  y = _pdfSummaryBoxes(doc, [
+    {label:'Opening Stock', value:_rL(totalStock+totalL)},
+    {label:'Sold Today',    value:_rL(totalL), color:[22,163,74]},
+    {label:'Closing Stock', value:_rL(totalStock)},
+    {label:'Revenue',       value:_rCur(totalRev), color:[22,163,74]},
+    {label:'Transactions',  value:String(todaySales.length)},
+    {label:'Cash Collected',value:_rCur(todaySales.filter(s=>s.mode==='cash').reduce((a,s)=>a+s.amount,0))},
+  ], y);
+
+  // Pump readings
+  y = _pdfSectionTitle(doc, 'Pump Readings', y+4);
+  const pumpRows = D.pumps.flatMap(p => {
+    const labels = p.nozzleLabels||(p.nozzles===1?['A']:p.nozzles===2?['A','B']:['A','B','C'].slice(0,p.nozzles));
+    const nf=p.nozzleFuels||{}, nr=p.nozzleReadings||{}, no_=p.nozzleOpen||{};
+    return labels.map(n=>{
+      const ft=nf[n]||p.fuelType, open=no_[n]??p.openReading??0, close=nr[n]??p.currentReading??0;
+      const sold=Math.max(0,close-open), price=(D.prices||{})[ft]||0;
+      return [p.name,'Nozzle '+n,ft.toUpperCase(),_rFmt(open),_rFmt(close),_rFmt(sold),_rCur(sold*price)];
+    });
+  });
+  y = _pdfTable(doc,['Pump','Nozzle','Fuel','Opening','Closing','Sold (L)','Revenue'],pumpRows,y,
+    {columnStyles:{3:{halign:'right'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right'}}});
+
+  // Payment summary
+  y = _pdfSectionTitle(doc,'Payment Mode Summary',y);
+  const payRows = ['cash','upi','card','credit'].map(m=>{
+    const t=todaySales.filter(s=>s.mode===m).reduce((a,s)=>a+s.amount,0);
+    const c=todaySales.filter(s=>s.mode===m).length;
+    return [m.toUpperCase(), String(c), _rCur(t)];
+  });
+  y = _pdfTable(doc,['Payment Mode','Transactions','Amount'],payRows,y,
+    {columnStyles:{1:{halign:'right'},2:{halign:'right'}}});
+
+  // Sales transactions
+  if (doc.internal.getCurrentPageInfo().pageNumber === 1 && y > 200) { doc.addPage(); y = 20; }
+  y = _pdfSectionTitle(doc,'Sales Transactions',y);
+  const salesRows = todaySales.slice(0,200).map(s=>[
+    s.time||'', s.vehicle||'', (s.fuelType||'').toUpperCase(), _rFmt(s.liters), _rCur(s.amount),
+    s.mode||'', s.employee||'—'
+  ]);
+  _pdfTable(doc,['Time','Vehicle','Fuel','Liters','Amount','Mode','Employee'],
+    salesRows.length?salesRows:[['—','No sales today','','','','','']],y,
+    {columnStyles:{3:{halign:'right'},4:{halign:'right'}}});
+
+  _pdfSave(doc,'DSR-'+todayIso+'.pdf');
+}
+
+function downloadDSRExcel() {
+  const D = APP.data;
+  const todayIso = new Date().toISOString().slice(0,10);
+  const todaySales = D.sales.filter(s=>(s.date||'').slice(0,10)===todayIso);
+  const wb = XLSX.utils.book_new();
+
+  // Summary sheet
+  const totalL=todaySales.reduce((a,s)=>a+s.liters,0);
+  const totalRev=todaySales.reduce((a,s)=>a+s.amount,0);
+  const totalStock=D.tanks.reduce((a,t)=>a+(t.current||0),0);
+  _xlsAddSheet(wb,'Summary',[
+    ..._xlsStationRow(),
+    ['Daily Shift Report — '+todayIso],[''],
+    ['Metric','Value'],
+    ['Opening Stock (L)', totalStock+totalL],
+    ['Total Sold (L)', totalL],
+    ['Closing Stock (L)', totalStock],
+    ['Total Revenue (₹)', totalRev],
+    ['Total Transactions', todaySales.length],
+    ['Cash Collected (₹)', todaySales.filter(s=>s.mode==='cash').reduce((a,s)=>a+s.amount,0)],
+    ['UPI Collected (₹)',  todaySales.filter(s=>s.mode==='upi').reduce((a,s)=>a+s.amount,0)],
+    ['Card Collected (₹)', todaySales.filter(s=>s.mode==='card').reduce((a,s)=>a+s.amount,0)],
+    ['Credit Sales (₹)',   todaySales.filter(s=>s.mode==='credit').reduce((a,s)=>a+s.amount,0)],
+  ]);
+
+  // Pump readings sheet
+  const pumpData = [['Pump','Nozzle','Fuel','Opening Reading','Closing Reading','Sold (L)','Rate (₹/L)','Revenue (₹)']];
+  D.pumps.forEach(p=>{
+    const labels=p.nozzleLabels||(p.nozzles===1?['A']:p.nozzles===2?['A','B']:['A','B','C'].slice(0,p.nozzles));
+    const nf=p.nozzleFuels||{}, nr=p.nozzleReadings||{}, no_=p.nozzleOpen||{};
+    labels.forEach(n=>{
+      const ft=nf[n]||p.fuelType, open=no_[n]??p.openReading??0, close=nr[n]??p.currentReading??0;
+      const sold=Math.max(0,close-open), price=(D.prices||{})[ft]||0;
+      pumpData.push([p.name,'Nozzle '+n,ft.toUpperCase(),open,close,sold,price,sold*price]);
+    });
+  });
+  _xlsAddSheet(wb,'Pump Readings',pumpData);
+
+  // Sales sheet
+  const salesData=[['Time','Date','Vehicle','Fuel Type','Liters','Amount (₹)','Payment Mode','Employee','UPI Txn ID']];
+  todaySales.forEach(s=>salesData.push([s.time||'',s.date||'',s.vehicle||'',(s.fuelType||'').toUpperCase(),s.liters||0,s.amount||0,s.mode||'',s.employee||'',s.upiTxnId||'']));
+  _xlsAddSheet(wb,'Sales Transactions',salesData);
+
+  _xlsSave(wb,'DSR-'+todayIso+'.xlsx');
+}
+
+// ════════════════════════════════════════════════════════════
+// 2. P&L — Profit & Loss Report
+// ════════════════════════════════════════════════════════════
+function downloadPLPdf() {
+  const D = APP.data;
+  const totalRev=D.sales.reduce((a,s)=>a+s.amount,0);
+  const cogs=D.sales.reduce((a,s)=>a+s.liters*(D.purchasePrices[s.fuelType]||0),0);
+  const gross=totalRev-cogs;
+  const salary=D.employees.reduce((a,e)=>a+(e.salary||0),0);
+  const expenseMap={};
+  D.expenses.forEach(e=>{if(e.source==='fuel_purchase')return;const c=e.category||'Other';expenseMap[c]=(expenseMap[c]||0)+(e.amount||0);});
+  const totalOtherExp=Object.values(expenseMap).reduce((a,v)=>a+v,0);
+  const totalExp=salary+totalOtherExp;
+  const net=gross-totalExp;
+
+  const doc = new jspdf.jsPDF();
+  let y = _pdfHeader(doc,'Profit & Loss Statement — '+_rDate());
+
+  y = _pdfSummaryBoxes(doc,[
+    {label:'Total Revenue',  value:_rCur(totalRev), color:[22,163,74]},
+    {label:'Gross Profit',   value:_rCur(gross),    color:gross>=0?[22,163,74]:[220,38,38]},
+    {label:'Net Profit',     value:_rCur(net),      color:net>=0?[22,163,74]:[220,38,38]},
+    {label:'Net Margin',     value:(totalRev>0?(net/totalRev*100).toFixed(1):0)+'%'},
+  ],y);
+
+  y=_pdfSectionTitle(doc,'Revenue & Cost of Goods',y+4);
+  y=_pdfTable(doc,['Item','Amount'],[
+    ['Total Revenue', _rCur(totalRev)],
+    ['Cost of Goods Sold (Fuel Purchase Cost)', '('+_rCur(cogs)+')'],
+    ['Gross Profit', _rCur(gross)],
+  ],y,{columnStyles:{1:{halign:'right'}}});
+
+  y=_pdfSectionTitle(doc,'Operating Expenses',y);
+  const expRows=[['Staff Salaries',_rCur(salary)],...Object.entries(expenseMap).map(([c,a])=>[c,_rCur(a)]),['Total Expenses',_rCur(totalExp)]];
+  y=_pdfTable(doc,['Expense Category','Amount'],expRows,y,{columnStyles:{1:{halign:'right'}}});
+
+  y=_pdfSectionTitle(doc,'Net Profit / Loss',y);
+  _pdfTable(doc,['Item','Amount'],[
+    ['Gross Profit',   _rCur(gross)],
+    ['Total Expenses', '('+_rCur(totalExp)+')'],
+    [net>=0?'Net Profit':'Net Loss (-)' , _rCur(Math.abs(net))],
+    ['Net Margin', (totalRev>0?(net/totalRev*100).toFixed(1):0)+'%'],
+    ['Gross Margin',(totalRev>0?(gross/totalRev*100).toFixed(1):0)+'%'],
+  ],y,{columnStyles:{1:{halign:'right'}}});
+
+  _pdfSave(doc,'PL-Report-'+_rDate().replace(/ /g,'-')+'.pdf');
+}
+
+function downloadPLExcel() {
+  const D = APP.data;
+  const totalRev=D.sales.reduce((a,s)=>a+s.amount,0);
+  const cogs=D.sales.reduce((a,s)=>a+s.liters*(D.purchasePrices[s.fuelType]||0),0);
+  const gross=totalRev-cogs;
+  const salary=D.employees.reduce((a,e)=>a+(e.salary||0),0);
+  const expenseMap={};
+  D.expenses.forEach(e=>{if(e.source==='fuel_purchase')return;const c=e.category||'Other';expenseMap[c]=(expenseMap[c]||0)+(e.amount||0);});
+  const totalOtherExp=Object.values(expenseMap).reduce((a,v)=>a+v,0);
+  const totalExp=salary+totalOtherExp;
+  const net=gross-totalExp;
+  const wb=XLSX.utils.book_new();
+  _xlsAddSheet(wb,'P&L Summary',[
+    ..._xlsStationRow(),
+    ['Profit & Loss Statement'],[''],
+    ['Category','Amount (₹)'],
+    ['Total Revenue', totalRev],
+    ['Cost of Goods Sold', cogs],
+    ['Gross Profit', gross],
+    [''],
+    ['Staff Salaries', salary],
+    ...Object.entries(expenseMap).map(([c,a])=>[c,a]),
+    ['Total Expenses', totalExp],
+    [''],
+    ['Net Profit / (Loss)', net],
+    ['Net Margin (%)', totalRev>0?+(net/totalRev*100).toFixed(2):0],
+    ['Gross Margin (%)', totalRev>0?+(gross/totalRev*100).toFixed(2):0],
+  ]);
+  // Fuel-wise breakdown
+  const fuelData=[['Fuel Type','Liters Sold','Revenue (₹)','Purchase Cost (₹)','Margin (₹)']];
+  const fuelMap={};
+  D.sales.forEach(s=>{const f=s.fuelType;if(!fuelMap[f])fuelMap[f]={l:0,r:0,c:0};fuelMap[f].l+=s.liters;fuelMap[f].r+=s.amount;fuelMap[f].c+=s.liters*(D.purchasePrices[f]||0);});
+  Object.entries(fuelMap).forEach(([f,v])=>fuelData.push([f.toUpperCase(),v.l,v.r,v.c,v.r-v.c]));
+  _xlsAddSheet(wb,'Fuel Breakdown',fuelData);
+  _xlsSave(wb,'PL-Report-'+new Date().toISOString().slice(0,10)+'.xlsx');
+}
+
+// ════════════════════════════════════════════════════════════
+// 3. Credit Outstanding Report
+// ════════════════════════════════════════════════════════════
+function downloadCreditPdf() {
+  const D=APP.data;
+  const totalOut=D.creditCustomers.reduce((a,c)=>a+c.outstanding,0);
+  const totalLim=D.creditCustomers.reduce((a,c)=>a+(c.limit||0),0);
+  const doc=new jspdf.jsPDF();
+  let y=_pdfHeader(doc,'Credit Outstanding Report — '+_rDate());
+  y=_pdfSummaryBoxes(doc,[
+    {label:'Total Outstanding', value:_rCur(totalOut), color:[220,38,38]},
+    {label:'Total Credit Limit', value:_rCur(totalLim)},
+    {label:'Available Credit', value:_rCur(Math.max(0,totalLim-totalOut)), color:[22,163,74]},
+    {label:'Accounts', value:String(D.creditCustomers.length)},
+  ],y);
+  y=_pdfSectionTitle(doc,'Customer Wise Outstanding',y+4);
+  const rows=D.creditCustomers.map(c=>[sanitize(c.name),c.type||'',_rCur(c.limit||0),_rCur(c.outstanding||0),_rCur(Math.max(0,(c.limit||0)-(c.outstanding||0))),c.lastPayment||'—']);
+  _pdfTable(doc,['Customer','Type','Credit Limit','Outstanding','Available','Last Payment'],
+    rows.length?rows:[['No credit customers','','','','','']],y,
+    {columnStyles:{2:{halign:'right'},3:{halign:'right'},4:{halign:'right'}}});
+  _pdfSave(doc,'Credit-Report-'+new Date().toISOString().slice(0,10)+'.pdf');
+}
+
+function downloadCreditExcel() {
+  const D=APP.data;
+  const wb=XLSX.utils.book_new();
+  const rows=[['Customer Name','Type','Credit Limit (₹)','Outstanding (₹)','Available (₹)','Last Payment Date']];
+  D.creditCustomers.forEach(c=>rows.push([c.name,c.type||'',(c.limit||0),(c.outstanding||0),Math.max(0,(c.limit||0)-(c.outstanding||0)),c.lastPayment||'']));
+  rows.push(['']);
+  rows.push(['TOTAL','',D.creditCustomers.reduce((a,c)=>a+(c.limit||0),0),D.creditCustomers.reduce((a,c)=>a+(c.outstanding||0),0)]);
+  _xlsAddSheet(wb,'Credit Outstanding',[..._xlsStationRow(),['Credit Outstanding Report — '+_rDate()],[''],...rows]);
+  _xlsSave(wb,'Credit-Report-'+new Date().toISOString().slice(0,10)+'.xlsx');
+}
+
+// ════════════════════════════════════════════════════════════
+// 4. Tank Reconciliation Report
+// ════════════════════════════════════════════════════════════
+function downloadTankPdf() {
+  const D=APP.data;
+  const todayIso=new Date().toISOString().slice(0,10);
+  const doc=new jspdf.jsPDF();
+  let y=_pdfHeader(doc,'Tank Reconciliation Report — '+_rDate());
+  y=_pdfSectionTitle(doc,'Tank Stock Status',y+4);
+  const tankRows=D.tanks.map(t=>{
+    const sold=D.sales.filter(s=>(s.date||'').slice(0,10)===todayIso&&s.fuelType===t.fuelType).reduce((a,s)=>a+s.liters,0);
+    const received=D.fuelPurchases?D.fuelPurchases.filter(f=>(f.date||'').slice(0,10)===todayIso&&f.fuelType===t.fuelType).reduce((a,f)=>a+(f.liters||0),0):0;
+    const pct=t.capacity>0?(((t.current||0)/t.capacity)*100).toFixed(1):0;
+    return [t.fuelType?.toUpperCase()||'',_rL(t.capacity),_rL(t.current||0),pct+'%',_rL(sold),_rL(received),t.lastDip||'—'];
+  });
+  y=_pdfTable(doc,['Fuel','Capacity','Current Stock','Fill %','Sold Today','Received Today','Last Dip'],
+    tankRows.length?tankRows:[['No tanks configured','','','','','','']],y,
+    {columnStyles:{1:{halign:'right'},2:{halign:'right'},3:{halign:'right'},4:{halign:'right'},5:{halign:'right'}}});
+  // Dip readings
+  const todayDips=D.dipReadings?D.dipReadings.filter(d=>(d.date||'').slice(0,10)===todayIso):[];
+  if(todayDips.length){
+    y=_pdfSectionTitle(doc,'Dip Readings Today',y);
+    const dipRows=todayDips.map(d=>[d.date||'',d.time||'',d.fuelType?.toUpperCase()||'',_rL(d.reading||0),_rL(d.calculated||d.reading||0)]);
+    _pdfTable(doc,['Date','Time','Fuel','Dip Reading (L)','Calculated Volume'],dipRows,y);
+  }
+  _pdfSave(doc,'Tank-Recon-'+todayIso+'.pdf');
+}
+
+function downloadTankExcel() {
+  const D=APP.data;
+  const todayIso=new Date().toISOString().slice(0,10);
+  const wb=XLSX.utils.book_new();
+  const tankData=[['Fuel Type','Capacity (L)','Current Stock (L)','Fill %','Sold Today (L)','Received Today (L)','Last Dip Date']];
+  D.tanks.forEach(t=>{
+    const sold=D.sales.filter(s=>(s.date||'').slice(0,10)===todayIso&&s.fuelType===t.fuelType).reduce((a,s)=>a+s.liters,0);
+    const received=D.fuelPurchases?D.fuelPurchases.filter(f=>(f.date||'').slice(0,10)===todayIso&&f.fuelType===t.fuelType).reduce((a,f)=>a+(f.liters||0),0):0;
+    tankData.push([t.fuelType?.toUpperCase()||'',t.capacity||0,t.current||0,t.capacity>0?+((t.current||0)/t.capacity*100).toFixed(2):0,sold,received,t.lastDip||'']);
+  });
+  _xlsAddSheet(wb,'Tank Status',[..._xlsStationRow(),['Tank Reconciliation — '+_rDate()],[''],...tankData]);
+  if(D.dipReadings&&D.dipReadings.length){
+    const dipData=[['Date','Time','Fuel Type','Dip Reading (L)','Calculated Volume (L)','Tank ID']];
+    D.dipReadings.forEach(d=>dipData.push([d.date||'',d.time||'',(d.fuelType||'').toUpperCase(),d.reading||0,d.calculated||d.reading||0,d.tankId||'']));
+    _xlsAddSheet(wb,'Dip Readings',dipData);
+  }
+  _xlsSave(wb,'Tank-Recon-'+todayIso+'.xlsx');
+}
+
+// ════════════════════════════════════════════════════════════
+// 5. Pump Sales Report
+// ════════════════════════════════════════════════════════════
+function downloadPumpPdf() {
+  const D=APP.data;
+  const todayIso=new Date().toISOString().slice(0,10);
+  const todaySales=D.sales.filter(s=>(s.date||'').slice(0,10)===todayIso);
+  const doc=new jspdf.jsPDF('landscape');
+  let y=_pdfHeader(doc,'Pump Sales Report — '+_rDate());
+  y=_pdfSectionTitle(doc,'Pump Meter Readings',y+4);
+  const pumpRows=D.pumps.flatMap(p=>{
+    const labels=p.nozzleLabels||(p.nozzles===1?['A']:p.nozzles===2?['A','B']:['A','B','C'].slice(0,p.nozzles));
+    const nf=p.nozzleFuels||{}, nr=p.nozzleReadings||{}, no_=p.nozzleOpen||{};
+    return labels.map(n=>{
+      const ft=nf[n]||p.fuelType, open=no_[n]??p.openReading??0, close=nr[n]??p.currentReading??0;
+      const sold=Math.max(0,close-open), price=(D.prices||{})[ft]||0;
+      const pSales=todaySales.filter(s=>s.pump===p.id&&(s.fuelType===ft));
+      return [p.name,'Nozzle '+n,ft.toUpperCase(),_rFmt(open),_rFmt(close),_rFmt(sold),_rCur(price),_rCur(sold*price),String(pSales.length)];
+    });
+  });
+  y=_pdfTable(doc,['Pump','Nozzle','Fuel','Opening','Closing','Sold (L)','Rate','Revenue','Txns'],pumpRows.length?pumpRows:[['No pumps','','','','','','','','']],y,
+    {columnStyles:{3:{halign:'right'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right'},7:{halign:'right'},8:{halign:'right'}}});
+  y=_pdfSectionTitle(doc,'Fuel-wise Sales Summary',y);
+  const fuelMap={};
+  todaySales.forEach(s=>{if(!fuelMap[s.fuelType])fuelMap[s.fuelType]={l:0,r:0,n:0};fuelMap[s.fuelType].l+=s.liters;fuelMap[s.fuelType].r+=s.amount;fuelMap[s.fuelType].n++;});
+  const fuelRows=Object.entries(fuelMap).map(([f,v])=>[f.toUpperCase(),String(v.n),_rFmt(v.l),_rCur(v.r)]);
+  _pdfTable(doc,['Fuel Type','Transactions','Liters Sold','Revenue'],fuelRows.length?fuelRows:[['No sales today','','','']],y,
+    {columnStyles:{1:{halign:'right'},2:{halign:'right'},3:{halign:'right'}}});
+  _pdfSave(doc,'Pump-Sales-'+todayIso+'.pdf');
+}
+
+function downloadPumpExcel() {
+  const D=APP.data;
+  const todayIso=new Date().toISOString().slice(0,10);
+  const todaySales=D.sales.filter(s=>(s.date||'').slice(0,10)===todayIso);
+  const wb=XLSX.utils.book_new();
+  const pumpData=[['Pump Name','Nozzle','Fuel Type','Opening Reading','Closing Reading','Sold (L)','Rate (₹/L)','Revenue (₹)','Transactions']];
+  D.pumps.forEach(p=>{
+    const labels=p.nozzleLabels||(p.nozzles===1?['A']:p.nozzles===2?['A','B']:['A','B','C'].slice(0,p.nozzles));
+    const nf=p.nozzleFuels||{}, nr=p.nozzleReadings||{}, no_=p.nozzleOpen||{};
+    labels.forEach(n=>{
+      const ft=nf[n]||p.fuelType, open=no_[n]??p.openReading??0, close=nr[n]??p.currentReading??0;
+      const sold=Math.max(0,close-open), price=(D.prices||{})[ft]||0;
+      pumpData.push([p.name,'Nozzle '+n,ft.toUpperCase(),open,close,sold,price,sold*price,todaySales.filter(s=>s.pump===p.id&&s.fuelType===ft).length]);
+    });
+  });
+  _xlsAddSheet(wb,'Pump Readings',[..._xlsStationRow(),['Pump Sales Report — '+_rDate()],[''],...pumpData]);
+  const allSalesData=[['Time','Vehicle','Fuel','Liters','Amount (₹)','Mode','Employee','Pump']];
+  todaySales.forEach(s=>allSalesData.push([s.time||'',s.vehicle||'',(s.fuelType||'').toUpperCase(),s.liters,s.amount,s.mode||'',s.employee||'',s.pump||'']));
+  _xlsAddSheet(wb,'All Transactions',allSalesData);
+  _xlsSave(wb,'Pump-Sales-'+todayIso+'.xlsx');
+}
+
+// ════════════════════════════════════════════════════════════
+// 6. Employee Shift Report
+// ════════════════════════════════════════════════════════════
+function downloadShiftPdf() {
+  const D=APP.data;
+  const now=new Date();
+  const monthName=now.toLocaleString('default',{month:'long',year:'numeric'});
+  const thisMonth=now.toISOString().slice(0,7);
+  const submits=(APP.auditLog||[]).filter(a=>a.action==='reading_submit'&&a.timestamp&&a.timestamp.startsWith(thisMonth));
+  const logins=(APP.auditLog||[]).filter(a=>a.action==='login'&&a.role==='employee'&&a.timestamp&&a.timestamp.startsWith(thisMonth));
+  const empStats={};
+  D.employees.forEach(e=>{empStats[e.name]={name:e.name,role:e.role,shift:e.shift||'',submits:[],logins:0,totalLiters:0,totalRevenue:0};});
+  submits.forEach(a=>{const n=a.user||a.details?.employee;if(!n)return;if(!empStats[n])empStats[n]={name:n,role:'—',shift:'—',submits:[],logins:0,totalLiters:0,totalRevenue:0};empStats[n].submits.push({date:a.timestamp.slice(0,10),liters:a.details?.liters||0,revenue:a.details?.revenue||0});empStats[n].totalLiters+=a.details?.liters||0;empStats[n].totalRevenue+=a.details?.revenue||0;});
+  logins.forEach(a=>{const n=a.user||a.details?.employee;if(n&&empStats[n])empStats[n].logins++;});
+  const doc=new jspdf.jsPDF('landscape');
+  let y=_pdfHeader(doc,'Employee Shift Report — '+monthName);
+  const totalShifts=Object.values(empStats).reduce((a,e)=>a+e.submits.length,0);
+  const totalL=Object.values(empStats).reduce((a,e)=>a+e.totalLiters,0);
+  y=_pdfSummaryBoxes(doc,[
+    {label:'Total Staff', value:String(D.employees.length)},
+    {label:'Shifts Completed', value:String(totalShifts)},
+    {label:'Total Dispensed', value:_rL(totalL)},
+    {label:'Shift Types', value:String(D.shifts?.length||0)},
+  ],y);
+  y=_pdfSectionTitle(doc,'Employee Wise Summary',y+4);
+  const empRows=Object.values(empStats).map(e=>[e.name,e.role,e.shift||'—',String(e.submits.length),String(e.logins),_rFmt(e.totalLiters),_rCur(e.totalRevenue),[...new Set(e.submits.map(s=>s.date))].sort().slice(0,5).join(', ')+(e.submits.length>5?'...':'')]);
+  _pdfTable(doc,['Employee','Role','Shift','Shifts Done','Logins','Liters','Revenue','Recent Dates'],empRows.length?empRows:[['No employees','','','','','','','']],y,
+    {columnStyles:{3:{halign:'right'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right'}}});
+  _pdfSave(doc,'Shift-Report-'+thisMonth+'.pdf');
+}
+
+function downloadShiftExcel() {
+  const D=APP.data;
+  const now=new Date();
+  const thisMonth=now.toISOString().slice(0,7);
+  const submits=(APP.auditLog||[]).filter(a=>a.action==='reading_submit'&&a.timestamp&&a.timestamp.startsWith(thisMonth));
+  const logins=(APP.auditLog||[]).filter(a=>a.action==='login'&&a.role==='employee'&&a.timestamp&&a.timestamp.startsWith(thisMonth));
+  const empStats={};
+  D.employees.forEach(e=>{empStats[e.name]={name:e.name,role:e.role,shift:e.shift||'',submits:[],logins:0,totalLiters:0,totalRevenue:0};});
+  submits.forEach(a=>{const n=a.user||a.details?.employee;if(!n)return;if(!empStats[n])empStats[n]={name:n,role:'—',shift:'—',submits:[],logins:0,totalLiters:0,totalRevenue:0};empStats[n].submits.push({date:a.timestamp.slice(0,10),liters:a.details?.liters||0,revenue:a.details?.revenue||0});empStats[n].totalLiters+=a.details?.liters||0;empStats[n].totalRevenue+=a.details?.revenue||0;});
+  logins.forEach(a=>{const n=a.user||a.details?.employee;if(n&&empStats[n])empStats[n].logins++;});
+  const wb=XLSX.utils.book_new();
+  const summaryData=[['Employee','Role','Assigned Shift','Shifts Done','Logins','Total Liters','Total Revenue (₹)','Dates Active']];
+  Object.values(empStats).forEach(e=>summaryData.push([e.name,e.role,e.shift||'—',e.submits.length,e.logins,e.totalLiters,e.totalRevenue,[...new Set(e.submits.map(s=>s.date))].sort().join(', ')]));
+  _xlsAddSheet(wb,'Employee Summary',[..._xlsStationRow(),['Shift Report — '+thisMonth],[''],...summaryData]);
+  if(submits.length){
+    const shiftData=[['Date','Employee','Liters Dispensed','Revenue (₹)']];
+    submits.forEach(a=>shiftData.push([a.timestamp?.slice(0,10)||'',a.user||'',a.details?.liters||0,a.details?.revenue||0]));
+    _xlsAddSheet(wb,'Shift History',shiftData);
+  }
+  _xlsSave(wb,'Shift-Report-'+thisMonth+'.xlsx');
+}
+
+// ════════════════════════════════════════════════════════════
+// 7. Audit Trail Export
+// ════════════════════════════════════════════════════════════
+function downloadAuditExcel() {
+  const wb=XLSX.utils.book_new();
+  const rows=[['Timestamp','User','Action','Details']];
+  (APP.auditLog||[]).forEach(l=>rows.push([l.timestamp||'',l.user||'',l.action||'',JSON.stringify(l.details||{})]));
+  _xlsAddSheet(wb,'Audit Trail',[..._xlsStationRow(),['Audit Trail — '+_rNow()],[''],...rows]);
+  _xlsSave(wb,'Audit-Trail-'+new Date().toISOString().slice(0,10)+'.xlsx');
+}
+
+// Expose all
+window.downloadDSRPdf=downloadDSRPdf; window.downloadDSRExcel=downloadDSRExcel;
+window.downloadPLPdf=downloadPLPdf;   window.downloadPLExcel=downloadPLExcel;
+window.downloadCreditPdf=downloadCreditPdf; window.downloadCreditExcel=downloadCreditExcel;
+window.downloadTankPdf=downloadTankPdf;   window.downloadTankExcel=downloadTankExcel;
+window.downloadPumpPdf=downloadPumpPdf;   window.downloadPumpExcel=downloadPumpExcel;
+window.downloadShiftPdf=downloadShiftPdf; window.downloadShiftExcel=downloadShiftExcel;
+window.downloadAuditExcel=downloadAuditExcel;
+
 function generateDSRReport() {
   const D = APP.data;
   const todayIso = new Date().toISOString().slice(0, 10);
