@@ -7723,17 +7723,18 @@ async function emp_submit() {
     const nozzleReadingsForServer = {};
     const nozzleOpenForServer = {};
     let hasAnyReading = false;
-    (pump.nozzleLabels || pump.nozzles || ['A','B']).forEach ? 
-      (pump.nozzleLabels || ['A','B']).forEach(n => {
-        const k = emp_key(pump.id, n);
-        if (empState.closeReadings[k] !== undefined && empState.closeReadings[k] !== '') {
-          nozzleReadingsForServer[n] = parseFloat(empState.closeReadings[k]) || 0;
-          hasAnyReading = true;
-        }
-        if (empState.openReadings[k] !== undefined && empState.openReadings[k] !== '') {
-          nozzleOpenForServer[n] = parseFloat(empState.openReadings[k]) || 0;
-        }
-      }) : null;
+    // pump.nozzles is always a string[] from emp_myPumps e.g. ['A','B']
+    const nozzleList = Array.isArray(pump.nozzles) ? pump.nozzles : ['A','B'];
+    nozzleList.forEach(n => {
+      const k = emp_key(pump.id, n);
+      if (empState.closeReadings[k] !== undefined && empState.closeReadings[k] !== '') {
+        nozzleReadingsForServer[n] = parseFloat(empState.closeReadings[k]) || 0;
+        hasAnyReading = true;
+      }
+      if (empState.openReadings[k] !== undefined && empState.openReadings[k] !== '') {
+        nozzleOpenForServer[n] = parseFloat(empState.openReadings[k]) || 0;
+      }
+    });
 
     if (hasAnyReading) {
       try {
