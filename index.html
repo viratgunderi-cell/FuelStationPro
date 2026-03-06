@@ -4102,11 +4102,7 @@ function renderPage() {
       db.getAll('tanks').then(function(freshTanks) {
         if (freshTanks.length) {
           // Normalize server response: current_level → current
-          freshTanks = freshTanks.map(function(ft) {
-            if (ft.current === undefined && ft.current_level !== undefined) ft.current = ft.current_level;
-            if (ft.fuelType === undefined && ft.fuel_type !== undefined) ft.fuelType = ft.fuel_type;
-            return ft;
-          });
+          freshTanks = freshTanks.map(_normTank);
           var changed = freshTanks.some(function(ft) {
             var existing = APP.data.tanks.find(function(t) { return String(t.id) === String(ft.id); });
             return !existing || existing.current !== ft.current;
@@ -7041,7 +7037,7 @@ function emp_renderSales() {
       <div class="form-group"><label class="form-label">Vehicle Number</label><input class="form-input" id="empSaleVeh" placeholder="KA00XX0000" oninput="this.value=this.value.toUpperCase()" onpaste="setTimeout(()=>this.value=this.value.toUpperCase(),0)" style="text-transform:uppercase;font-family:var(--mono);font-weight:600" /></div>
       <div class="form-group"><label class="form-label">Payment Mode</label><div style="display:flex;gap:6px;flex-wrap:wrap">${['cash','upi','card','credit']
         .map(m=>`<button class="btn btn-sm ${empPayMode===m?'btn-accent':'btn-ghost'}" data-paybtn="${m}" onclick="emp_selPay('${m}')">${{cash:'💵 Cash',upi:'📱 UPI',card:'💳 Card',credit:'📋 Credit'}[m]}</button>`).join('')}</div></div>
-      <div id="empCustWrap" style="display:${empPayMode==='credit'?'':'none'}"><div class="form-group"><label class="form-label">Credit Customer</label><select class="form-input" id="empSaleCustomer"><option value="">— Select Customer —</option>${(APP.data?.creditCustomers||[]).filter(c=>!c.inactive).map(c=>`<option value="${sanitize(c.name)}">${sanitize(c.name)}</option>`).join('')}</select></div></div><input type="hidden" id="empSaleCustomerHidden" value="" />
+      <div id="empCustWrap" style="display:${empPayMode==='credit'?'':'none'}"><div class="form-group"><label class="form-label">Credit Customer</label><select class="form-input" id="empSaleCustomer"><option value="">— Select Customer —</option>${(APP.data?.creditCustomers||[]).filter(c=>c.active!==false&&c.active!==0).map(c=>`<option value="${sanitize(c.name)}">${sanitize(c.name)}</option>`).join('')}</select></div></div><input type="hidden" id="empSaleCustomerHidden" value="" />
       <button class="btn btn-accent btn-block" style="padding:14px;font-size:14px;margin-top:6px" onclick="emp_recordSale()">💾 Record Sale</button>
     </div></div>
     ${empState.sales.length>0?`<div class="card"><div class="card-head"><h4>Recent Sales</h4><span class="mono fw-700" style="color:var(--green);font-size:13px">${cur(total)}</span></div><div class="card-body">
@@ -7424,7 +7420,10 @@ function emp_recordSale() {
     mode: empPayMode, pump: p, nozzle,
     vehicle: sanitize(v),
     customer: customer ? sanitize(customer) : undefined,
-    shift: 'Employee', employee: empState.user?.name || 'Employee'
+    shift: empState.shift || 'Employee',
+    employee: empState.user?.name || 'Employee',
+    employeeId: empState.user?.id || 0,
+    employeeName: empState.user?.name || 'Employee',
   };
 
   // ── Save to employee session (for shift summary & reconciliation) ──
@@ -7625,7 +7624,7 @@ async function emp_submit() {
   });
 
   if (mismatchEntries.length > 0 && empUser) {
-    const adminEmp = APP.data.employees?.find(e => e.id === empUser.id);
+    const adminEmp = (APP.data?.employees || []).find(e => parseInt(e.id) === parseInt(empUser.id));
     if (adminEmp) {
       if (!adminEmp.balanceEntries) adminEmp.balanceEntries = [];
       adminEmp.balanceEntries.push({
@@ -7962,15 +7961,16 @@ async function doEmpLogin() {
     const tenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
     if (tenant && tenant.id) {
       const tid = encodeURIComponent(tenant.id);
-      // Fetch pumps, allocations and prices in parallel
-      const [serverPumps, serverAlloc, serverPrices] = await Promise.all([
+      // Fetch pumps, allocations, prices and credit customers in parallel
+      const [serverPumps, serverAlloc, serverPrices, serverCreditCusts] = await Promise.all([
         fetch('/api/public/pumps/' + tid).then(r => r.ok ? r.json() : null).catch(() => null),
         fetch('/api/public/allocations/' + tid).then(r => r.ok ? r.json() : null).catch(() => null),
         fetch('/api/public/prices/' + tid).then(r => r.ok ? r.json() : null).catch(() => null),
+        fetch('/api/public/creditcustomers/' + tid).then(r => r.ok ? r.json() : null).catch(() => null),
       ]);
+      if (!APP.data) APP.data = {};
       // Populate APP.data.pumps so EMP_PUMPS returns real pump data
       if (serverPumps && serverPumps.length > 0) {
-        if (!APP.data) APP.data = {};
         APP.data.pumps = serverPumps;
       }
       // Load allocations so emp_myPumps filters correctly
@@ -7980,8 +7980,11 @@ async function doEmpLogin() {
       }
       // Load prices so sale amounts calculate correctly
       if (serverPrices && typeof serverPrices === 'object') {
-        if (!APP.data) APP.data = {};
         APP.data.prices = serverPrices;
+      }
+      // Load credit customers so credit sales work
+      if (serverCreditCusts && Array.isArray(serverCreditCusts)) {
+        APP.data.creditCustomers = serverCreditCusts;
       }
     }
   } catch(fetchErr) {

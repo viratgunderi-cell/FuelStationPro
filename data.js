@@ -33,8 +33,7 @@ const WRITE_ALIAS = {
   desc:           'description',
   total:          'amount',
   invoice:        'invoice_no',
-  start:          'start_time',
-  end:            'end_time',
+  // 'start' and 'end' are legacy shorthand; use startTime/endTime for clarity
   calculated:     'computed_volume',
   recordedBy:     'recorded_by',
   fuelType:       'fuel_type',

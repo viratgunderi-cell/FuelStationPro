@@ -43,6 +43,9 @@ async function startServer() {
     res.json({ status: 'ok', database: 'postgresql', uptime: process.uptime() });
   });
 
+  // ── Pool for public routes (imported here so public routes can use it) ────
+  const { pool } = require('./schema');
+
   // ── PUBLIC: employee names for login screen (no auth required, no PINs) ─
   app.get('/api/public/employees/:tenantId', async (req, res) => {
     try {
@@ -113,6 +116,19 @@ async function startServer() {
       res.json(val || {});
     } catch (e) {
       res.json({});
+    }
+  });
+
+  // ── PUBLIC: credit customers for employee sales (name + limit only) ────────
+  app.get('/api/public/creditcustomers/:tenantId', async (req, res) => {
+    try {
+      const r = await pool.query(
+        'SELECT id, name, credit_limit, balance FROM credit_customers WHERE tenant_id = $1 AND active = 1 ORDER BY name',
+        [req.params.tenantId]
+      );
+      res.json(r.rows.map(c => ({ id: c.id, name: c.name, limit: parseFloat(c.credit_limit)||0, outstanding: parseFloat(c.balance)||0 })));
+    } catch (e) {
+      res.json([]);
     }
   });
 
