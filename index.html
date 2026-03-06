@@ -3634,7 +3634,7 @@ function renderSettings(D) {
   const priceCards = FUEL_TYPES.map(f => {
     const margin = ((D.prices||{})[f.id]||0) - ((D.purchasePrices||{})[f.id]||0);
     return `<div class="flex-between" style="padding:14px;background:var(--bg-0);border-radius:var(--radius);margin-bottom:10px;border:1px solid var(--border-light)">
-      <div><div style="color:${f.color}" class="fw-700">${f.name}</div><div style="font-size:11px;color:var(--text-3)">Purchase: ${cur(D.purchasePrices[f.id])}/L</div></div>
+      <div><div style="color:${f.color}" class="fw-700">${f.name}</div></div>
       <div class="text-right"><div class="mono fw-800" style="color:var(--text-0);font-size:22px">₹${((D.prices||{})[f.id]||0).toFixed(2)}</div>
         <div class="mono fw-600" style="font-size:11px;color:var(--green)">Margin: ₹${margin.toFixed(2)}/L</div></div>
     </div>`;
@@ -3660,7 +3660,7 @@ function renderSettings(D) {
         <h4 class="mb-16 fw-700" style="color:var(--text-0);font-size:13px">⛽ Fuel Prices</h4>
         ${priceCards}
         <button class="btn btn-accent btn-block mt-12" onclick="openPriceModal()">&#9881;&#65039; Update Selling Prices</button>
-        <button class="btn btn-ghost btn-block mt-8" onclick="openPurchasePriceModal()" style="font-size:12px">Update Purchase Prices (COGS)</button>
+        <!-- Purchase price button removed - admin manages COGS separately -->
       </div>
       <div class="card card-pad">
         <h4 class="mb-16 fw-700" style="color:var(--text-0);font-size:13px">🏢 Station Information</h4>
@@ -4563,10 +4563,14 @@ function _normPump(p) {
   if (!p) return p;
   p.id            = String(p.id);
   p.currentReading= parseFloat(p.currentReading !== undefined ? p.currentReading : (p.current_reading || 0));
-  p.openReading   = parseFloat(p.openReading    !== undefined ? p.openReading    : (p.open_reading   || 0));
   p.fuelType      = p.fuelType  || p.fuel_type  || '';
   p.tankId        = p.tankId    || p.tank_id    || '';
   p.nozzles       = parseInt(p.nozzles) || 2;
+  // Derive openReading from nozzleOpen sum (more accurate than stored aggregate)
+  const nozzleOpenMap = p.nozzleOpen || {};
+  const nozzleOpenSum = Object.values(nozzleOpenMap).reduce((a, v) => a + (parseFloat(v)||0), 0);
+  p.openReading   = nozzleOpenSum > 0 ? nozzleOpenSum
+                  : parseFloat(p.openReading !== undefined ? p.openReading : (p.open_reading || 0));
   return p;
 }
 
@@ -5193,6 +5197,11 @@ async function savePurchase() {
   } else {
     console.warn('[Purchase] No tank found for fuelType:', fuelType, '— tanks:', APP.data.tanks.map(t => t.fuelType));
   }
+  // ── Auto-update purchase price (COGS) from this fuel entry ──
+  if (!APP.data.purchasePrices) APP.data.purchasePrices = {};
+  APP.data.purchasePrices[fuelType] = rate;
+  db.setSetting('purchasePrices', APP.data.purchasePrices).catch(() => {});
+
   auditLog('purchase_add', { fuelType, liters, rate, total, invoice });
   closeModal();
   toast(`✅ ${fmt(liters)}L ${fuelInfo.short} purchased — ₹${cur(total)} added to expenses`, 'success');
@@ -5519,6 +5528,7 @@ function saveReading(pumpId) {
   });
   pump.nozzleReadings  = nozzleReadings;
   pump.currentReading  = Object.values(nozzleReadings).reduce((a, v) => a + v, 0);
+  pump.openReading     = Object.values(pump.nozzleOpen || {}).reduce((a, v) => a + (parseFloat(v)||0), 0);
   db.put('pumps', _pumpForPut(pump)).catch(() => {});
 
   // Deduct from each fuel tank
@@ -7007,13 +7017,19 @@ function emp_renderCards(mode) {
         </div>
         <!-- Reading input -->
         <div style="display:flex;gap:8px;align-items:center">
-          <input class="form-input" type="number" inputmode="decimal" step="0.1"
-            placeholder="${mode==='open'?'Opening reading':'Closing reading'}"
-            value="${v !== undefined ? v : ''}"
-            onchange="emp_saveReading('${mode}','${k}',this.value)"
-            onfocus="this.select()"
-            style="flex:1;font-family:var(--mono);font-size:20px;font-weight:700;padding:12px 14px;text-align:center" />
-          ${v !== undefined ? '<span style="color:var(--green);font-size:20px;flex-shrink:0">✓</span>' : ''}
+          ${mode === 'open'
+            ? `<div style="flex:1;font-family:var(--mono);font-size:20px;font-weight:700;padding:12px 14px;text-align:center;background:var(--bg-0);border:2px solid var(--border);border-radius:8px;color:${v !== undefined && v > 0 ? 'var(--accent-light)' : 'var(--text-3)'}">
+                ${v !== undefined && v > 0 ? fmt(v) : '—'}
+                ${v !== undefined && v > 0 ? '<div style="font-size:10px;font-weight:500;color:var(--text-3);margin-top:2px">Opening (carried from previous shift)</div>' : '<div style="font-size:10px;color:var(--text-3)">No previous reading — enter 0 to start</div>'}
+              </div>
+              <span style="color:${v !== undefined && v > 0 ? 'var(--green)' : 'var(--text-3)'};font-size:20px;flex-shrink:0">${v !== undefined && v > 0 ? '✓' : '—'}</span>`
+            : `<input class="form-input" type="number" inputmode="decimal" step="0.1"
+                placeholder="Closing reading"
+                value="${v !== undefined ? v : ''}"
+                onchange="emp_saveReading('${mode}','${k}',this.value)"
+                onfocus="this.select()"
+                style="flex:1;font-family:var(--mono);font-size:20px;font-weight:700;padding:12px 14px;text-align:center" />
+              ${v !== undefined ? '<span style="color:var(--green);font-size:20px;flex-shrink:0">✓</span>' : ''}`}
         </div>
         ${mode === 'close' && v !== undefined
           ? (() => {
@@ -7208,9 +7224,23 @@ function emp_recordExpense() {
   const expense = { id: Date.now(), category: cat, amount: amt, mode, desc, time: emp_time(), date: emp_today(), employee: empState.user?.name || '' };
   if (!empState.expenses) empState.expenses = [];
   empState.expenses.unshift(expense);
-  // Save to admin data too
+  // Save to admin data too (in-memory)
   if (APP.data?.expenses) APP.data.expenses.unshift({ ...expense, source: 'employee' });
-  db.add('expenses', { ...expense, source: 'employee' }).catch(() => {});
+  // Save to server via public endpoint (no auth required)
+  try {
+    const tenantExp = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
+    if (tenantExp && tenantExp.id) {
+      fetch('/api/public/expense/' + encodeURIComponent(tenantExp.id), {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ ...expense, source: 'employee' })
+      }).catch(err => console.warn('[emp expense] save failed:', err.message));
+    } else {
+      // Fallback: auth path (same device)
+      db.add('expenses', { ...expense, source: 'employee' }).catch(() => {});
+    }
+  } catch(e) {
+    db.add('expenses', { ...expense, source: 'employee' }).catch(() => {});
+  }
   emp_saveSession();
   toast(`✅ ${cat} — ${cur(amt)} logged`, 'success');
   emp_go('expense');
@@ -8860,7 +8890,22 @@ async function loadData() {
       }),
       dipReadings: (await db.getAll('dipReadings')).sort((a, b) => b.id - a.id).map(function(d) { if (!d.tankId && d.tank_id) d.tankId = d.tank_id; return d; }),
       prices: await db.getSetting('prices') || SEED.prices,
-      purchasePrices: await db.getSetting('purchasePrices') || SEED.purchasePrices,
+      purchasePrices: await (async () => {
+        // First try saved setting (updated on each fuel purchase)
+        const saved = await db.getSetting('purchasePrices');
+        if (saved && Object.keys(saved).length > 0) return saved;
+        // Fallback: derive from latest fuelPurchases rate per fuelType
+        const allPurchases = await db.getAll('fuelPurchases').catch(() => []);
+        if (allPurchases.length > 0) {
+          const derived = {};
+          // Use most recent purchase rate per fuelType
+          allPurchases.sort((a,b) => (b.id||0)-(a.id||0)).forEach(p => {
+            if (p.fuelType && p.rate && !derived[p.fuelType]) derived[p.fuelType] = p.rate;
+          });
+          if (Object.keys(derived).length > 0) return derived;
+        }
+        return SEED.purchasePrices;
+      })(),
       weekly: [],  // will be computed in renderDashboard from real sales
       upiVPA: await db.getSetting('upiVPA') || SEED.upiVPA,
       upiName: await db.getSetting('upiName') || SEED.upiName,

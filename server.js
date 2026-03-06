@@ -482,6 +482,37 @@ async function startServer() {
     }
   });
 
+
+  // ── PUBLIC: Save employee expense ────────────────────────────────────────────
+  app.post('/api/public/expense/:tenantId', async (req, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const e = req.body;
+      if (!e || !e.amount || !e.category) {
+        return res.status(400).json({ error: 'Missing required fields' });
+      }
+      await pool.query(
+        `INSERT INTO expenses
+          (tenant_id, date, category, description, amount, mode, paid_to, approved_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [
+          tenantId,
+          e.date || new Date().toISOString().slice(0, 10),
+          e.category || 'General',
+          e.desc || e.description || '',
+          e.amount,
+          e.mode || 'cash',
+          e.employee || '',
+          e.employee || ''
+        ]
+      );
+      res.json({ success: true });
+    } catch (err) {
+      console.error('[public/expense]', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('*', (req, res) => {
     if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Not found' });
     res.sendFile(path.join(publicDir, 'index.html'));
