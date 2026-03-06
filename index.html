@@ -7727,9 +7727,21 @@ async function emp_submit() {
       try {
         const tenant2 = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
         if (tenant2 && tenant2.id) {
+          // Build nozzleOpen map from empState.openReadings for this pump
+          const nozzleOpenForPump = {};
+          (pump.nozzleLabels || ['A','B']).forEach(n => {
+            const k = emp_key(pump.id, n);
+            if (empState.openReadings[k] !== undefined) {
+              nozzleOpenForPump[n] = parseFloat(empState.openReadings[k]) || 0;
+            }
+          });
           fetch('/api/public/reading/' + encodeURIComponent(tenant2.id), {
             method: 'POST', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ pumpId: adminPump.id, nozzleReadings: adminPump.nozzleReadings || {} })
+            body: JSON.stringify({
+              pumpId: adminPump.id,
+              nozzleReadings: adminPump.nozzleReadings || {},
+              nozzleOpen: nozzleOpenForPump
+            })
           }).catch(() => {});
         }
       } catch(e) {}

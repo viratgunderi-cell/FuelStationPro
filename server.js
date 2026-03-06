@@ -203,11 +203,18 @@ async function startServer() {
       let d = {};
       try { d = JSON.parse(r.rows[0].data_json || '{}'); } catch {}
       d.nozzleReadings = { ...(d.nozzleReadings || {}), ...nozzleReadings };
+      if (req.body.nozzleOpen) {
+        d.nozzleOpen = { ...(d.nozzleOpen || {}), ...req.body.nozzleOpen };
+      }
+      // Compute current_reading as sum of all nozzle readings
+      const currentReading = Object.values(d.nozzleReadings).reduce((a, v) => a + (parseFloat(v) || 0), 0);
+      // Compute open_reading as sum of all nozzle opens
+      const openReading = Object.values(d.nozzleOpen || {}).reduce((a, v) => a + (parseFloat(v) || 0), 0);
       await pool.query(
-        'UPDATE pumps SET data_json=$1 WHERE tenant_id=$2 AND id=$3',
-        [JSON.stringify(d), tenantId, String(pumpId)]
+        'UPDATE pumps SET data_json=$1, current_reading=$2 WHERE tenant_id=$3 AND id=$4',
+        [JSON.stringify(d), currentReading, tenantId, String(pumpId)]
       );
-      res.json({ success: true });
+      res.json({ success: true, currentReading, openReading });
     } catch (e) {
       console.error('[public/reading]', e.message);
       res.status(500).json({ error: e.message });
