@@ -388,12 +388,11 @@
   // AUTO-REFRESH TENANTS ON PAGE LOAD
   // ═══════════════════════════════════════════
   document.addEventListener('DOMContentLoaded', function() {
-    // Restore super token if saved
+    // ── 1. Restore super token from storage ───────────────────────────────
     const savedToken = sessionStorage.getItem('fb_super_token') || localStorage.getItem('fb_super_token');
     if (savedToken) setAuthToken(savedToken);
 
-    // Fetch tenants from server cache.
-    // Only force selector screen when no station is selected.
+    // ── 2. Fetch tenants from server; show selector if no active tenant ───
     const activeTenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
     if (!activeTenant) {
       mt_getTenants_async().then(() => {
@@ -405,9 +404,11 @@
       mt_getTenants_async().catch(() => {});
     }
 
-    // Re-apply overrides AFTER all inline scripts have run
-    // (index.html re-assigns these functions, undoing our earlier overrides)
+    // ── 3. Re-apply ALL bridge overrides (index.html overwrites them) ─────
+    // index.html runs window.X = X after bridge.js loads, undoing our overrides.
+    // We must re-apply everything inside DOMContentLoaded which runs last.
 
+    // ── Super admin login ──────────────────────────────────────────────────
     window.mt_doSuperLogin = async function() {
       const userEl = document.getElementById('superUser');
       const passEl = document.getElementById('superPass');
@@ -421,7 +422,6 @@
       try {
         const result = await AuthAPI.superLogin(username, password);
         if (result.success) {
-          // Save token to storage so mt_saveTenant and page-refresh can find it
           sessionStorage.setItem('fb_super_token', result.token);
           localStorage.setItem('fb_super_token', result.token);
           setAuthToken(result.token);
@@ -435,7 +435,82 @@
       }
     };
 
-    // Re-apply mt_saveTenant — index.html overwrites this too
+    // ── Super admin logout ────────────────────────────────────────────────
+    window.mt_superLogout = async function() {
+      try { await AuthAPI.logout(); } catch {}
+      sessionStorage.removeItem('fb_super_token');
+      localStorage.removeItem('fb_super_token');
+      localStorage.removeItem('fb_super_session');
+      clearAuth();
+      if (typeof mt_showSelector === 'function') mt_showSelector();
+    };
+
+    // ── Delete station (requires super token) ─────────────────────────────
+    window.mt_deleteTenant = async function(id) {
+      const superToken = sessionStorage.getItem('fb_super_token') || localStorage.getItem('fb_super_token');
+      if (!superToken) {
+        if (typeof mt_toast === 'function') mt_toast('Super admin session expired. Please log in again.', 'error');
+        if (typeof mt_showSelector === 'function') mt_showSelector();
+        return;
+      }
+      const prevToken = getAuthToken();
+      setAuthToken(superToken);
+      try {
+        await TenantAPI.remove(id);
+        const active = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
+        if (active && active.id === id && typeof mt_clearActiveTenant === 'function') mt_clearActiveTenant();
+        await mt_getTenants_async();
+        if (typeof mt_toast === 'function') mt_toast('Station deleted', 'success');
+        if (typeof mt_showSelector === 'function') mt_showSelector();
+      } catch (e) {
+        if (typeof mt_toast === 'function') mt_toast(e.message || 'Failed to delete', 'error');
+      } finally {
+        if (prevToken) setAuthToken(prevToken); else clearAuth();
+      }
+    };
+    // Also update the confirm dialog reference
+    window.mt_confirmDeleteTenant = function(id) {
+      const t = mt_getTenants().find(x => x.id === id);
+      if (!t) return;
+      // Re-use the existing overlay or create a minimal one
+      const existing = document.getElementById('mtDeleteOverlay');
+      if (existing) existing.remove();
+      document.getElementById('app').innerHTML += `
+        <div id="mtDeleteOverlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;display:grid;place-items:center">
+          <div style="background:var(--bg-1,#1a1a2e);border:1px solid var(--border,#333);border-radius:16px;padding:32px;max-width:360px;width:90%;text-align:center">
+            <div style="font-size:40px;margin-bottom:12px">⚠️</div>
+            <div style="font-size:17px;font-weight:700;color:var(--text-0,#fff);margin-bottom:10px">Delete "${t.name}"?</div>
+            <div style="font-size:13px;color:var(--text-2,#aaa);margin-bottom:20px;line-height:1.6">This permanently deletes the station and ALL its data. Cannot be undone.</div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-ghost" style="flex:1" onclick="document.getElementById('mtDeleteOverlay').remove()">Cancel</button>
+              <button class="btn btn-red" style="flex:1" onclick="document.getElementById('mtDeleteOverlay').remove();mt_deleteTenant('${id}')">🗑 Delete</button>
+            </div>
+          </div>
+        </div>
+      `;
+    };
+
+    // ── Toggle station active/inactive (requires super token) ─────────────
+    window.mt_toggleStation = async function(id) {
+      const tenants = mt_getTenants();
+      const t = tenants.find(x => x.id === id);
+      if (!t) return;
+      const newActive = t.active === false ? true : false;
+      const superToken = sessionStorage.getItem('fb_super_token') || localStorage.getItem('fb_super_token');
+      const prevToken = getAuthToken();
+      if (superToken) setAuthToken(superToken);
+      try {
+        await TenantAPI.update(id, { active: newActive });
+        await mt_getTenants_async();
+      } catch (e) {
+        console.warn('[Bridge] toggleStation failed:', e.message);
+      } finally {
+        if (prevToken) setAuthToken(prevToken);
+      }
+      if (typeof mt_showSelector === 'function') mt_showSelector();
+    };
+
+    // ── Create / edit station ──────────────────────────────────────────────
     window.mt_saveTenant = async function(isEdit) {
       const name      = document.getElementById('tName')?.value?.trim();
       const location  = document.getElementById('tLocation')?.value?.trim();
@@ -445,21 +520,12 @@
       const id        = document.getElementById('tId')?.value;
       const adminUser = document.getElementById('tAdminUser')?.value?.trim() || 'admin';
       const adminPass = document.getElementById('tAdminPass')?.value || 'admin123';
-
       if (!name || name.length < 2) { if (typeof mt_toast === 'function') mt_toast('Enter a station name', 'error'); return; }
-
-      // Restore token if cleared from memory
       if (!getAuthToken()) {
         const saved = sessionStorage.getItem('fb_super_token') || localStorage.getItem('fb_super_token');
-        if (saved) {
-          setAuthToken(saved);
-        } else {
-          if (typeof mt_toast === 'function') mt_toast('Session expired. Please log in again.', 'error');
-          if (typeof mt_showSelector === 'function') mt_showSelector();
-          return;
-        }
+        if (saved) setAuthToken(saved);
+        else { if (typeof mt_toast === 'function') mt_toast('Session expired. Please log in again.', 'error'); if (typeof mt_showSelector === 'function') mt_showSelector(); return; }
       }
-
       try {
         if (isEdit && id) {
           await TenantAPI.update(id, { name, location, ownerName, phone, icon });
@@ -474,6 +540,121 @@
         if (typeof mt_toast === 'function') mt_toast(e.message || 'Failed to save', 'error');
       }
     };
+
+    // ── Delete station admin user (requires super token) ──────────────────
+    window.mt_deleteStationAdmin = async function(tenantId, userIdx) {
+      if (!confirm('Remove this admin user?')) return;
+      const superToken = sessionStorage.getItem('fb_super_token') || localStorage.getItem('fb_super_token');
+      const prevToken = getAuthToken();
+      if (superToken) setAuthToken(superToken);
+      try {
+        // Get current admins list to find the user id
+        const admins = await TenantAPI.getAdmins(tenantId);
+        const user = admins[userIdx];
+        if (!user) { if (typeof mt_toast === 'function') mt_toast('Admin user not found', 'error'); return; }
+        await TenantAPI.removeAdmin(tenantId, user.id);
+        if (typeof mt_toast === 'function') mt_toast('Admin removed', 'success');
+        if (typeof mt_manageStationAdmins === 'function') mt_manageStationAdmins(tenantId);
+      } catch (e) {
+        if (typeof mt_toast === 'function') mt_toast(e.message || 'Failed to remove admin', 'error');
+      } finally {
+        if (prevToken) setAuthToken(prevToken);
+      }
+    };
+
+    // ── Admin login via API (NOT localStorage hash check) ─────────────────
+    window.doAdminLogin = async function() {
+      const user = (document.getElementById('adminUser')?.value || '').trim().toLowerCase();
+      const pass = document.getElementById('adminPass')?.value || '';
+      if (!user || !pass) { if (typeof toast === 'function') toast('Enter credentials', 'error'); return; }
+      const tenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
+      if (!tenant) { if (typeof toast === 'function') toast('No station selected', 'error'); return; }
+      try {
+        const result = await AuthAPI.adminLogin(user, pass, tenant.id);
+        if (result.success) {
+          setAuthToken(result.token);
+          setTenantId(tenant.id);
+          sessionStorage.setItem('fb_session', JSON.stringify({
+            loggedIn: true, role: 'admin',
+            adminUser: { name: result.userName, username: user, role: result.userRole },
+            tenant, token: result.token
+          }));
+          if (typeof APP !== 'undefined') {
+            APP.loggedIn = true;
+            APP.role = 'admin';
+            APP.adminUser = { name: result.userName, username: user, role: result.userRole };
+            APP.tenant = tenant;
+          }
+          window.db = new FuelDB('FuelBunkPro_' + tenant.id);
+          // Load real data BEFORE rendering
+          if (typeof loadData === 'function') {
+            try { await loadData(); } catch(e) { console.warn('[Bridge] loadData:', e.message); }
+          }
+          if (typeof enterApp === 'function') enterApp();
+          if (typeof toast === 'function') toast('Welcome, ' + result.userName, 'success');
+        }
+      } catch (e) {
+        if (typeof toast === 'function') toast(e.message || 'Invalid credentials', 'error');
+      }
+    };
+
+    // ── Session restore (uses sessionStorage + API token) ─────────────────
+    window.loadSession = function() {
+      try {
+        const raw = sessionStorage.getItem('fb_session');
+        if (!raw) return false;
+        const session = JSON.parse(raw);
+        if (!session || !session.loggedIn || !session.token) return false;
+        setAuthToken(session.token);
+        setTenantId(session.tenant?.id);
+        if (typeof APP !== 'undefined') {
+          APP.loggedIn = true;
+          APP.role = session.role === 'employee' ? 'employee' : 'admin';
+          APP.adminUser = session.adminUser;
+          APP.tenant = session.tenant;
+        }
+        if (session.tenant?.id) {
+          window.db = new FuelDB('FuelBunkPro_' + session.tenant.id);
+        }
+        // Reload data from server now that token is set
+        if (session.role !== 'employee') {
+          setTimeout(function() {
+            if (typeof loadData === 'function' && typeof getAuthToken === 'function' && getAuthToken()) {
+              loadData()
+                .then(function() { if (typeof renderPage === 'function') renderPage(); })
+                .catch(function(e) { console.warn('[Bridge] session reload:', e.message); });
+            }
+          }, 200);
+        }
+        return true;
+      } catch (e) {
+        return false;
+      }
+    };
+
+    // ── App logout ────────────────────────────────────────────────────────
+    window.appLogout = async function() {
+      try { await AuthAPI.logout(); } catch {}
+      if (typeof APP !== 'undefined') {
+        APP.loggedIn = false; APP.role = null; APP.adminUser = null; APP.data = null;
+      }
+      sessionStorage.removeItem('fb_session');
+      clearAuth();
+      location.reload();
+    };
+
+    // ── Select tenant (station) → sets token + FuelDB ─────────────────────
+    window.mt_selectTenant = function(id) {
+      const tenants = mt_getTenants();
+      const t = tenants.find(x => x.id === id);
+      if (!t) return;
+      if (t.active === false) { if (typeof mt_toast === 'function') mt_toast('This station is inactive', 'error'); return; }
+      if (typeof mt_setActiveTenant === 'function') mt_setActiveTenant(t);
+      setTenantId(id);
+      window.db = new FuelDB('FuelBunkPro_' + id);
+      location.reload();
+    };
+
   });
 
   console.log('[Bridge] Backend integration bridge loaded');

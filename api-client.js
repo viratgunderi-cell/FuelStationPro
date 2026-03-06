@@ -81,16 +81,17 @@ const AuthAPI = {
 };
 
 // ── Tenant API ────────────────────────────────────────────────────────────
+// Uses /data/tenants/ path — handled by explicit routes in server.js
 const TenantAPI = {
-  async list()           { return apiFetch('/tenants'); },
-  async create(data)     { return apiFetch('/tenants', { method:'POST', body:JSON.stringify(data) }); },
-  async update(id, data) { return apiFetch('/tenants/'+id, { method:'PUT', body:JSON.stringify(data) }); },
-  async remove(id)       { return apiFetch('/tenants/'+id, { method:'DELETE' }); },
-  async getAdmins(tid)   { return apiFetch('/tenants/'+tid+'/admins'); },
-  async addAdmin(tid, d) { return apiFetch('/tenants/'+tid+'/admins', { method:'POST', body:JSON.stringify(d) }); },
-  async removeAdmin(tid,uid) { return apiFetch('/tenants/'+tid+'/admins/'+uid, { method:'DELETE' }); },
+  async list()           { return apiFetch('/data/tenants'); },
+  async create(data)     { return apiFetch('/data/tenants', { method:'POST', body:JSON.stringify(data) }); },
+  async update(id, data) { return apiFetch('/data/tenants/'+id, { method:'PUT', body:JSON.stringify(data) }); },
+  async remove(id)       { return apiFetch('/data/tenants/'+id, { method:'DELETE' }); },
+  async getAdmins(tid)   { return apiFetch('/data/tenants/'+tid+'/admins'); },
+  async addAdmin(tid, d) { return apiFetch('/data/tenants/'+tid+'/admins', { method:'POST', body:JSON.stringify(d) }); },
+  async removeAdmin(tid,uid) { return apiFetch('/data/tenants/'+tid+'/admins/'+uid, { method:'DELETE' }); },
   async resetAdminPassword(tid,uid,pw) {
-    return apiFetch('/tenants/'+tid+'/admins/'+uid+'/reset-password', {
+    return apiFetch('/data/tenants/'+tid+'/admins/'+uid+'/reset-password', {
       method:'POST', body:JSON.stringify({ newPassword: pw })
     });
   }

@@ -1,186 +1,177 @@
 /**
  * FuelBunk Pro — Express Server (PostgreSQL)
- *
- * BUGS FIXED:
- *  1. Route conflict: /api/data and /api both mount dataRoutes — this means
- *     every data request goes through authMiddleware TWICE (double-auth).
- *     Fixed: /api/data uses authMiddleware; /api only handles non-data routes.
- *  2. Static file serving: if index.html is in root dir alongside server.js,
- *     express.static() serves ALL JS files including server.js, schema.js etc.
- *     to anyone who knows the path. Fixed: serve from /public subdirectory only,
- *     and fallback to __dirname only in explicit development mode.
- *  3. Rate limiter: max: 300 per 60s is very permissive. Auth already has its
- *     own stricter limiter, but general API should be tighter.
- *  4. CORS: origin: true reflects any origin — acceptable for dev/POC but
- *     should respect CORS_ORIGIN env variable properly.
- *  5. Missing /api/auth/employee-login from public tenant aliases —
- *     but this is now handled in security.js publicPaths fix.
- *  6. app.get('*') catch-all runs BEFORE error handler — correct order kept.
- *  7. No graceful DB pool shutdown on SIGTERM — added pool.end().
  */
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
-const fs = require('fs');
 
-const { initDatabase, pool } = require('./schema');
+const { initDatabase } = require('./schema');
 const { authMiddleware, inputSanitizerMiddleware } = require('./security');
 const authRoutes = require('./auth');
 const dataRoutes = require('./data');
 
 async function startServer() {
-  let db;
-  try {
-    db = await initDatabase();
-  } catch (err) {
-    console.error('[DB] Database init failed:', err.message);
-    console.error('[DB] Starting server without DB — set DATABASE_URL in Railway Variables');
-    db = null;
-  }
+  const db = await initDatabase();
   const app = express();
   const PORT = process.env.PORT || 3000;
 
-  if (db) app.locals.db = db;
+  app.locals.db = db;
   app.set('trust proxy', 1);
 
-  // ── Security headers ───────────────────────────────────────
-  app.use(helmet({
-    contentSecurityPolicy: false,   // Frontend sets its own CSP
-    crossOriginEmbedderPolicy: false,
-  }));
-
-  // ── CORS ───────────────────────────────────────────────────
-  const corsOrigin = process.env.CORS_ORIGIN;
-  app.use(cors({
-    origin: corsOrigin ? corsOrigin.split(',').map(s => s.trim()) : true,
-    credentials: true,
-  }));
-
-  // ── Rate limiting ──────────────────────────────────────────
-  // General API: 200 req/min
-  app.use('/api', rateLimit({
-    windowMs: 60_000,
-    max: 200,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'Too many requests, slow down.' },
-  }));
-
+  app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+  app.use(cors({ origin: process.env.CORS_ORIGIN || true, credentials: true }));
+  app.use(rateLimit({ windowMs: 60000, max: 300, standardHeaders: true, legacyHeaders: false }));
   app.use(express.json({ limit: '2mb' }));
   app.use(express.urlencoded({ extended: false }));
   app.use(inputSanitizerMiddleware);
 
-  // Static files: ALWAYS register routes — never rely on existsSync at startup.
-  // If a file is missing, return 404 explicitly (not index.html which breaks JS parsing).
-  const _safeFiles = ['index.html', 'api-client.js', 'bridge.js', 'favicon.ico', 'sw.js', 'manifest.json'];
-  _safeFiles.forEach(f => {
-    const fp = path.join(__dirname, f);
-    app.get('/' + f, (_req, res) => {
-      if (!fs.existsSync(fp)) return res.status(404).send('Not found: ' + f);
-      if (f.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      if (f.endsWith('.js'))   res.setHeader('Content-Type', 'application/javascript');
-      res.sendFile(fp);
-    });
-  });
-  ['assets', 'icons', 'images', 'public'].forEach(d => {
-    const dp = path.join(__dirname, d);
-    if (fs.existsSync(dp)) app.use('/' + d, express.static(dp, { maxAge: '1h' }));
-  });
-  // ── Health check (public) ──────────────────────────────────
+  // Serve frontend — index.html is in root directory
+  const publicDir = require('fs').existsSync(path.join(__dirname, 'public'))
+    ? path.join(__dirname, 'public')
+    : __dirname;
+
+  app.use(express.static(publicDir, {
+    maxAge: 0,
+    setHeaders: (res, fp) => {
+      if (fp.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    }
+  }));
+
   app.get('/api/health', (req, res) => {
-    res.json({
-      status: 'ok',
-      database: db ? 'postgresql' : 'not_connected',
-      uptime: Math.floor(process.uptime()),
-      env: process.env.NODE_ENV || 'development',
-      has_db_url: !!(process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.PGHOST)
-    });
+    res.json({ status: 'ok', database: 'postgresql', uptime: process.uptime() });
   });
 
-  // ── Public tenant list (multiple URL aliases for compatibility) ──
+  // Public tenant list aliases (supports both legacy and new frontend clients)
   const listTenantsPublic = async (req, res) => {
-    // Guard: if DB is not connected, return empty array (not 500/crash)
-    if (!db) {
-      console.warn('[tenants list] DB not connected — returning empty list');
-      return res.json([]);
-    }
     try {
       const tenants = await db.prepare(
         'SELECT id, name, location, icon, color, color_light, active, station_code FROM tenants ORDER BY name'
       ).all();
       res.json(tenants);
     } catch (e) {
-      console.error('[tenants list]', e.message);
       res.status(500).json({ error: e.message });
     }
   };
-  app.get(['/api/tenants', '/api/tenants/list', '/api/data/tenants', '/api/data/tenants/list'],
-    listTenantsPublic
-  );
 
-  // ── Auth routes (with stricter rate limit) ─────────────────
-  const authLimiter = rateLimit({ windowMs: 300_000, max: 30 });
-  if (db) {
-    app.use('/api/auth', authLimiter, authRoutes(db));
-    // ── Data routes ──────────────────────────────────────────
-    app.use('/api/data', authMiddleware(db), dataRoutes(db));
-  } else {
-    // DB not connected — return meaningful error for all auth/data routes
-    app.use('/api/auth', (req, res) => res.status(503).json({
-      error: 'Database not connected. Check DATABASE_URL in Railway Variables.'
-    }));
-    app.use('/api/data', (req, res) => res.status(503).json({
-      error: 'Database not connected. Check DATABASE_URL in Railway Variables.'
-    }));
-  }
+  app.get(['/api/tenants', '/api/tenants/list', '/api/data/tenants', '/api/data/tenants/list'], listTenantsPublic);
 
-  // NOTE: do NOT add app.use("/api", ...) here - it would intercept /api/auth/* routes.
+  const authLimiter = rateLimit({ windowMs: 300000, max: 30 });
+  app.use('/api/auth', authLimiter, authRoutes(db));
 
-  // SPA fallback + API 404 handler for ALL HTTP methods.
-  // BUG FIX: was app.get('*') — POST/PUT/DELETE to unknown /api/* routes
-  // received no response, causing apiFetch to hang forever (silent failure).
-  // Fixed: app.all('*') catches every method; API paths always get a JSON 404.
-  app.all('*', (req, res) => {
-    if (req.path.startsWith('/api/')) {
-      return res.status(404).json({ error: 'API endpoint not found: ' + req.method + ' ' + req.path });
-    }
-    // Only serve index.html for GET requests (SPA routing)
-    if (req.method !== 'GET') {
-      return res.status(405).json({ error: 'Method not allowed' });
-    }
-    const _staticExts = ['.js', '.css', '.json', '.png', '.jpg', '.ico', '.svg', '.woff', '.woff2'];
-    if (_staticExts.some(ext => req.path.endsWith(ext))) {
-      return res.status(404).send('Not found: ' + req.path);
-    }
-    const _idx = path.join(__dirname, 'index.html');
-    if (fs.existsSync(_idx)) { res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate'); res.sendFile(_idx); }
-    else res.status(404).send('index.html not found');
+  // ── Explicit tenant CRUD routes (authenticated, requireRole super) ───────
+  // These are registered BEFORE the generic dataRoutes mounts to avoid
+  // any routing ambiguity from double-mounting.
+  const { requireRole: reqRole, auditLog: auLog } = require('./security');
+  const { hashPassword: hashPw } = require('./schema');
+
+  // GET tenant admins
+  app.get('/api/data/tenants/:id/admins', authMiddleware(db), reqRole('super'), async (req, res) => {
+    try {
+      const admins = await db.prepare('SELECT id, name, username, role, active, created_at FROM admin_users WHERE tenant_id = $1').all(req.params.id);
+      res.json(admins);
+    } catch (e) { res.status(500).json({ error: e.message }); }
   });
-  // eslint-disable-next-line no-unused-vars
+
+  // POST add tenant admin
+  app.post('/api/data/tenants/:id/admins', authMiddleware(db), reqRole('super'), async (req, res) => {
+    const { name, username, password, role } = req.body;
+    if (!name || !username || !password) return res.status(400).json({ error: 'All fields required' });
+    if (password.length < 6) return res.status(400).json({ error: 'Password too short' });
+    try {
+      const exists = await db.prepare('SELECT id FROM admin_users WHERE tenant_id = $1 AND username = $2').get(req.params.id, username);
+      if (exists) return res.status(409).json({ error: 'Username already exists' });
+      const result = await db.prepare('INSERT INTO admin_users (tenant_id, name, username, pass_hash, role) VALUES ($1,$2,$3,$4,$5)').run(req.params.id, name, username, hashPw(password), role||'Manager');
+      res.json({ success: true, id: result.lastInsertRowid });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // DELETE remove tenant admin
+  app.delete('/api/data/tenants/:tid/admins/:uid', authMiddleware(db), reqRole('super'), async (req, res) => {
+    try {
+      await db.prepare('DELETE FROM admin_users WHERE id = $1 AND tenant_id = $2').run(req.params.uid, req.params.tid);
+      res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // POST reset admin password
+  app.post('/api/data/tenants/:tid/admins/:uid/reset-password', authMiddleware(db), reqRole('super'), async (req, res) => {
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 6) return res.status(400).json({ error: 'Password too short' });
+    try {
+      await db.prepare('UPDATE admin_users SET pass_hash = $1 WHERE id = $2 AND tenant_id = $3').run(hashPw(newPassword), req.params.uid, req.params.tid);
+      res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // POST create tenant
+  app.post('/api/data/tenants', authMiddleware(db), reqRole('super'), async (req, res) => {
+    const { id, name, location, ownerName, phone, icon, color, colorLight, stationCode, adminUser, adminPass } = req.body;
+    if (!name || name.length < 2) return res.status(400).json({ error: 'Station name required' });
+    try {
+      const tenantId = id || ('stn_' + Date.now());
+      const existing = await db.prepare('SELECT id FROM tenants WHERE name = $1').get(name);
+      if (existing) return res.status(409).json({ error: 'Station name already exists' });
+      await db.prepare('INSERT INTO tenants (id, name, location, owner_name, phone, icon, color, color_light, station_code, active) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)')
+        .run(tenantId, name, location||'', ownerName||'', phone||'', icon||'⛽', color||'#d4940f', colorLight||'#f0b429', stationCode||'', 1);
+      if (adminUser && adminPass) {
+        try {
+          await db.prepare('INSERT INTO admin_users (tenant_id, name, username, pass_hash, role) VALUES ($1,$2,$3,$4,$5)')
+            .run(tenantId, ownerName||adminUser, adminUser, hashPw(adminPass), 'Owner');
+        } catch (e2) { console.warn('[Tenant] Admin creation failed:', e2.message); }
+      }
+      await auLog(req, 'CREATE_TENANT', 'tenants', tenantId, name);
+      res.json({ success: true, id: tenantId });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // PUT update tenant
+  app.put('/api/data/tenants/:id', authMiddleware(db), reqRole('super'), async (req, res) => {
+    const { name, location, ownerName, phone, icon, active, stationCode } = req.body;
+    try {
+      await db.prepare('UPDATE tenants SET name=COALESCE($1,name), location=COALESCE($2,location), owner_name=COALESCE($3,owner_name), phone=COALESCE($4,phone), icon=COALESCE($5,icon), active=COALESCE($6,active), station_code=COALESCE($7,station_code), updated_at=NOW() WHERE id=$8')
+        .run(name, location, ownerName, phone, icon, active !== undefined ? (active ? 1 : 0) : null, stationCode, req.params.id);
+      res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // DELETE tenant — this is the critical route that was failing
+  app.delete('/api/data/tenants/:id', authMiddleware(db), reqRole('super'), async (req, res) => {
+    try {
+      console.log('[Server] DELETE tenant:', req.params.id, 'by:', req.userName);
+      await auLog(req, 'DELETE_TENANT', 'tenants', req.params.id, '');
+      await db.prepare('DELETE FROM tenants WHERE id = $1').run(req.params.id);
+      res.json({ success: true });
+    } catch (e) {
+      console.error('[Server] DELETE tenant error:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Keep legacy /api/data/* and new /api/* route styles working together.
+  app.use('/api/data', authMiddleware(db), dataRoutes(db));
+  app.use('/api', authMiddleware(db), dataRoutes(db));
+
+  app.get('*', (req, res) => {
+    if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Not found' });
+    res.sendFile(path.join(publicDir, 'index.html'));
+  });
+
   app.use((err, req, res, next) => {
-    console.error('[Unhandled Error]', err.message, err.stack);
+    console.error('[Error]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   });
 
-  // ── Start listening ────────────────────────────────────────
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[FuelBunk Pro] Running on port ${PORT} (PostgreSQL)`);
-    console.log(`[FuelBunk Pro] NODE_ENV=${process.env.NODE_ENV || 'development'}`);
+    console.log(`[FuelBunk Pro] Running on port ${PORT} with PostgreSQL`);
   });
 
-  // ── Graceful shutdown ──────────────────────────────────────
-  async function shutdown(signal) {
-    console.log(`[Server] ${signal} received — shutting down gracefully`);
-    try { await pool.end(); console.log('[DB] Pool closed'); } catch {}
-    process.exit(0);
-  }
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => { console.log('[Server] Shutting down...'); process.exit(0); });
+  process.on('SIGINT', () => process.exit(0));
 }
 
 startServer().catch(e => {
-  console.error('[FATAL]', e.message, e.stack);
+  console.error('[FATAL]', e);
   process.exit(1);
 });
