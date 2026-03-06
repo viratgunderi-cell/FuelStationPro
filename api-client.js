@@ -177,7 +177,13 @@ class FuelDB {
   // apiFetch prepends /api, so we must use /data/storeName here.
   _path(storeName) { return '/data/' + storeName; }
 
+  // Stores that exist only in the browser (offline queue) — silently ignore on server
+  _isLocalOnly(storeName) {
+    return storeName === 'pendingSync';
+  }
+
   async getAll(storeName) {
+    if (this._isLocalOnly(storeName)) return [];
     try {
       return await apiFetch(this._path(storeName));
     } catch (e) {
@@ -205,6 +211,7 @@ class FuelDB {
   }
 
   async add(storeName, data) {
+    if (this._isLocalOnly(storeName)) return null; // silently ignore offline-only stores
     const result = await apiFetch(this._path(storeName), {
       method: 'POST',
       body: JSON.stringify(data),
@@ -271,21 +278,6 @@ class FuelDB {
     }
   }
 
-  async getSetting(key, defaultVal = null) {
-    try {
-      const result = await apiFetch('/settings/key/' + encodeURIComponent(key));
-      return result.value !== null && result.value !== undefined ? result.value : defaultVal;
-    } catch {
-      return defaultVal;
-    }
-  }
-
-  async setSetting(key, value) {
-    await apiFetch('/settings/key/' + encodeURIComponent(key), {
-      method: 'PUT',
-      body: JSON.stringify({ value }),
-    });
-  }
 }
 
 // ── Health check with timeout ──────────────────────────────────

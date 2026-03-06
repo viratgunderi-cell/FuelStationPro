@@ -5120,12 +5120,25 @@ function savePurchase() {
   if (tank) {
     tank.current = Math.min(tank.capacity, tank.current + liters);
     tank.lastDip = today();
-    db.put('tanks', tank).catch(() => {});
+    db.put('tanks', tank).catch(e => {
+      console.error('[savePurchase] tank update failed:', e.message || e);
+      toast('⚠️ Tank level saved locally but server sync failed — reload to verify', 'warning');
+    });
   }
   auditLog('purchase_add', { fuelType, liters, rate, total, invoice });
   closeModal();
   toast(`✅ ${fmt(liters)}L ${fuelInfo.short} purchased — ₹${cur(total)} added to expenses`, 'success');
   renderPage();
+  // Confirm tank update persisted — reload tanks from DB after 1s
+  setTimeout(async () => {
+    try {
+      const freshTanks = await db.getAll('tanks');
+      if (freshTanks && freshTanks.length) {
+        APP.data.tanks = freshTanks;
+        if (APP.page === 'tanks' || APP.page === 'dashboard') renderPage();
+      }
+    } catch(e) {}
+  }, 1500);
 }
 
 // ── PUMP EDIT — per-nozzle fuel type ─────────────────────────
@@ -5457,7 +5470,10 @@ function saveReading(pumpId) {
     if (tank && liters > 0) {
       const before = tank.current;
       tank.current = Math.max(0, tank.current - liters);
-      db.put('tanks', tank).catch(() => {});
+      db.put('tanks', tank).catch(e => {
+      console.error('[savePurchase] tank update failed:', e.message || e);
+      toast('⚠️ Tank level saved locally but server sync failed — reload to verify', 'warning');
+    });
       msgs.push(`${getFuel(ft).short}: −${fmt(liters)}L → ${fmt(tank.current)}L left`);
       if (tank.current < before * 0.15 && before > 0)
         toast(`⚠️ ${getFuel(ft).short} tank critically low: ${fmt(tank.current)} L`, 'warning');
@@ -7883,8 +7899,8 @@ function showLoginScreen() {
         '<div style="width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent-light));display:grid;place-items:center;font-size:18px">\uD83D\uDD11</div>' +
         '<div><div class="fw-800" style="color:var(--text-0);font-size:16px">Admin / Owner Login</div><div style="font-size:11px;color:var(--text-3)">Full access to management dashboard</div></div>' +
       '</div>' +
-      '<div class="form-group"><label class="form-label">Username</label><input class="form-input" id="adminUser" placeholder="Enter username" autocomplete="username" /></div>' +
-      '<div class="form-group"><label class="form-label">Password</label><input class="form-input" id="adminPass" type="password" placeholder="Enter password" autocomplete="current-password" onkeydown="if(event.key===\'Enter\')doAdminLogin()" /></div>' +
+      '<div class="form-group"><label class="form-label">Username</label><input class="form-input" id="adminUser" placeholder="Enter username" autocomplete="off" /></div>' +
+      '<div class="form-group"><label class="form-label">Password</label><input class="form-input" id="adminPass" type="password" placeholder="Enter password" autocomplete="new-password" onkeydown="if(event.key===\'Enter\')doAdminLogin()" /></div>' +
       '<button class="btn btn-accent btn-block" style="padding:14px;font-size:14px;margin-top:6px" onclick="doAdminLogin()">\uD83D\uDD10 Login as Admin</button>' +
     '</div>' +
     '<div id="empLoginForm" class="login-card" style="display:none">' +
@@ -7900,7 +7916,12 @@ function showLoginScreen() {
     '<div class="login-footer">FuelBunk Pro v3.0 &copy; 2026 &nbsp;·&nbsp; <a href="#" onclick="mt_switchStation();return false;" style="color:var(--accent-light);text-decoration:none;font-weight:600;">🏪 Switch Station</a></div>' +
     '</div></div>';
 
-  setTimeout(function() { var f = document.getElementById('adminUser'); if (f) f.focus(); }, 300);
+  setTimeout(function() {
+    var f = document.getElementById('adminUser');
+    var p = document.getElementById('adminPass');
+    if (f) { f.value = ''; f.focus(); }
+    if (p) p.value = '';
+  }, 100);
 }
 
 function switchLoginTab(tab) {
