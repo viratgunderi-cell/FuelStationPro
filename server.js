@@ -101,6 +101,11 @@ async function startServer() {
 
   // ── Public tenant list (multiple URL aliases for compatibility) ──
   const listTenantsPublic = async (req, res) => {
+    // Guard: if DB is not connected, return empty array (not 500/crash)
+    if (!db) {
+      console.warn('[tenants list] DB not connected — returning empty list');
+      return res.json([]);
+    }
     try {
       const tenants = await db.prepare(
         'SELECT id, name, location, icon, color, color_light, active, station_code FROM tenants ORDER BY name'
@@ -117,12 +122,19 @@ async function startServer() {
 
   // ── Auth routes (with stricter rate limit) ─────────────────
   const authLimiter = rateLimit({ windowMs: 300_000, max: 30 });
-  app.use('/api/auth', authLimiter, authRoutes(db));
-
-  // ── Data routes ────────────────────────────────────────────
-  // BUG FIX: mount ONLY under /api/data with auth — do NOT also mount
-  // under /api which would cause double-auth and route conflicts.
-  app.use('/api/data', authMiddleware(db), dataRoutes(db));
+  if (db) {
+    app.use('/api/auth', authLimiter, authRoutes(db));
+    // ── Data routes ──────────────────────────────────────────
+    app.use('/api/data', authMiddleware(db), dataRoutes(db));
+  } else {
+    // DB not connected — return meaningful error for all auth/data routes
+    app.use('/api/auth', (req, res) => res.status(503).json({
+      error: 'Database not connected. Check DATABASE_URL in Railway Variables.'
+    }));
+    app.use('/api/data', (req, res) => res.status(503).json({
+      error: 'Database not connected. Check DATABASE_URL in Railway Variables.'
+    }));
+  }
 
   // NOTE: do NOT add app.use("/api", ...) here - it would intercept /api/auth/* routes.
 
