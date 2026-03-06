@@ -3150,7 +3150,7 @@ function renderStaff(D) {
   const totalNozzles = D.pumps.reduce((a, p) => a + (p.nozzleLabels || ['A','B']).length, 0);
   const allocKey = allocShift + '_' + allocDate;
   const shiftAlloc = allocations[allocKey] || allocations[allocShift] || {};
-  const assignedCount = Object.values(shiftAlloc).filter(v => v).length;
+  const assignedCount = Object.values(shiftAlloc).filter(v => v && D.employees.some(e => parseInt(e.id) === parseInt(v))).length;
   const shiftEmps = D.employees.filter(e => (e.shift||'').split(',').map(s=>s.trim()).includes(allocShift));
   const empOptions = shiftEmps.map(e => `<option value="${e.id}">${e.name} (${e.role})</option>`).join('');
 
@@ -3190,7 +3190,7 @@ function renderStaff(D) {
     const nozzleRows = nLabels.map(n => {
       const key = `${p.id}_${n}`;
       const empId = shiftAlloc[key];
-      const emp = empId ? D.employees.find(e => e.id === empId) : null;
+      const emp = empId ? D.employees.find(e => parseInt(e.id) === parseInt(empId)) : null;
       const isAssigned = !!emp;
       const nFuelType = pNozzleFuels[n] || p.fuelType;
       const nFuelInfo = fuelInfo[nFuelType] || fuelInfo.petrol;
@@ -3244,7 +3244,7 @@ function renderStaff(D) {
   const empSummaryRows = shiftEmps.map(emp => {
     const assignedNozzles = [];
     Object.entries(shiftAlloc).forEach(([key, id]) => {
-      if (id === emp.id) {
+      if (parseInt(id) === parseInt(emp.id)) {
         const [pumpId, nozzle] = key.split('_');
         const pump = D.pumps.find(p => String(p.id) === String(pumpId));
         assignedNozzles.push({ pump: pump?.name || `Pump ${pumpId}`, nozzle, fuelType: pump?.fuelType });
@@ -5908,11 +5908,24 @@ function assignNozzle(pumpId, nozzle, empIdStr) {
   if (!allocations[allocShift]) allocations[allocShift] = {};
   if (empId) {
     allocations[allocShift][`${pumpId}_${nozzle}`] = empId;
-    const emp = APP.data.employees.find(e => e.id === empId);
+    const emp = APP.data.employees.find(e => parseInt(e.id) === parseInt(empId));
     const pump = APP.data.pumps.find(p => String(p.id) === String(pumpId));
     toast(`${emp?.name} → ${pump?.name} Nozzle ${nozzle}`, 'success');
   } else {
     delete allocations[allocShift][`${pumpId}_${nozzle}`];
+  }
+  // Prune stale keys — remove entries for pumps/nozzles that no longer exist
+  const validKeys = new Set();
+  (APP.data?.pumps || []).forEach(p => {
+    const labels = p.nozzleLabels || (p.nozzles === 1 ? ['A'] : p.nozzles === 2 ? ['A','B'] : ['A','B','C'].slice(0, p.nozzles));
+    labels.forEach(n => validKeys.add(`${p.id}_${n}`));
+  });
+  if (validKeys.size > 0) {
+    Object.keys(allocations).forEach(shift => {
+      Object.keys(allocations[shift]).forEach(key => {
+        if (!validKeys.has(key)) delete allocations[shift][key];
+      });
+    });
   }
   saveAllocations();
   renderPage();
@@ -6758,7 +6771,7 @@ function emp_renderLogin() {
   </div>
   <div class="card"><div class="card-head"><h4>Login</h4>${badge(emp_today(),'badge-accent')}</div><div class="card-body">
     <div class="form-group"><label class="form-label">Select Your Name</label><select class="form-input" id="empLoginName" ${hasEmployees ? '' : 'disabled'}>${empOpts}</select></div>
-    <div class="form-group"><label class="form-label">Last 4 Digits of Phone (PIN)</label><input class="form-input" id="empLoginPin" type="tel" maxlength="4" placeholder="Enter 4-digit PIN" inputmode="numeric" autocomplete="off" /><div style="font-size:10px;color:var(--text-3);margin-top:4px">Use last 4 digits of registered mobile</div></div>
+    <div class="form-group"><label class="form-label">Last 4 Digits of Phone (PIN)</label><input class="form-input" id="empLoginPin" type="password" maxlength="4" placeholder="Enter 4-digit PIN" inputmode="numeric" autocomplete="off" /><div style="font-size:10px;color:var(--text-3);margin-top:4px">Use last 4 digits of registered mobile</div></div>
     <button class="btn btn-accent btn-block" style="padding:14px;font-size:14px;margin-top:6px;${hasEmployees ? '' : 'opacity:0.6;cursor:not-allowed;'}" onclick="emp_doLogin()" ${hasEmployees ? '' : 'disabled'}>🔐 Login</button>
     ${hasEmployees ? '' : '<div style="font-size:11px;color:var(--red);margin-top:8px">No employees configured. Ask admin to add staff in Staff & Allocation.</div>'}
   </div></div>`;
@@ -7845,7 +7858,7 @@ function showLoginScreen() {
         '<div><div class="fw-800" style="color:var(--text-0);font-size:16px">Employee Login</div><div style="font-size:11px;color:var(--text-3)">Enter meter readings &amp; record sales</div></div>' +
       '</div>' +
       '<div class="form-group"><label class="form-label">Select Your Name</label><select class="form-input" id="empLoginName2"' + (hasEmployees ? '' : ' disabled') + '>' + empOpts + '</select></div>' +
-      '<div class="form-group"><label class="form-label">PIN (Last 4 digits of phone)</label><input class="form-input" id="empLoginPin2" type="tel" maxlength="4" placeholder="Enter 4-digit PIN" inputmode="numeric" autocomplete="off" onkeydown="if(event.key===\'Enter\')doEmpLogin()" /></div>' +
+      '<div class="form-group"><label class="form-label">PIN (Last 4 digits of phone)</label><input class="form-input" id="empLoginPin2" type="password" maxlength="4" placeholder="Enter 4-digit PIN" inputmode="numeric" autocomplete="off" onkeydown="if(event.key===\'Enter\')doEmpLogin()" /></div>' +
       '<button class="btn btn-block" style="background:var(--green);color:#fff;padding:14px;font-size:14px;margin-top:6px' + (hasEmployees ? '' : ';opacity:0.6;cursor:not-allowed') + '" onclick="doEmpLogin()"' + (hasEmployees ? '' : ' disabled') + '>\uD83E\uDDD1\u200D\uD83D\uDD27 Login</button>' +
       (hasEmployees ? '' : '<div style="font-size:11px;color:var(--red);margin-top:8px">No employees configured. Ask admin to add staff in Staff & Allocation.</div>') +
     '</div>' +
@@ -8712,6 +8725,23 @@ async function loadData() {
         const savedShift = localStorage.getItem('fb_alloc_shift');
         if (savedShift) allocShift = savedShift;
       } catch {}
+      // Prune stale allocation keys (pumps removed from station)
+      if (APP.data?.pumps) {
+        const validKeys = new Set();
+        APP.data.pumps.forEach(p => {
+          const labels = p.nozzleLabels || (p.nozzles === 1 ? ['A'] : p.nozzles === 2 ? ['A','B'] : ['A','B','C'].slice(0, p.nozzles));
+          labels.forEach(n => validKeys.add(`${p.id}_${n}`));
+        });
+        if (validKeys.size > 0) {
+          let pruned = false;
+          Object.keys(allocations).forEach(shift => {
+            Object.keys(allocations[shift]).forEach(key => {
+              if (!validKeys.has(key)) { delete allocations[shift][key]; pruned = true; }
+            });
+          });
+          if (pruned) saveAllocations();
+        }
+      }
     } catch(allocErr) {
       console.warn('[Alloc] Failed to load from server:', allocErr.message);
     }
