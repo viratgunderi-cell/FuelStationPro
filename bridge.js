@@ -269,6 +269,17 @@
         }
         window.db = new FuelDB('FuelBunkPro_' + tenant.id);
         setTenantId(tenant.id);
+        // BUG FIX: load real data from DB BEFORE entering app
+        // Without this, enterApp() renders with SEED data (all zeros)
+        // because initApp() called loadData() before the auth token was set
+        if (typeof loadData === 'function') {
+          try {
+            await Promise.race([
+              loadData(),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000))
+            ]);
+          } catch (e) { console.warn('[Bridge] loadData after login:', e.message); }
+        }
         if (typeof enterApp === 'function') enterApp();
         if (typeof toast === 'function') toast('Welcome, ' + result.userName, 'success');
       }
@@ -310,6 +321,17 @@
         }));
         window.db = new FuelDB('FuelBunkPro_' + tenant.id);
         setTenantId(tenant.id);
+        // BUG FIX: load real data from DB BEFORE entering app
+        // Without this, enterApp() renders with SEED data (all zeros)
+        // because initApp() called loadData() before the auth token was set
+        if (typeof loadData === 'function') {
+          try {
+            await Promise.race([
+              loadData(),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000))
+            ]);
+          } catch (e) { console.warn('[Bridge] loadData after login:', e.message); }
+        }
         if (typeof enterApp === 'function') enterApp();
         if (typeof toast === 'function') toast('Welcome, ' + result.userName, 'success');
       }
@@ -326,11 +348,10 @@
       const session = JSON.parse(raw);
       if (!session || !session.loggedIn) return false;
 
-      // BUG FIX: only call setAuthToken if token actually exists
       if (session.token) {
         setAuthToken(session.token);
       } else {
-        return false; // No token — don't restore broken session
+        return false;
       }
       if (session.tenant?.id) setTenantId(session.tenant.id);
 
@@ -343,6 +364,21 @@
       if (session.tenant?.id) {
         window.db = new FuelDB('FuelBunkPro_' + session.tenant.id);
       }
+
+      // BUG FIX: Token now set — schedule data reload after initApp() finishes.
+      // initApp() calls loadData() BEFORE loadSession(), so data loads without auth.
+      // This timeout fires after initApp() completes, reloads with proper token,
+      // then re-renders the current page so dashboard shows real data not SEED zeros.
+      if (session.role !== 'employee') {
+        setTimeout(() => {
+          if (typeof loadData === 'function' && typeof getAuthToken === 'function' && getAuthToken()) {
+            loadData()
+              .then(() => { if (typeof renderPage === 'function') renderPage(); })
+              .catch(e => console.warn('[Bridge] Session loadData:', e.message));
+          }
+        }, 100); // after initApp() call stack clears
+      }
+
       return true;
     } catch { return false; }
   };
@@ -389,7 +425,17 @@
             APP.tenant = tenant;
           }
           window.db = new FuelDB('FuelBunkPro_' + tenant.id);
-          // Persist the initialized session state immediately
+          // BUG FIX: load real data from DB BEFORE entering app
+          // Without this, enterApp() renders with SEED data (all zeros)
+          // because initApp() called loadData() before the auth token was set
+          if (typeof loadData === 'function') {
+            try {
+              await Promise.race([
+                loadData(),
+                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000))
+              ]);
+            } catch (e) { console.warn('[Bridge] loadData after login:', e.message); }
+          }
           if (typeof emp_saveSession === 'function') emp_saveSession();
           if (typeof enterApp === 'function') enterApp();
           if (typeof toast === 'function') toast('Welcome, ' + result.userName + '!', 'success');

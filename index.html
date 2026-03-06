@@ -8036,6 +8036,11 @@ function enterApp() {
     buildNav(); renderPage();
     // Check backup reminder for admin
     checkBackupReminder();
+    // Reload data if it's still seed/empty (token existed but loadData ran pre-auth)
+    if (APP.data && (!APP.data.tanks || APP.data.tanks.length === 0) &&
+        typeof loadData === 'function' && typeof getAuthToken === 'function' && getAuthToken()) {
+      loadData().then(() => { if (APP.page === 'dashboard') renderPage(); }).catch(() => {});
+    }
   } else {
     document.getElementById('sidebar').classList.add('emp-hidden');
     document.querySelector('.main-area').classList.add('emp-fullwidth');
@@ -8249,7 +8254,7 @@ function _pdfSummaryBoxes(doc, items, y) {
     doc.roundedRect(x+1, y, boxW-2, 22, 2, 2, 'F');
     doc.setFontSize(7); doc.setTextColor(130,130,130); doc.setFont('helvetica','normal');
     doc.text(item.label.toUpperCase(), x + boxW/2, y+7, {align:'center'});
-    doc.setFontSize(11); doc.setTextColor(item.color||[30,30,30]); doc.setFont('helvetica','bold');
+    doc.setFontSize(11); doc.setTextColor(...(item.color||[30,30,30])); doc.setFont('helvetica','bold');
     doc.text(String(item.value), x + boxW/2, y+17, {align:'center'});
   });
   doc.setFont('helvetica','normal'); doc.setTextColor(30,30,30);
@@ -9122,14 +9127,18 @@ async function initApp() {
     } catch (e) { /* skip */ }
   }
 
-  // Try IndexedDB (non-blocking: SEED is already set as fallback)
-  try {
-    await Promise.race([
-      loadData(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('DB timeout 3s')), 3000))
-    ]);
-  } catch (e) {
-    console.warn('DB load failed, using seed:', e);
+  // Load data — only if auth token exists (skip pre-login; bridge.js reloads after login)
+  if (typeof getAuthToken === 'function' && getAuthToken()) {
+    try {
+      await Promise.race([
+        loadData(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('DB timeout 15s')), 15000))
+      ]);
+    } catch (e) {
+      console.warn('DB load failed, using seed:', e);
+    }
+  } else {
+    console.log('[DB] No auth token yet — data will load after login');
   }
 
   // Clock + status
