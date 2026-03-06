@@ -20,8 +20,9 @@ function hashPassword(password) {
 
 const dbUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
 if (!dbUrl && !process.env.PGHOST) {
-  console.error('[FATAL] No database connection info found. Set DATABASE_URL.');
-  process.exit(1);
+  console.error('[WARN] No DATABASE_URL found — server will start but DB operations will fail.');
+  console.error('[WARN] Set DATABASE_URL in Railway Variables tab to connect to PostgreSQL.');
+  // Don't exit — let server start so health check passes and Railway can show the app
 }
 
 let poolConfig;
@@ -245,6 +246,7 @@ async function initDatabase() {
       id SERIAL PRIMARY KEY,
       tenant_id TEXT NOT NULL,
       date TEXT DEFAULT '',
+      time TEXT DEFAULT '',
       fuel_type TEXT DEFAULT '',
       liters REAL DEFAULT 0,
       amount REAL DEFAULT 0,
@@ -257,6 +259,7 @@ async function initDatabase() {
       customer TEXT DEFAULT '',
       employee_id INTEGER DEFAULT 0,
       employee_name TEXT DEFAULT '',
+      upi_txn_id TEXT DEFAULT '',
       notes TEXT DEFAULT '',
       data_json TEXT DEFAULT '{}',
       created_at TIMESTAMPTZ DEFAULT NOW()
@@ -407,6 +410,32 @@ async function initDatabase() {
     );
     console.log('[DB] Super admin seeded — CHANGE PASSWORD IMMEDIATELY');
   }
+
+  // ── Add columns that may be missing from existing deployments ──────────────
+  // These ALTER TABLE statements are safe — IF NOT EXISTS means no error if already present
+  const MIGRATIONS = [
+    `ALTER TABLE sales ADD COLUMN IF NOT EXISTS time TEXT DEFAULT ''`,
+    `ALTER TABLE sales ADD COLUMN IF NOT EXISTS upi_txn_id TEXT DEFAULT ''`,
+    `ALTER TABLE sales ADD COLUMN IF NOT EXISTS nozzle TEXT DEFAULT ''`,
+    `ALTER TABLE sales ADD COLUMN IF NOT EXISTS employee_name TEXT DEFAULT ''`,
+    `ALTER TABLE credit_customers ADD COLUMN IF NOT EXISTS balance REAL DEFAULT 0`,
+    `ALTER TABLE credit_customers ADD COLUMN IF NOT EXISTS credit_limit REAL DEFAULT 0`,
+    `ALTER TABLE credit_customers ADD COLUMN IF NOT EXISTS last_payment TEXT DEFAULT ''`,
+    `ALTER TABLE credit_customers ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'individual'`,
+    `ALTER TABLE employees ADD COLUMN IF NOT EXISTS color TEXT DEFAULT ''`,
+    `ALTER TABLE employees ADD COLUMN IF NOT EXISTS shift TEXT DEFAULT ''`,
+    `ALTER TABLE pumps ADD COLUMN IF NOT EXISTS open_reading REAL DEFAULT 0`,
+    `ALTER TABLE pumps ADD COLUMN IF NOT EXISTS nozzle_readings TEXT DEFAULT '{}'`,
+    `ALTER TABLE pumps ADD COLUMN IF NOT EXISTS nozzle_open TEXT DEFAULT '{}'`,
+    `ALTER TABLE pumps ADD COLUMN IF NOT EXISTS nozzle_fuels TEXT DEFAULT '{}'`,
+    `ALTER TABLE pumps ADD COLUMN IF NOT EXISTS nozzle_labels TEXT DEFAULT '{}'`,
+    `ALTER TABLE pumps ADD COLUMN IF NOT EXISTS nozzles INTEGER DEFAULT 2`,
+  ];
+  for (const migration of MIGRATIONS) {
+    try { await pool.query(migration); }
+    catch (e) { console.warn('[Migration]', e.message.substring(0, 80)); }
+  }
+  console.log('[DB] Migrations applied');
 
   // Cleanup on startup
   try {

@@ -317,29 +317,53 @@ function dataRoutes(db) {
 
 // Reverse aliases: DB column name -> frontend property name
 const DB_TO_FRONTEND = {
-  current_level:   'current',
+  // Tank
+  current_level:   'current',        // DB current_level -> frontend c.current
   current_reading: 'currentReading',
   low_alert:       'lowAlert',
+  // Common
   fuel_type:       'fuelType',
   tank_id:         'tankId',
+  // Tenant
   owner_name:      'ownerName',
   station_code:    'stationCode',
   color_light:     'colorLight',
+  // Employee / shifts
   join_date:       'joinDate',
   start_time:      'startTime',
   end_time:        'endTime',
-  credit_limit:    'creditLimit',
+  // Credit customers — CRITICAL: DB uses balance/credit_limit, frontend uses outstanding/limit
+  balance:         'outstanding',    // DB balance -> frontend c.outstanding
+  credit_limit:    'limit',          // DB credit_limit -> frontend c.limit (NOT creditLimit)
+  // Sales
+  employee_name:   'employeeName',
+  employee_id:     'employeeId',
   sale_id:         'saleId',
   customer_id:     'customerId',
-  employee_id:     'employeeId',
-  employee_name:   'employeeName',
+  // Expenses / purchases
   invoice_no:      'invoiceNo',
   receipt_ref:     'receiptRef',
   approved_by:     'approvedBy',
   paid_to:         'paidTo',
-  pin_hash:        null,  // never send to frontend
-  pass_hash:       null,  // never send to frontend
+  // Credit customer
+  last_payment:    'lastPayment',    // DB last_payment -> frontend c.lastPayment
+  // Pump nozzle data
+  nozzle_readings: 'nozzleReadings', // DB nozzle_readings -> pump.nozzleReadings
+  nozzle_open:     'nozzleOpen',     // DB nozzle_open -> pump.nozzleOpen
+  nozzle_fuels:    'nozzleFuels',    // DB nozzle_fuels -> pump.nozzleFuels
+  nozzle_labels:   'nozzleLabels',   // DB nozzle_labels -> pump.nozzleLabels
+  open_reading:    'openReading',    // DB open_reading -> pump.openReading
+  upi_txn_id:      'upiTxnId',       // DB upi_txn_id -> sale.upiTxnId
+  // Security — never expose
+  pin_hash:        null,
+  pass_hash:       null,
 };
+
+// Columns that store JSON objects as TEXT strings
+const JSON_COLUMNS = new Set([
+  'nozzle_readings', 'nozzle_open', 'nozzle_fuels', 'nozzle_labels',
+  'balance_entries', // employee balance history
+]);
 
 function parseRow(r) {
   // BUG FIX: keep a clean copy; data_json extras must NOT override real columns
@@ -355,11 +379,16 @@ function parseRow(r) {
     if (col === 'data_json' || col === 'tenant_id') continue;
     const alias = DB_TO_FRONTEND[col];
     if (alias === null) continue;  // explicitly excluded (hashes)
+    // Deserialize JSON TEXT columns back to objects
+    let parsedVal = val;
+    if (JSON_COLUMNS.has(col) && typeof val === 'string' && val) {
+      try { parsedVal = JSON.parse(val); } catch { parsedVal = val; }
+    }
     if (alias) {
-      obj[alias] = val;    // use the frontend name
-      obj[col] = val;      // also keep snake_case for backward compat
+      obj[alias] = parsedVal;    // use the frontend name
+      obj[col] = parsedVal;      // also keep snake_case for backward compat
     } else {
-      obj[col] = val;      // no alias needed, keep as-is
+      obj[col] = parsedVal;      // no alias needed, keep as-is
     }
   }
   delete obj.data_json;
@@ -376,12 +405,32 @@ function camelToSnake(s) {
 // Field aliases: frontend property name -> DB column name
 // These exist because the frontend uses short names but the DB uses descriptive ones
 const FIELD_ALIASES = {
+  // Tank fields
   current:        'current_level',   // tank.current -> tanks.current_level
   lowAlert:       'low_alert',       // tank.lowAlert -> tanks.low_alert
+  // Pump fields
   currentReading: 'current_reading', // pump.currentReading -> pumps.current_reading
   openReading:    'open_reading',    // (future use)
+  // Employee fields
   pinHash:        'pin_hash',        // employee.pinHash -> employees.pin_hash
   passHash:       'pass_hash',       // admin.passHash -> admin_users.pass_hash
+  // Credit customer fields — CRITICAL: frontend uses these names, DB uses different columns
+  outstanding:    'balance',         // c.outstanding -> credit_customers.balance
+  limit:          'credit_limit',    // c.limit -> credit_customers.credit_limit
+  // Sale fields
+  employee:       'employee_name',   // sale.employee -> sales.employee_name
+  fuelType:       'fuel_type',       // sale.fuelType -> sales.fuel_type (also handled by camelToSnake)
+  upiTxnId:       'upi_txn_id',      // sale.upiTxnId -> sales.data_json (no column, goes to extra)
+  tankId:         'tank_id',         // fuel purchase tankId -> fuel_purchases.tank_id
+  invoiceNo:      'invoice_no',      // invoice_no alias
+  paidTo:         'paid_to',
+  approvedBy:     'approved_by',
+  receiptRef:     'receipt_ref',
+  joinDate:       'join_date',
+  startTime:      'start_time',
+  endTime:        'end_time',
+  employeeName:   'employee_name',
+  employeeId:     'employee_id',
 };
 
 async function upsertRow(db, meta, tenantId, data, isInsert) {
@@ -400,14 +449,17 @@ async function upsertRow(db, meta, tenantId, data, isInsert) {
     if (snakeKey === 'tenant_id' || snakeKey === 'data_json') continue;
     if (k === 'tenant_id' || k === 'data_json') continue;
 
+    // Serialize objects/arrays to JSON string for TEXT columns
+    const serializedV = (v !== null && typeof v === 'object') ? JSON.stringify(v) : v;
+
     if (cols.includes(snakeKey)) {
-      known[snakeKey] = v;
+      known[snakeKey] = serializedV;
     } else if (cols.includes(aliased)) {
-      known[aliased] = v;
+      known[aliased] = serializedV;
     } else if (cols.includes(k)) {
-      known[k] = v;
+      known[k] = serializedV;
     } else {
-      extra[k] = v;
+      extra[k] = v; // keep original (not serialized) for data_json
     }
   }
 
