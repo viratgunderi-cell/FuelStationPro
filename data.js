@@ -94,6 +94,9 @@ const READ_ALIAS = {
   owner_name:      'ownerName',
   station_code:    'stationCode',
   join_date:       'joinDate',
+  description:     'desc',
+  amount:          'total',
+  last_dip:        'lastDip',
 };
 
 const JSON_TEXT_COLS = new Set([
@@ -255,103 +258,10 @@ async function upsertRow(meta, tenantId, data, isInsert) {
 function dataRoutes(db) {
   const router = express.Router();
 
-  // ── Tenant routes ──────────────────────────────────────────────────────────
-  router.get('/tenants', async (req, res) => {
-    try {
-      const r = await pool.query('SELECT id, name, location, icon, color, color_light, active, station_code FROM tenants ORDER BY name');
-      res.json(r.rows);
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  });
+  // Tenant CRUD is handled in server.js with explicit priority routes.
+  // Those routes cover all /api/data/tenants/* paths before this router mounts.
 
-  router.post('/tenants', requireRole('super'), async (req, res) => {
-    const { id, name, location, ownerName, phone, icon, color, colorLight, stationCode, adminUser, adminPass } = req.body;
-    if (!name || name.length < 2) return res.status(400).json({ error: 'Station name required' });
-    try {
-      const tenantId = id || ('stn_' + Date.now());
-      await pool.query(
-        'INSERT INTO tenants (id, name, location, owner_name, phone, icon, color, color_light, station_code, active) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
-        [tenantId, name, location||'', ownerName||'', phone||'', icon||'⛽', color||'#d4940f', colorLight||'#f0b429', stationCode||'', 1]
-      );
-      if (adminUser && adminPass) {
-        try {
-          await pool.query(
-            'INSERT INTO admin_users (tenant_id, name, username, pass_hash, role) VALUES ($1,$2,$3,$4,$5)',
-            [tenantId, ownerName||adminUser, adminUser, hashPassword(adminPass), 'Owner']
-          );
-        } catch (e) { console.warn('[Tenant] Admin creation failed:', e.message); }
-      }
-      await auditLog(req, 'CREATE_TENANT', 'tenants', tenantId, name);
-      res.json({ success: true, id: tenantId });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  });
-
-  router.put('/tenants/:id', requireRole('super'), async (req, res) => {
-    const { name, location, ownerName, phone, icon, active, stationCode } = req.body;
-    try {
-      await pool.query(
-        'UPDATE tenants SET name=COALESCE($1,name), location=COALESCE($2,location), owner_name=COALESCE($3,owner_name), phone=COALESCE($4,phone), icon=COALESCE($5,icon), active=COALESCE($6,active), station_code=COALESCE($7,station_code), updated_at=NOW() WHERE id=$8',
-        [name, location, ownerName, phone, icon, active !== undefined ? (active ? 1 : 0) : null, stationCode, req.params.id]
-      );
-      res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  });
-
-  router.delete('/tenants/:id', requireRole('super'), async (req, res) => {
-    try {
-      await auditLog(req, 'DELETE_TENANT', 'tenants', req.params.id, '');
-      await pool.query('DELETE FROM tenants WHERE id = $1', [req.params.id]);
-      res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  });
-
-  router.get('/tenants/:id/admins', requireRole('super'), async (req, res) => {
-    try {
-      const r = await pool.query(
-        'SELECT id, name, username, role, active, created_at FROM admin_users WHERE tenant_id = $1',
-        [req.params.id]
-      );
-      res.json(r.rows);
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  });
-
-  router.post('/tenants/:id/admins', requireRole('super'), async (req, res) => {
-    const { name, username, password, role } = req.body;
-    if (!name || !username || !password) return res.status(400).json({ error: 'All fields required' });
-    if (password.length < 6) return res.status(400).json({ error: 'Password too short' });
-    try {
-      const exists = await pool.query(
-        'SELECT id FROM admin_users WHERE tenant_id = $1 AND username = $2',
-        [req.params.id, username]
-      );
-      if (exists.rows.length > 0) return res.status(409).json({ error: 'Username already exists' });
-      const result = await pool.query(
-        'INSERT INTO admin_users (tenant_id, name, username, pass_hash, role) VALUES ($1,$2,$3,$4,$5) RETURNING id',
-        [req.params.id, name, username, hashPassword(password), role||'Manager']
-      );
-      res.json({ success: true, id: result.rows[0].id });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  });
-
-  router.delete('/tenants/:tid/admins/:uid', requireRole('super'), async (req, res) => {
-    try {
-      await pool.query('DELETE FROM admin_users WHERE id = $1 AND tenant_id = $2', [req.params.uid, req.params.tid]);
-      res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  });
-
-  router.post('/tenants/:tid/admins/:uid/reset-password', requireRole('super'), async (req, res) => {
-    const { newPassword } = req.body;
-    if (!newPassword || newPassword.length < 6) return res.status(400).json({ error: 'Password too short' });
-    try {
-      await pool.query(
-        'UPDATE admin_users SET pass_hash = $1 WHERE id = $2 AND tenant_id = $3',
-        [hashPassword(newPassword), req.params.uid, req.params.tid]
-      );
-      res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  });
-
-  // ── Settings routes — MUST be before /:store ──────────────────────────────
+    // ── Settings routes — MUST be before /:store ──────────────────────────────
   router.get('/settings/key/:key', async (req, res) => {
     try {
       const r = await pool.query(

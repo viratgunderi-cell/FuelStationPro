@@ -3128,6 +3128,8 @@ function renderCredit(D) {
       <div class="flex mt-14" style="gap:8px">
         <button class="btn btn-green-ghost btn-sm" style="flex:1" onclick="openPaymentModal(${c.id})">💵 Record Payment</button>
         <button class="btn btn-blue-ghost btn-sm" style="flex:1" onclick="openUPIModal('${sanitize(c.name)}', ${c.outstanding})">📱 UPI Request</button>
+        <button class="btn btn-ghost btn-sm" onclick="openEditCreditModal(${c.id})">✏️ Edit</button>
+        <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="confirmDeleteCredit(${c.id})">🗑</button>
       </div>
     </div>`;
   }).join('');
@@ -3244,7 +3246,7 @@ function renderStaff(D) {
     Object.entries(shiftAlloc).forEach(([key, id]) => {
       if (id === emp.id) {
         const [pumpId, nozzle] = key.split('_');
-        const pump = D.pumps.find(p => p.id === parseInt(pumpId));
+        const pump = D.pumps.find(p => String(p.id) === String(pumpId));
         assignedNozzles.push({ pump: pump?.name || `Pump ${pumpId}`, nozzle, fuelType: pump?.fuelType });
       }
     });
@@ -3533,7 +3535,7 @@ function renderFinance(D) {
 function renderReports(D) {
   if (!D) return '<div style="padding:40px;text-align:center;color:var(--text-3)">Loading...</div>';
   const totalRevenue = D.sales.reduce((a, s) => a + s.amount, 0);
-  const cogs = D.sales.reduce((a, s) => a + s.liters * D.purchasePrices[s.fuelType], 0);
+  const cogs = D.sales.reduce((a, s) => a + s.liters * ((D.purchasePrices||{})[s.fuelType]||0), 0);
   const totalLiters = D.sales.reduce((a, s) => a + s.liters, 0);
   const totalStock = D.tanks.reduce((a, t) => a + (t.current || 0), 0);
 
@@ -3619,10 +3621,10 @@ function renderReports(D) {
 // ── SETTINGS ─────────────────────────────────────────────────
 function renderSettings(D) {
   const priceCards = FUEL_TYPES.map(f => {
-    const margin = D.prices[f.id] - D.purchasePrices[f.id];
+    const margin = ((D.prices||{})[f.id]||0) - ((D.purchasePrices||{})[f.id]||0);
     return `<div class="flex-between" style="padding:14px;background:var(--bg-0);border-radius:var(--radius);margin-bottom:10px;border:1px solid var(--border-light)">
       <div><div style="color:${f.color}" class="fw-700">${f.name}</div><div style="font-size:11px;color:var(--text-3)">Purchase: ${cur(D.purchasePrices[f.id])}/L</div></div>
-      <div class="text-right"><div class="mono fw-800" style="color:var(--text-0);font-size:22px">₹${D.prices[f.id].toFixed(2)}</div>
+      <div class="text-right"><div class="mono fw-800" style="color:var(--text-0);font-size:22px">₹${((D.prices||{})[f.id]||0).toFixed(2)}</div>
         <div class="mono fw-600" style="font-size:11px;color:var(--green)">Margin: ₹${margin.toFixed(2)}/L</div></div>
     </div>`;
   }).join('');
@@ -4169,7 +4171,7 @@ async function saveSale() {
   const amount = parseFloat(document.getElementById('saleAmount').value);
   const vehicle = (document.getElementById('saleVehicle').value || '').toUpperCase().trim();
   const mode = document.getElementById('saleMode').value;
-  const pump = parseInt(document.getElementById('salePump').value);
+  const pump = String(document.getElementById('salePump').value);   // pump.id is TEXT in DB — keep as string
   const customer = (document.getElementById('saleCustomer')?.value || '').trim();
 
   const errors = validateSaleInput(fuelType, liters, amount, vehicle, APP.data.prices);
@@ -4192,10 +4194,10 @@ async function saveSale() {
         tank.current = Math.max(0, (tank.current || 0) - liters);
         try { await db.put('tanks', _tankForPut(tank)); } catch(e) { console.warn('[Tank]', e.message); }
       }
-      const pumpData = APP.data.pumps.find(p => p.id === pump);
+      const pumpData = APP.data.pumps.find(p => String(p.id) === String(pump));
       if (pumpData) {
         pumpData.currentReading = (pumpData.currentReading || 0) + liters;
-        try { await db.put('pumps', pumpData); } catch(e) { console.warn('[Pump]', e.message); }
+        try { await db.put('pumps', _pumpForPut(pumpData)); } catch(e) { console.warn('[Pump]', e.message); }
       }
       if (mode === 'credit' && customer) {
         const cust = APP.data.creditCustomers.find(c => c.name === customer);
@@ -4219,10 +4221,10 @@ async function saveSale() {
   }
 
   // Update pump reading
-  const pumpData = APP.data.pumps.find(p => p.id === pump);
+  const pumpData = APP.data.pumps.find(p => String(p.id) === String(pump));
   if (pumpData) {
     pumpData.currentReading = (pumpData.currentReading || 0) + liters;
-    try { await db.put('pumps', pumpData); } catch(e) { console.warn('[Pump]', e.message); }
+    try { await db.put('pumps', _pumpForPut(pumpData)); } catch(e) { console.warn('[Pump]', e.message); }
   }
 
   // Credit sale: update customer outstanding
@@ -4519,6 +4521,36 @@ function _tankForPut(t) {
     lastDip:  t.lastDip,
     name:     t.name || '',
     unit:     t.unit || 'L',
+  };
+}
+
+// Normalize a pump object from server
+function _normPump(p) {
+  if (!p) return p;
+  p.id            = String(p.id);
+  p.currentReading= parseFloat(p.currentReading !== undefined ? p.currentReading : (p.current_reading || 0));
+  p.openReading   = parseFloat(p.openReading    !== undefined ? p.openReading    : (p.open_reading   || 0));
+  p.fuelType      = p.fuelType  || p.fuel_type  || '';
+  p.tankId        = p.tankId    || p.tank_id    || '';
+  p.nozzles       = parseInt(p.nozzles) || 2;
+  return p;
+}
+
+// Strip snake_case duplicates before PUT to prevent upsertRow overwrite bug
+function _pumpForPut(p) {
+  return {
+    id:             p.id,
+    name:           p.name    || '',
+    fuelType:       p.fuelType || '',
+    tankId:         p.tankId   || '',
+    nozzles:        p.nozzles  || 2,
+    currentReading: p.currentReading || 0,
+    openReading:    p.openReading    || 0,
+    status:         p.status  || 'active',
+    nozzleReadings: p.nozzleReadings || {},
+    nozzleOpen:     p.nozzleOpen     || {},
+    nozzleFuels:    p.nozzleFuels    || {},
+    nozzleLabels:   p.nozzleLabels   || {},
   };
 }
 
@@ -5135,7 +5167,7 @@ async function savePurchase() {
 
 // ── PUMP EDIT — per-nozzle fuel type ─────────────────────────
 function openEditPumpModal(pumpId) {
-  const pump = APP.data.pumps.find(p => p.id === pumpId);
+  const pump = APP.data.pumps.find(p => String(p.id) === String(pumpId));
   if (!pump) return;
 
   const nozzleLabels = pump.nozzleLabels || (pump.nozzles === 1 ? ['A'] : pump.nozzles === 2 ? ['A','B'] : ['A','B','C'].slice(0, pump.nozzles));
@@ -5181,7 +5213,7 @@ function openEditPumpModal(pumpId) {
 }
 
 async function saveEditPump(pumpId) {
-  const pump = APP.data.pumps.find(p => p.id === pumpId);
+  const pump = APP.data.pumps.find(p => String(p.id) === String(pumpId));
   if (!pump) return;
 
   const name   = (document.getElementById('editPumpName')?.value || '').trim();
@@ -5200,7 +5232,7 @@ async function saveEditPump(pumpId) {
   pump.nozzleFuels = nozzleFuels;
   pump.fuelType    = nozzleFuels[nozzleLabels[0]] || pump.fuelType;
 
-  try { await db.put('pumps', pump); } catch(e) { console.warn('[Pump edit]', e.message); }
+  try { await db.put('pumps', _pumpForPut(pump)); } catch(e) { console.warn('[Pump edit]', e.message); }
   auditLog('pump_edit', { pumpId, name, status, nozzleFuels });
   closeModal();
   toast(`${name} updated`, 'success');
@@ -5274,7 +5306,7 @@ function saveAddPump() {
   const primaryFuel = nozzleFuels[nozzleLabels[0]];
 
   const newPump = {
-    id: Date.now(),
+    id: String(Date.now()),  // TEXT in DB — keep consistent
     name: sanitize(name),
     fuelType: primaryFuel,
     nozzles: count,
@@ -5287,7 +5319,7 @@ function saveAddPump() {
   };
 
   APP.data.pumps.push(newPump);
-  db.put('pumps', newPump).catch(() => {});
+  db.put('pumps', _pumpForPut(newPump)).catch(() => {});
   auditLog('pump_add', { name, nozzles: count, nozzleFuels });
   closeModal();
   toast(`✅ ${name} added with ${count} nozzle${count>1?'s':''}`, 'success');
@@ -5295,7 +5327,7 @@ function saveAddPump() {
 }
 
 function confirmDeletePump(pumpId) {
-  const pump = APP.data.pumps.find(p => p.id === pumpId);
+  const pump = APP.data.pumps.find(p => String(p.id) === String(pumpId));
   if (!pump) return;
   openModal('🗑 Delete Pump',
     `<p style="color:var(--text-1);margin-bottom:12px">Are you sure you want to delete <strong style="color:var(--red)">${sanitize(pump.name)}</strong>?</p>
@@ -5306,9 +5338,9 @@ function confirmDeletePump(pumpId) {
 }
 
 async function deletePump(pumpId) {
-  const pump = APP.data.pumps.find(p => p.id === pumpId);
+  const pump = APP.data.pumps.find(p => String(p.id) === String(pumpId));
   if (!pump) return;
-  APP.data.pumps = APP.data.pumps.filter(p => p.id !== pumpId);
+  APP.data.pumps = APP.data.pumps.filter(p => String(p.id) !== String(pumpId));
   try { await db.delete('pumps', pumpId); } catch(e) { console.warn('[deletePump]', e.message); }
   auditLog('pump_delete', { pumpId, name: pump.name });
   closeModal();
@@ -5329,7 +5361,7 @@ function _nozzleReading(pump, nozzle) {
 }
 
 function openReadingModal(pumpId) {
-  const pump = APP.data.pumps.find(p => p.id === pumpId);
+  const pump = APP.data.pumps.find(p => String(p.id) === String(pumpId));
   if (!pump) return;
   const labels = _nozzleLabels(pump);
 
@@ -5377,7 +5409,7 @@ function openReadingModal(pumpId) {
 }
 
 function updateNozzlePreview(pumpId, nozzle) {
-  const pump = APP.data.pumps.find(p => p.id === pumpId);
+  const pump = APP.data.pumps.find(p => String(p.id) === String(pumpId));
   if (!pump) return;
   const cur     = _nozzleReading(pump, nozzle);
   const newVal  = parseFloat(document.getElementById(`nozzleReading_${nozzle}`)?.value);
@@ -5409,7 +5441,7 @@ function updateNozzlePreview(pumpId, nozzle) {
 }
 
 function saveReading(pumpId) {
-  const pump = APP.data.pumps.find(p => p.id === pumpId);
+  const pump = APP.data.pumps.find(p => String(p.id) === String(pumpId));
   if (!pump) { toast('Pump not found', 'error'); return; }
   const labels = _nozzleLabels(pump);
   const nozzleReadings = pump.nozzleReadings ? { ...pump.nozzleReadings } : {};
@@ -5453,7 +5485,7 @@ function saveReading(pumpId) {
   });
   pump.nozzleReadings  = nozzleReadings;
   pump.currentReading  = Object.values(nozzleReadings).reduce((a, v) => a + v, 0);
-  db.put('pumps', pump).catch(() => {});
+  db.put('pumps', _pumpForPut(pump)).catch(() => {});
 
   // Deduct from each fuel tank
   const msgs = [];
@@ -5476,7 +5508,7 @@ function saveReading(pumpId) {
 }
 
 function openPaymentModal(customerId) {
-  const c = APP.data.creditCustomers.find(x => x.id === customerId);
+  const c = APP.data.creditCustomers.find(x => parseInt(x.id) === parseInt(customerId));
   if (!c) return;
   openModal(`Record Payment — ${sanitize(c.name)}`, `
     <div class="dbox mb-14" style="padding:16px"><div class="dbox-label">Outstanding</div><div class="dbox-value mono" style="color:var(--red)">${cur(c.outstanding)}</div></div>
@@ -5492,7 +5524,7 @@ async function savePayment(customerId) {
   const mode = document.getElementById('payMode').value;
   if (isNaN(amount) || amount <= 0) { toast('Enter valid payment amount', 'error'); return; }
   if (amount > 1000000) { toast('Amount exceeds ₹10,00,000 limit', 'error'); return; }
-  const c = APP.data.creditCustomers.find(x => x.id === customerId);
+  const c = APP.data.creditCustomers.find(x => parseInt(x.id) === parseInt(customerId));
   if (!c) return;
   if (amount > c.outstanding) { toast('Payment exceeds outstanding amount ₹' + fmt(c.outstanding), 'error'); return; }
   const oldOutstanding = c.outstanding;
@@ -5869,7 +5901,7 @@ function assignNozzle(pumpId, nozzle, empIdStr) {
   if (empId) {
     allocations[allocShift][`${pumpId}_${nozzle}`] = empId;
     const emp = APP.data.employees.find(e => e.id === empId);
-    const pump = APP.data.pumps.find(p => p.id === pumpId);
+    const pump = APP.data.pumps.find(p => String(p.id) === String(pumpId));
     toast(`${emp?.name} → ${pump?.name} Nozzle ${nozzle}`, 'success');
   } else {
     delete allocations[allocShift][`${pumpId}_${nozzle}`];
@@ -5891,7 +5923,7 @@ function openChangeAllocModal(pumpId, nozzle) {
   const D = APP.data;
   const key = `${pumpId}_${nozzle}`;
   const currentEmpId = allocations[allocShift]?.[key];
-  const pump = D.pumps.find(p => p.id === pumpId);
+  const pump = D.pumps.find(p => String(p.id) === String(pumpId));
   const shiftEmps = D.employees.filter(e => (e.shift||'').split(',').map(s=>s.trim()).includes(allocShift));
 
   const empItems = shiftEmps.map(e => {
@@ -6098,7 +6130,7 @@ async function saveEditEmployee() {
   const salary = parseInt(document.getElementById('empSalary')?.value) || 12000;
   if (!name || name.length < 2) { toast('Enter a valid name', 'error'); return; }
   const D = APP.data;
-  const idx = D.employees.findIndex(x => x.id === empId);
+  const idx = D.employees.findIndex(x => parseInt(x.id) === parseInt(empId));
   if (idx === -1) { toast('Employee not found', 'error'); return; }
   const permissions = readEmpPermissions();
   const oldEmp = D.employees[idx];
@@ -7332,7 +7364,7 @@ function emp_recordSale() {
   const l = parseFloat(document.getElementById('empSaleLiters')?.value);
   const a = parseFloat(document.getElementById('empSaleAmt')?.value);
   const v = (document.getElementById('empSaleVeh')?.value || '').toUpperCase().trim();
-  const p = parseInt(document.getElementById('empSalePump')?.value);
+  const p = String(document.getElementById('empSalePump')?.value || '');  // pump.id is TEXT
   if (isNaN(l)||l<=0) { toast('Enter valid liters','error'); return; }
   // No upper liter limit
   if (!v || v.length < 2) { toast('Enter valid vehicle number','error'); return; }
@@ -7406,7 +7438,7 @@ function emp_recordDip() {
   // Save to admin dip store + update tank level
   APP.data?.dipReadings?.unshift(dip);
   db.add('dipReadings', dip).catch(() => {});
-  const tank = APP.data?.tanks?.find(t => t.id === tankId);
+  const tank = APP.data?.tanks?.find(t => parseInt(t.id) === parseInt(tankId));
   if (tank) { tank.current = r; tank.lastDip = emp_today() + ' ' + emp_time(); db.put('tanks', _tankForPut(tank)).catch(() => {}); }
 
   toast(`✅ Dip saved: Tank ${tankId} = ${fmt(r)} L`, 'success');
@@ -7456,20 +7488,17 @@ async function emp_submit() {
   // ── Refresh tanks from DB to get latest values before deducting ──
   try {
     const freshTanks = await db.getAll('tanks');
-    if (freshTanks && freshTanks.length) APP.data.tanks = freshTanks;
+    if (freshTanks && freshTanks.length) APP.data.tanks = freshTanks.map(_normTank);
   } catch(e) { console.warn('[emp_submit] Tank refresh failed:', e); }
 
   // ── Sync pump readings & tank levels — per nozzle fuel type ──
   const tankDeductionsTotalByFuel = {}; // fuelType -> totalLiters
-
-  console.log('[emp_submit] openReadings:', JSON.stringify(empState.openReadings));
-  console.log('[emp_submit] closeReadings:', JSON.stringify(empState.closeReadings));
-  console.log('[emp_submit] myPumps:', JSON.stringify(emp_myPumps().map(p=>({id:p.id,name:p.name,nozzles:p.nozzles,nozzleFuels:p.nozzleFuels}))));
-  console.log('[emp_submit] tanks before deduct:', JSON.stringify(APP.data.tanks.map(t=>({id:t.id,ft:t.fuelType,cur:t.current}))));
-
+  
+  
+  
   emp_myPumps().forEach(pump => {
     const nozzleFuels = pump.nozzleFuels || {};
-    const adminPump = APP.data.pumps.find(p => p.id === pump.id);
+    const adminPump = APP.data.pumps.find(p => String(p.id) === String(pump.id));
     let pumpHasMeterReadings = false;
 
     pump.nozzles.forEach(n => {
@@ -7479,17 +7508,13 @@ async function emp_submit() {
       const open   = openRaw  !== undefined ? parseFloat(openRaw)  : null;
       const close  = closeRaw !== undefined ? parseFloat(closeRaw) : null;
       const ft     = nozzleFuels[n] || pump.fuelType;
-
-      console.log('[emp_submit] nozzle', pump.name, 'N'+n, 'ft='+ft, 'open='+open, 'close='+close);
-      // Only deduct when BOTH readings are present and close > open
+  // Only deduct when BOTH readings are present and close > open
       if (open !== null && close !== null && !isNaN(open) && !isNaN(close) && close > open) {
         const sold = close - open;
         pumpHasMeterReadings = true;
         tankDeductionsTotalByFuel[ft] = (tankDeductionsTotalByFuel[ft] || 0) + sold;
-        console.log('[emp_submit] DEDUCT', ft, sold, 'L');
-      } else {
-        console.log('[emp_submit] SKIP nozzle - no valid readings');
-      }
+  } else {
+  }
 
       // Update per-nozzle reading on admin pump (only with valid close)
       if (adminPump && close !== null && !isNaN(close) && close > 0) {
@@ -7500,7 +7525,7 @@ async function emp_submit() {
 
     // If NO meter readings entered for this pump, use sales records as tank deduction source
     if (!pumpHasMeterReadings) {
-      const pumpSales = empState.sales.filter(s => s.pump === pump.id);
+      const pumpSales = empState.sales.filter(s => String(s.pump) === String(pump.id));
       pumpSales.forEach(s => {
         const ft = s.fuelType || pump.fuelType;
         tankDeductionsTotalByFuel[ft] = (tankDeductionsTotalByFuel[ft] || 0) + (s.liters || 0);
@@ -7512,7 +7537,7 @@ async function emp_submit() {
       if (adminPump.nozzleReadings && Object.keys(adminPump.nozzleReadings).length) {
         adminPump.currentReading = Object.values(adminPump.nozzleReadings).reduce((a, v) => a + v, 0);
       }
-      db.put('pumps', adminPump).catch(() => {});
+      db.put('pumps', _pumpForPut(adminPump)).catch(() => {});
     }
   });
 
@@ -7600,8 +7625,8 @@ async function emp_submit() {
       db.getAll('sales'),
     ]);
     // Always update from DB regardless of array length
-    APP.data.tanks = freshTanks.length ? freshTanks : APP.data.tanks;
-    APP.data.pumps = freshPumps.length ? freshPumps : APP.data.pumps;
+    APP.data.tanks = freshTanks.length ? freshTanks.map(_normTank) : APP.data.tanks;
+    APP.data.pumps = freshPumps.length ? freshPumps.map(_normPump) : APP.data.pumps;
     if (freshSales.length) APP.data.sales = freshSales.sort((a,b) => b.id - a.id);
     console.log('[FuelBunk] Post-submit tanks:', APP.data.tanks.map(t => t.fuelType + ':' + t.current + 'L').join(', '));
   } catch(e) { console.warn('Post-submit DB refresh failed:', e); }
@@ -7956,6 +7981,69 @@ async function saveCreditCustomer() {
   closeModal();
   toast(`${sanitize(name)} added as credit customer`, 'success');
   renderPage();
+}
+
+function openEditCreditModal(customerId) {
+  const c = APP.data.creditCustomers.find(x => parseInt(x.id) === parseInt(customerId));
+  if (!c) return;
+  openModal(`✏️ Edit Customer — ${sanitize(c.name)}`, `
+    <div class="form-group"><label class="form-label">Customer Name</label>
+      <input class="form-input" id="ecName" value="${sanitize(c.name)}" placeholder="Enter full name or company" /></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Type</label>
+        <select class="form-input" id="ecType">
+          <option value="Fleet" ${c.type==='Fleet'?'selected':''}>Fleet</option>
+          <option value="Government" ${c.type==='Government'?'selected':''}>Government</option>
+          <option value="Individual" ${c.type==='Individual'?'selected':''}>Individual</option>
+        </select></div>
+      <div class="form-group"><label class="form-label">Credit Limit (₹)</label>
+        <input class="form-input" id="ecLimit" type="number" value="${c.limit||0}" /></div>
+    </div>
+    <div class="form-group"><label class="form-label">Phone</label>
+      <input class="form-input" id="ecPhone" value="${sanitize(c.phone||'')}" /></div>`,
+    `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-accent" onclick="saveEditCredit(${customerId})">💾 Save</button>`
+  );
+}
+
+async function saveEditCredit(customerId) {
+  const name  = (document.getElementById('ecName')?.value  || '').trim();
+  const type  = document.getElementById('ecType')?.value   || 'Individual';
+  const limit = parseFloat(document.getElementById('ecLimit')?.value) || 0;
+  const phone = (document.getElementById('ecPhone')?.value || '').trim();
+  if (!name || name.length < 2) { toast('Enter valid name', 'error'); return; }
+  if (isNaN(limit) || limit <= 0) { toast('Enter valid credit limit', 'error'); return; }
+  const c = APP.data.creditCustomers.find(x => parseInt(x.id) === parseInt(customerId));
+  if (!c) { toast('Customer not found', 'error'); return; }
+  c.name = sanitize(name); c.type = type; c.limit = limit; c.phone = sanitize(phone);
+  try { await db.put('creditCustomers', c); } catch(e) { console.warn('[Credit edit]', e.message); }
+  auditLog('credit_customer_edit', { customerId, name, type, limit });
+  closeModal(); toast(`${sanitize(name)} updated`, 'success'); renderPage();
+}
+
+function confirmDeleteCredit(customerId) {
+  const c = APP.data.creditCustomers.find(x => parseInt(x.id) === parseInt(customerId));
+  if (!c) return;
+  openModal('🗑 Delete Customer',
+    `<div style="text-align:center;padding:10px 0">
+       <div style="font-size:40px;margin-bottom:12px">⚠️</div>
+       <div style="font-size:15px;font-weight:700;color:var(--text-0);margin-bottom:8px">Delete ${sanitize(c.name)}?</div>
+       <div style="font-size:13px;color:var(--text-2)">Outstanding balance: <strong style="color:var(--red)">${cur(c.outstanding)}</strong><br>
+       <span style="color:var(--red)">All credit history for this customer will be lost.</span></div></div>`,
+    `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-red" onclick="deleteCredit(${customerId})">🗑 Delete</button>`
+  );
+}
+
+async function deleteCredit(customerId) {
+  const cid = parseInt(customerId);
+  try {
+    await db.delete('creditCustomers', customerId);
+    APP.data.creditCustomers = APP.data.creditCustomers.filter(x => parseInt(x.id) !== cid);
+  } catch(e) {
+    APP.data.creditCustomers = APP.data.creditCustomers.filter(x => parseInt(x.id) !== cid);
+  }
+  closeModal(); toast('Customer deleted', 'success'); renderPage();
 }
 
 // ── CSV EXPORTS ──────────────────────────────────────────────
@@ -8391,7 +8479,7 @@ window.expCalcTotal = expCalcTotal;
 // ── DATA INIT ────────────────────────────────────────────────
 async function seedDatabase() {
   for (const t of SEED.tanks) await db.put('tanks', _tankForPut(t)).catch(() => {});
-  for (const p of SEED.pumps) await db.put('pumps', p).catch(() => {});
+  for (const p of SEED.pumps) await db.put('pumps', _pumpForPut(p)).catch(() => {});
   for (const s of SEED.shifts) await db.put('shifts', s).catch(() => {});
   await db.bulkPut('employees', SEED.employees).catch(() => {});
   await db.bulkPut('sales', SEED.sales).catch(() => {});
@@ -8432,20 +8520,44 @@ async function loadData() {
     APP.data = {
       tanks: _normTanks,
       pumps: (await db.getAll('pumps')).map(function(p) {
-        if (p.currentReading === undefined) p.currentReading = p.current_reading || 0;
-        if (p.fuelType === undefined) p.fuelType = p.fuel_type || '';
-        if (p.tankId === undefined) p.tankId = p.tank_id || '';
+        p.id            = String(p.id);                         // TEXT in DB — always keep as string
+        p.currentReading= parseFloat(p.currentReading !== undefined ? p.currentReading : (p.current_reading || 0));
+        p.openReading   = parseFloat(p.openReading    !== undefined ? p.openReading    : (p.open_reading   || 0));
+        p.fuelType      = p.fuelType  || p.fuel_type  || '';
+        p.tankId        = p.tankId    || p.tank_id    || '';
+        p.nozzles       = parseInt(p.nozzles) || 2;
+        p.nozzleReadings= p.nozzleReadings || p.nozzle_readings || {};
+        p.nozzleOpen    = p.nozzleOpen    || p.nozzle_open    || {};
+        p.nozzleFuels   = p.nozzleFuels   || p.nozzle_fuels   || {};
+        p.nozzleLabels  = p.nozzleLabels  || p.nozzle_labels  || {};
         return p;
       }),
       shifts: await db.getAll('shifts'),
-      employees: await db.getAll('employees'),
+      employees: (await db.getAll('employees')).map(function(e) {
+        if (!e.permissions && e.data_json) {
+          try { const j = JSON.parse(e.data_json || '{}'); e.permissions = j.permissions || {}; } catch { e.permissions = {}; }
+        }
+        if (!e.permissions) e.permissions = {};
+        if (e.joinDate === undefined && e.join_date) e.joinDate = e.join_date;
+        if (e.color === undefined && e.data_json) {
+          try { e.color = JSON.parse(e.data_json).color || ''; } catch {}
+        }
+        return e;
+      }),
       sales: (await db.getAll('sales')).sort((a, b) => b.id - a.id),
       creditCustomers: (await db.getAll('creditCustomers')).map(function(c) {
-        if (c.outstanding === undefined) c.outstanding = c.balance || 0;
-        if (c.limit === undefined) c.limit = c.credit_limit || 0;
+        c.outstanding = parseFloat(c.outstanding !== undefined ? c.outstanding : (c.balance || 0));
+        c.limit       = parseFloat(c.limit       !== undefined ? c.limit       : (c.credit_limit || 0));
+        if (!c.lastPayment) c.lastPayment = c.last_payment || '';
+        if (!c.phone) c.phone = '';
+        if (!c.type) c.type = 'Individual';
         return c;
       }),
-      expenses: (await db.getAll('expenses')).sort((a, b) => b.id - a.id),
+      expenses: (await db.getAll('expenses')).sort((a, b) => b.id - a.id).map(function(e) {
+        if (e.desc === undefined && e.description) e.desc = e.description;
+        if (e.total === undefined) e.total = e.amount || 0;
+        return e;
+      }),
       fuelPurchases: (await db.getAll('fuelPurchases')).sort((a, b) => b.id - a.id).map(function(p) {
         if (p.total === undefined || p.total === null) p.total = p.amount || 0;
         if (!p.invoice) p.invoice = p.invoice_no || p.invoiceNo || '';
@@ -8454,7 +8566,7 @@ async function loadData() {
         if (p.rate === undefined) p.rate = 0;
         return p;
       }),
-      dipReadings: (await db.getAll('dipReadings')).sort((a, b) => b.id - a.id),
+      dipReadings: (await db.getAll('dipReadings')).sort((a, b) => b.id - a.id).map(function(d) { if (!d.tankId && d.tank_id) d.tankId = d.tank_id; return d; }),
       prices: await db.getSetting('prices') || SEED.prices,
       purchasePrices: await db.getSetting('purchasePrices') || SEED.purchasePrices,
       weekly: [],  // will be computed in renderDashboard from real sales

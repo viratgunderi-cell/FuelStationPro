@@ -187,7 +187,7 @@ async function startServer() {
 
   // Keep legacy /api/data/* and new /api/* route styles working together.
   app.use('/api/data', authMiddleware(db), dataRoutes(db));
-  app.use('/api', authMiddleware(db), dataRoutes(db));
+  // NOTE: /api/data is the canonical path — do not add /api/* catch-all to avoid double processing
 
   app.get('*', (req, res) => {
     if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Not found' });
