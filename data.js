@@ -82,7 +82,7 @@ const READ_ALIAS = {
   last_payment:    'lastPayment',
   computed_volume: 'calculated',
   recorded_by:     'recordedBy',
-  pin_hash:        null,
+  pin_hash:        'pinHash',
   pass_hash:       null,
   nozzle_readings: 'nozzleReadings',
   nozzle_open:     'nozzleOpen',

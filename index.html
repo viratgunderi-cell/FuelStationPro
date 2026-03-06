@@ -6492,16 +6492,24 @@ function saveEmpPins(pins) {
   try { localStorage.setItem('fb_emp_pins', JSON.stringify(pins)); } catch {}
 }
 function getEmpPinHash(empId) {
+  // 1st: check live employee data from DB (most reliable, survives across devices)
+  if (APP.data?.employees) {
+    const emp = APP.data.employees.find(e => parseInt(e.id) === parseInt(empId));
+    if (emp && emp.pinHash) return emp.pinHash;
+  }
+  // 2nd: check localStorage (set by saveEmployeePIN for fast local access)
   const saved = loadEmpPins();
-  return saved[empId] || DEFAULT_EMP_PINS[empId] || null;
+  if (saved[empId]) return saved[empId];
+  // 3rd: fallback to default PINs (demo data)
+  return DEFAULT_EMP_PINS[empId] || null;
 }
 
 // Build EMP_LIST dynamically from APP.data.employees + stored pins
 function getEmpList() {
   const emps = APP.data?.employees;
-  // When APP.data is loaded, build list from it and cache for login screen
+  // Build from live data when available (admin is logged in)
   if (emps && emps.length > 0) {
-    const list = emps.map(e => ({
+    return emps.map(e => ({
       id: e.id,
       name: e.name,
       role: e.role,
@@ -6509,14 +6517,8 @@ function getEmpList() {
       permissions: e.permissions || {},
       pinHash: getEmpPinHash(e.id),
     })).filter(e => e.pinHash); // only employees with a PIN set
-    // Cache the basic info (no pinHash) so login screen works after logout
-    try {
-      const cacheData = emps.map(e => ({ id: e.id, name: e.name, role: e.role, shift: e.shift }));
-      localStorage.setItem('fb_emp_cache', JSON.stringify(cacheData));
-    } catch {}
-    return list;
   }
-  // APP.data not loaded yet (login screen) — use cached employee list
+  // APP.data not loaded (on login screen) — use localStorage cache written by loadData()
   try {
     const cached = JSON.parse(localStorage.getItem('fb_emp_cache') || '[]');
     if (cached.length > 0) {
@@ -6524,7 +6526,7 @@ function getEmpList() {
         id: e.id,
         name: e.name,
         role: e.role,
-        shift: e.shift,
+        shift: e.shift || '',
         permissions: {},
         pinHash: getEmpPinHash(e.id),
       })).filter(e => e.pinHash);
@@ -8673,6 +8675,15 @@ async function loadData() {
       }
       APP.data.expenses.sort((a, b) => (b.id || 0) - (a.id || 0));
     }
+    // ── Write employee cache for login screen (survives logout + new sessions) ──
+    try {
+      const empCacheData = (APP.data.employees || []).map(function(e) {
+        return { id: e.id, name: e.name, role: e.role, shift: e.shift };
+      });
+      if (empCacheData.length > 0) {
+        localStorage.setItem('fb_emp_cache', JSON.stringify(empCacheData));
+      }
+    } catch {}
   } catch (e) {
     console.error('Data load failed, using seed data:', e);
     APP.data = { ...SEED };
