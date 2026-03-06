@@ -56,6 +56,66 @@ async function startServer() {
     }
   });
 
+  // ── PUBLIC: allocations for employee portal (no auth, no sensitive data) ─
+  app.get('/api/public/allocations/:tenantId', async (req, res) => {
+    try {
+      const r = await pool.query(
+        "SELECT value FROM settings WHERE key = 'allocations' AND tenant_id = $1",
+        [req.params.tenantId]
+      );
+      if (!r.rows[0]) return res.json({});
+      let val = r.rows[0].value;
+      try { val = JSON.parse(val); } catch {}
+      res.json(val || {});
+    } catch (e) {
+      res.json({});
+    }
+  });
+
+  // ── PUBLIC: pump/nozzle info for employee portal (no sensitive data) ──────
+  app.get('/api/public/pumps/:tenantId', async (req, res) => {
+    try {
+      const r = await pool.query(
+        'SELECT id, name, fuel_type, data_json FROM pumps WHERE tenant_id = $1 AND status != $2 ORDER BY id',
+        [req.params.tenantId, 'inactive']
+      );
+      const pumps = r.rows.map(row => {
+        let d = {};
+        try { d = JSON.parse(row.data_json || '{}'); } catch {}
+        const nozzles = d.nozzleLabels || ['A', 'B'];
+        const nozzleFuels = d.nozzleFuels || {};
+        const nozzleReadings = d.nozzleReadings || {};
+        return {
+          id: row.id,
+          name: row.name,
+          fuelType: row.fuel_type,
+          nozzles: nozzles,
+          nozzleFuels: nozzleFuels,
+          nozzleReadings: nozzleReadings,
+        };
+      });
+      res.json(pumps);
+    } catch (e) {
+      res.json([]);
+    }
+  });
+
+  // ── PUBLIC: fuel prices for employee sales (no sensitive data) ─────────────
+  app.get('/api/public/prices/:tenantId', async (req, res) => {
+    try {
+      const r = await pool.query(
+        "SELECT value FROM settings WHERE key = 'prices' AND tenant_id = $1",
+        [req.params.tenantId]
+      );
+      if (!r.rows[0]) return res.json({});
+      let val = r.rows[0].value;
+      try { val = JSON.parse(val); } catch {}
+      res.json(val || {});
+    } catch (e) {
+      res.json({});
+    }
+  });
+
   // Public tenant list aliases (supports both legacy and new frontend clients)
   const listTenantsPublic = async (req, res) => {
     try {

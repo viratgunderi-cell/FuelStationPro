@@ -6596,7 +6596,7 @@ function emp_myPumps() {
   const myKeys = new Set();
   Object.values(allocations).forEach(shiftAlloc => {
     Object.entries(shiftAlloc).forEach(([key, empId]) => {
-      if (empId === uid) myKeys.add(key);
+      if (parseInt(empId) === parseInt(uid)) myKeys.add(key);
     });
   });
   // If no allocations ever configured (fresh install), show all pumps
@@ -7946,8 +7946,8 @@ async function doEmpLogin() {
     if (!empState.page || empState.page === 'login') empState.page = 'readings';
   }
 
-  // Set correct default fuel for this employee's allocation
-  var rPumps = getEmpPumps();
+  // Set correct default fuel for this employee's allocation (use emp_myPumps for consistency)
+  var rPumps = emp_myPumps();
   var rFuels = [];
   rPumps.forEach(function(p) {
     (p.nozzles || []).forEach(function(n) {
@@ -7956,6 +7956,37 @@ async function doEmpLogin() {
     });
   });
   if (rFuels.length > 0) empSaleFuel = rFuels[0];
+
+  // ── Fetch real data from server so employee sees correct pumps/nozzles ───
+  try {
+    const tenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
+    if (tenant && tenant.id) {
+      const tid = encodeURIComponent(tenant.id);
+      // Fetch pumps, allocations and prices in parallel
+      const [serverPumps, serverAlloc, serverPrices] = await Promise.all([
+        fetch('/api/public/pumps/' + tid).then(r => r.ok ? r.json() : null).catch(() => null),
+        fetch('/api/public/allocations/' + tid).then(r => r.ok ? r.json() : null).catch(() => null),
+        fetch('/api/public/prices/' + tid).then(r => r.ok ? r.json() : null).catch(() => null),
+      ]);
+      // Populate APP.data.pumps so EMP_PUMPS returns real pump data
+      if (serverPumps && serverPumps.length > 0) {
+        if (!APP.data) APP.data = {};
+        APP.data.pumps = serverPumps;
+      }
+      // Load allocations so emp_myPumps filters correctly
+      if (serverAlloc && typeof serverAlloc === 'object' && Object.keys(serverAlloc).length > 0) {
+        allocations = serverAlloc;
+        try { localStorage.setItem('fb_allocations', JSON.stringify(allocations)); } catch {}
+      }
+      // Load prices so sale amounts calculate correctly
+      if (serverPrices && typeof serverPrices === 'object') {
+        if (!APP.data) APP.data = {};
+        APP.data.prices = serverPrices;
+      }
+    }
+  } catch(fetchErr) {
+    console.warn('[empLogin] Failed to fetch public data:', fetchErr.message);
+  }
 
   emp_saveSession();
   enterApp();
