@@ -4161,7 +4161,7 @@ function calcSaleAmount() {
   document.getElementById('saleAmount').value = (liters * (APP.data.prices[fuelId] || 0)).toFixed(2);
 }
 
-function saveSale() {
+async function saveSale() {
   const fuelType = document.getElementById('saleFuel').value;
   const liters = parseFloat(document.getElementById('saleLiters').value);
   const amount = parseFloat(document.getElementById('saleAmount').value);
@@ -4170,26 +4170,35 @@ function saveSale() {
   const pump = parseInt(document.getElementById('salePump').value);
   const customer = (document.getElementById('saleCustomer')?.value || '').trim();
 
-  // Input validation
   const errors = validateSaleInput(fuelType, liters, amount, vehicle, APP.data.prices);
   if (errors.length > 0) { toast(errors[0], 'error'); return; }
 
   const sale = {
     id: Date.now(), date: today(), time: now(), fuelType, liters, amount,
-    mode, pump, vehicle: sanitize(vehicle), customer: customer ? sanitize(customer) : undefined, shift: 'Current'
+    mode, pump, vehicle: sanitize(vehicle),
+    customer: customer ? sanitize(customer) : undefined, shift: 'Current'
   };
-  // If UPI — launch UPI payment modal, record after confirmation
+
   if (mode === 'upi') {
     closeModal();
-    openUPIPaymentModal(amount, fuelType, liters, (txnId) => {
+    openUPIPaymentModal(amount, fuelType, liters, async (txnId) => {
       sale.upiTxnId = txnId || null;
       APP.data.sales.unshift(sale);
-      db.add('sales', sale).catch(() => {});
-      db.add('pendingSync', { ...sale, type: 'sale' }).catch(() => {});
+      try { await db.add('sales', sale); } catch(e) { console.warn('[Sale]', e.message); }
       const tank = APP.data.tanks.find(t => t.fuelType === fuelType);
-      if (tank) { tank.current = Math.max(0, tank.current - liters); db.put('tanks', tank).catch(() => {}); }
+      if (tank) {
+        tank.current = Math.max(0, (tank.current || 0) - liters);
+        try { await db.put('tanks', tank); } catch(e) { console.warn('[Tank]', e.message); }
+      }
       const pumpData = APP.data.pumps.find(p => p.id === pump);
-      if (pumpData) { pumpData.currentReading += liters; db.put('pumps', pumpData).catch(() => {}); }
+      if (pumpData) {
+        pumpData.currentReading = (pumpData.currentReading || 0) + liters;
+        try { await db.put('pumps', pumpData); } catch(e) { console.warn('[Pump]', e.message); }
+      }
+      if (mode === 'credit' && customer) {
+        const cust = APP.data.creditCustomers.find(c => c.name === customer);
+        if (cust) { cust.outstanding = (cust.outstanding || 0) + amount; try { await db.put('creditCustomers', cust); } catch(e) {} }
+      }
       auditLog('sale_add', { fuelType, liters, amount, vehicle, mode: 'upi', pump, upiTxnId: txnId });
       toast(`✅ Sale + UPI recorded: ${fmt(liters)}L — ${cur(amount)}`, 'success');
       renderPage();
@@ -4198,29 +4207,29 @@ function saveSale() {
   }
 
   APP.data.sales.unshift(sale);
-  db.add('sales', sale).catch(() => {});
-  db.add('pendingSync', { ...sale, type: 'sale' }).catch(() => {});
+  try { await db.add('sales', sale); } catch(e) { console.warn('[Sale]', e.message); }
 
-  // Update tank level
+  // Update tank level — ONCE only (was deducting twice before)
   const tank = APP.data.tanks.find(t => t.fuelType === fuelType);
-  if (tank) { tank.current = Math.max(0, tank.current - liters); db.put('tanks', tank).catch(() => {}); }
+  if (tank) {
+    tank.current = Math.max(0, (tank.current || 0) - liters);
+    try { await db.put('tanks', tank); } catch(e) { console.warn('[Tank]', e.message); }
+  }
 
   // Update pump reading
   const pumpData = APP.data.pumps.find(p => p.id === pump);
-  if (pumpData) { pumpData.currentReading += liters; db.put('pumps', pumpData).catch(() => {}); }
-
-  // Deduct from tank inventory (admin manual sale → tank must reflect it)
-  const saleActualFuel = fuelType;
-  const saleTank = APP.data.tanks.find(t => t.fuelType === saleActualFuel);
-  if (saleTank && liters > 0) {
-    saleTank.current = Math.max(0, saleTank.current - liters);
-    db.put('tanks', saleTank).catch(() => {});
+  if (pumpData) {
+    pumpData.currentReading = (pumpData.currentReading || 0) + liters;
+    try { await db.put('pumps', pumpData); } catch(e) { console.warn('[Pump]', e.message); }
   }
 
-  // If credit sale, update customer outstanding
+  // Credit sale: update customer outstanding
   if (mode === 'credit' && customer) {
     const cust = APP.data.creditCustomers.find(c => c.name === customer);
-    if (cust) { cust.outstanding = (cust.outstanding || 0) + amount; db.put('creditCustomers', cust).catch(() => {}); }
+    if (cust) {
+      cust.outstanding = (cust.outstanding || 0) + amount;
+      try { await db.put('creditCustomers', cust); } catch(e) { console.warn('[Credit]', e.message); }
+    }
   }
 
   auditLog('sale_add', { fuelType, liters, amount, vehicle, mode, pump, customer: customer || undefined });
@@ -4670,7 +4679,7 @@ function updateDipPreview() {
   preview.style.display = '';
 }
 
-function saveDip() {
+async function saveDip() {
   const tankId = parseInt(document.getElementById('dipTank').value);
   const tank = APP.data.tanks.find(t => t.id === tankId);
   const ct = _tankChartType(tank);
@@ -4711,8 +4720,23 @@ function saveDip() {
     method
   };
   APP.data.dipReadings.unshift(dip);
-  db.add('dipReadings', dip).catch(() => {});
-  if (tank) { tank.current = reading; tank.lastDip = today() + ' ' + now(); db.put('tanks', tank).catch(() => {}); }
+  try { await db.add('dipReadings', dip); } catch(e) { console.warn('[Dip]', e.message); }
+  if (tank) {
+    tank.current = reading;
+    tank.lastDip = today() + ' ' + now();
+    try {
+      await db.put('tanks', tank);
+      // Reload tanks from server to confirm persistence
+      const freshTanks = await db.getAll('tanks');
+      if (freshTanks && freshTanks.length) {
+        APP.data.tanks = freshTanks.map(ft => {
+          if (ft.current === undefined || ft.current === null) ft.current = ft.current_level || 0;
+          if (ft.fuelType === undefined) ft.fuelType = ft.fuel_type || '';
+          return ft;
+        });
+      }
+    } catch(e) { console.warn('[Tank dip]', e.message); }
+  }
   auditLog('dip_reading', { tankId, reading, method });
   closeModal();
   toast(`✅ Tank ${tankId} — Available Qty set to ${reading.toLocaleString('en-IN', {maximumFractionDigits:1})} L`, 'success');
@@ -4937,7 +4961,7 @@ function expCalcGST() {
 
 function expCalcTotal() {}
 
-function saveExpense() {
+async function saveExpense() {
   const category = document.getElementById('expCategory').value;
   const amount   = parseFloat(document.getElementById('expAmount').value);
   const desc     = (document.getElementById('expDesc').value || '').trim();
@@ -4981,7 +5005,7 @@ function saveExpense() {
 
   const expense = { id: Date.now(), date: today(), category: sanitize(category), amount, desc: sanitize(finalDesc), ...meta };
   APP.data.expenses.unshift(expense);
-  db.add('expenses', expense).catch(() => {});
+  try { await db.add('expenses', expense); } catch(e) { console.warn('[Expense]', e.message); }
   auditLog('expense_add', { category, amount, desc: finalDesc });
   closeModal();
   toast('✅ ' + sanitize(category) + ': ' + cur(amount) + ' saved', 'success');
@@ -5095,7 +5119,7 @@ function openEditPumpModal(pumpId) {
   );
 }
 
-function saveEditPump(pumpId) {
+async function saveEditPump(pumpId) {
   const pump = APP.data.pumps.find(p => p.id === pumpId);
   if (!pump) return;
 
@@ -5115,7 +5139,7 @@ function saveEditPump(pumpId) {
   pump.nozzleFuels = nozzleFuels;
   pump.fuelType    = nozzleFuels[nozzleLabels[0]] || pump.fuelType;
 
-  db.put('pumps', pump).catch(() => {});
+  try { await db.put('pumps', pump); } catch(e) { console.warn('[Pump edit]', e.message); }
   auditLog('pump_edit', { pumpId, name, status, nozzleFuels });
   closeModal();
   toast(`${name} updated`, 'success');
@@ -5220,11 +5244,11 @@ function confirmDeletePump(pumpId) {
   );
 }
 
-function deletePump(pumpId) {
+async function deletePump(pumpId) {
   const pump = APP.data.pumps.find(p => p.id === pumpId);
   if (!pump) return;
   APP.data.pumps = APP.data.pumps.filter(p => p.id !== pumpId);
-  db.delete('pumps', pumpId).catch(() => {});
+  try { await db.delete('pumps', pumpId); } catch(e) { console.warn('[deletePump]', e.message); }
   auditLog('pump_delete', { pumpId, name: pump.name });
   closeModal();
   toast(`${pump.name} deleted`, 'success');
@@ -5402,7 +5426,7 @@ function openPaymentModal(customerId) {
   `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-accent" onclick="savePayment(${customerId})">💾 Record Payment</button>`);
 }
 
-function savePayment(customerId) {
+async function savePayment(customerId) {
   const amount = parseFloat(document.getElementById('payAmount').value);
   const mode = document.getElementById('payMode').value;
   if (isNaN(amount) || amount <= 0) { toast('Enter valid payment amount', 'error'); return; }
@@ -5413,7 +5437,7 @@ function savePayment(customerId) {
   const oldOutstanding = c.outstanding;
   c.outstanding = Math.max(0, c.outstanding - amount);
   c.lastPayment = today();
-  db.put('creditCustomers', c).catch(() => {});
+  try { await db.put('creditCustomers', c); } catch(e) { console.warn('[Payment]', e.message); }
   auditLog('credit_payment', { customer: c.name, amount, mode, oldOutstanding, newOutstanding: c.outstanding });
   closeModal();
   toast(`Payment of ${cur(amount)} recorded for ${sanitize(c.name)}`, 'success');
@@ -6005,7 +6029,7 @@ function openEditEmployeeModal(empId) {
   );
 }
 
-function saveEditEmployee() {
+async function saveEditEmployee() {
   const empId = parseInt(document.getElementById('editEmpId')?.value);
   const name = document.getElementById('empName')?.value?.trim();
   const role = document.getElementById('empRole')?.value;
@@ -6028,7 +6052,7 @@ function saveEditEmployee() {
   const newShift = selectedShifts.join(',');
 
   D.employees[idx] = { ...oldEmp, name, role, shift: newShift, phone: phone||'', salary, permissions };
-  db.put('employees', D.employees[idx]).catch(() => {});
+  try { await db.put('employees', D.employees[idx]); } catch(e) { console.warn('[EditEmployee]', e.message); }
 
   // FIX 4: propagate name change everywhere
   if (oldName !== name) {
@@ -6038,7 +6062,7 @@ function saveEditEmployee() {
     if (APP.auditLog) APP.auditLog.forEach(a => { if (a.user === oldName) a.user = name; if (a.details?.employee === oldName) a.details.employee = name; });
     // Update shift manager names
     if (D.shifts) D.shifts.forEach(s => {
-      if (s.manager === oldName) { s.manager = name; db.put('shifts', s).catch(()=>{}); }
+      if (s.manager === oldName) { s.manager = name; try { await db.put('shifts', s); } catch(e) {} }
     });
   }
 
@@ -6131,15 +6155,14 @@ function confirmDeleteEmployee(empId) {
   );
 }
 
-function deleteEmployee() {
+async function deleteEmployee() {
   const empId = parseInt(document.getElementById('deleteEmpId')?.value);
   const D = APP.data;
   const emp = D.employees.find(e => e.id === empId);
   if (!emp) return;
   const name = emp.name;
   D.employees = D.employees.filter(e => e.id !== empId);
-  db.delete('employees', empId).catch(() => {});
-  // Remove their PIN
+  try { await db.delete('employees', empId); } catch(e) { console.warn('[deleteEmployee]', e.message); }
   const pins = loadEmpPins();
   delete pins[empId];
   saveEmpPins(pins);
@@ -7852,7 +7875,7 @@ function openCreditCustomerModal() {
   `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-accent" onclick="saveCreditCustomer()">💾 Save Customer</button>`);
 }
 
-function saveCreditCustomer() {
+async function saveCreditCustomer() {
   const name = (document.getElementById('ccName').value || '').trim();
   const type = document.getElementById('ccType').value;
   const limit = parseFloat(document.getElementById('ccLimit').value);
@@ -7865,7 +7888,7 @@ function saveCreditCustomer() {
     lastPayment: '', phone: sanitize(phone)
   };
   APP.data.creditCustomers.push(customer);
-  db.add('creditCustomers', customer).catch(() => {});
+  try { await db.add('creditCustomers', customer); } catch(e) { console.warn('[CreditCustomer]', e.message); }
   auditLog('credit_customer_add', { name, type, limit });
   closeModal();
   toast(`${sanitize(name)} added as credit customer`, 'success');
