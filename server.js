@@ -25,14 +25,15 @@ async function startServer() {
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc:  ["'self'", "'unsafe-inline'"],  // SPA requires inline scripts
-        styleSrc:   ["'self'", "'unsafe-inline'"],
-        imgSrc:     ["'self'", 'data:', 'blob:'],
-        connectSrc: ["'self'"],
-        fontSrc:    ["'self'", 'data:'],
-        objectSrc:  ["'none'"],
-        frameSrc:   ["'none'"],
+        defaultSrc:    ["'self'"],
+        scriptSrc:     ["'self'", "'unsafe-inline'"],
+        scriptSrcAttr: ["'unsafe-inline'"],
+        styleSrc:      ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc:       ["'self'", 'data:', 'https://fonts.gstatic.com'],
+        imgSrc:        ["'self'", 'data:', 'blob:'],
+        connectSrc:    ["'self'"],
+        objectSrc:     ["'none'"],
+        frameSrc:      ["'none'"],
       }
     },
     crossOriginEmbedderPolicy: false,  // Allow mixed content loading
