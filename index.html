@@ -3160,9 +3160,20 @@ function renderStaff(D) {
   const allocKey = allocShift + '_' + allocDate;
   const shiftAlloc = allocations[allocKey] || allocations[allocShift] || {};
   const assignedCount = Object.values(shiftAlloc).filter(v => v && D.employees.some(e => parseInt(e.id) === parseInt(v))).length;
-  // Show ALL employees in dropdown so admin can freely assign anyone to any shift
-  const shiftEmps = D.employees; // used for summary table below
-  const empOptions = D.employees.map(e => `<option value="${e.id}">${e.name} (${e.role})</option>`).join('');
+
+  // ── Filter employees by Roster for the selected date+shift ──────────────
+  // Roster key format: "YYYY-MM-DD_ShiftName"
+  const rosterKey = allocDate + '_' + allocShift;
+  const rosteredIds = (window._rosterData && window._rosterData[rosterKey]) || [];
+  // If roster has assignments for this date+shift, show only those employees
+  // Otherwise fall back to employees whose shift field includes this shift
+  const shiftEmps = rosteredIds.length > 0
+    ? D.employees.filter(e => rosteredIds.includes(String(e.id)))
+    : D.employees.filter(e => (e.shift||'').split(',').map(s=>s.trim()).includes(allocShift));
+  const rosterFiltered = rosteredIds.length > 0;
+
+  const empOptions = shiftEmps.map(e => `<option value="${e.id}">${e.name} (${e.role})</option>`).join('')
+    || `<option value="" disabled>No employees rostered for this shift</option>`;
 
   // Shift tabs
   const shiftTabs = D.shifts.map(s =>
@@ -3401,6 +3412,7 @@ function renderStaff(D) {
           <div style="font-size:12px;color:var(--text-3);margin-bottom:14px">
             Assign employees to individual pump nozzles for <strong style="color:var(--accent-light)">${allocShift}</strong> shift
             · <span style="color:var(--text-2)">${shiftEmps.length} employees available</span>
+            ${rosterFiltered ? `<span style="margin-left:6px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(34,197,94,0.12);color:var(--green);border:1px solid rgba(34,197,94,0.25)">🗓️ Roster filtered</span>` : `<span style="margin-left:6px;font-size:10px;color:var(--text-3)">(set roster to filter)</span>`}
             ${assignedCount >= totalNozzles ? ' · <span style="color:var(--green);font-weight:600">All nozzles covered ✓</span>' : ''}
           </div>
         </div>
@@ -6311,7 +6323,12 @@ function openChangeAllocModal(pumpId, nozzle) {
   const key = `${pumpId}_${nozzle}`;
   const currentEmpId = allocations[allocShift]?.[key];
   const pump = D.pumps.find(p => String(p.id) === String(pumpId));
-  const shiftEmps = D.employees.filter(e => (e.shift||'').split(',').map(s=>s.trim()).includes(allocShift));
+  // Respect roster: only show employees rostered for this shift on allocDate
+  const rosterKey = allocDate + '_' + allocShift;
+  const rosteredIds = (window._rosterData && window._rosterData[rosterKey]) || [];
+  const shiftEmps = rosteredIds.length > 0
+    ? D.employees.filter(e => rosteredIds.includes(String(e.id)))
+    : D.employees.filter(e => (e.shift||'').split(',').map(s=>s.trim()).includes(allocShift));
 
   const empItems = shiftEmps.map(e => {
     const isCurrent = e.id === currentEmpId;
@@ -6332,9 +6349,13 @@ function openChangeAllocModal(pumpId, nozzle) {
 
 function autoAssignAlloc() {
   const D = APP.data;
-  // Use all active employees for auto-assign (not filtered by shift field)
-  const shiftEmps = D.employees.filter(e => e.status !== 'inactive');
-  if (shiftEmps.length === 0) { toast('No employees found', 'error'); return; }
+  // Respect roster: use rostered employees for this shift+date, fall back to shift field
+  const rosterKey = allocDate + '_' + allocShift;
+  const rosteredIds = (window._rosterData && window._rosterData[rosterKey]) || [];
+  const shiftEmps = rosteredIds.length > 0
+    ? D.employees.filter(e => rosteredIds.includes(String(e.id)))
+    : D.employees.filter(e => (e.shift||'').split(',').map(s=>s.trim()).includes(allocShift));
+  if (shiftEmps.length === 0) { toast('No employees rostered for this shift on this date', 'error'); return; }
 
   if (!allocations[allocShift]) allocations[allocShift] = {};
   let idx = 0;
