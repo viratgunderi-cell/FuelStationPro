@@ -45,6 +45,8 @@ function authRoutes(db) {
         return res.status(401).json({ error: 'Invalid credentials' });
       }
       await recordLoginAttempt(db, req._bruteForceIp, username, '', true);
+      // FIX (a): Only one superadmin session allowed — invalidate all previous super sessions
+      await db.prepare("DELETE FROM sessions WHERE user_type = 'super'").run();
       const token = await createSession(db, {
         tenantId: '', userId: 0, userType: 'super',
         userName: 'Super Admin', role: 'super',

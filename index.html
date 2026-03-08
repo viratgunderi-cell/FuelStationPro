@@ -3332,7 +3332,7 @@ function renderStaff(D) {
   }).join('');
 
   return `
-    <div class="page-hdr"><h3>👥 Staff & Allocation</h3><button class="btn btn-accent" onclick="openEmployeeModal()">+ Add Employee</button></div>
+    <div class="page-hdr"><h3>👥 Staff & Allocation</h3><button class="btn btn-ghost" onclick="openAddShiftModal()">+ Add Shift</button><button class="btn btn-accent" onclick="openEmployeeModal()">+ Add Employee</button></div>
 
     <!-- Stats -->
     ${(() => {
@@ -3913,6 +3913,291 @@ window.settleEmpBalance     = settleEmpBalance;
 window.settleAllEmpBalance  = settleAllEmpBalance;
 
 window.renderStaff = renderStaff;
+
+// ── SHIFT ROSTER ─────────────────────────────────────────────
+function renderRoster(D) {
+  const today = new Date();
+  // Build a 7-day week view starting from current Monday
+  const dayOfWeek = today.getDay() === 0 ? 6 : today.getDay() - 1;
+  const weekStart = new Date(today); weekStart.setDate(today.getDate() - dayOfWeek);
+  const weekDays = Array.from({length: 7}, (_, i) => {
+    const d = new Date(weekStart); d.setDate(weekStart.getDate() + i);
+    return d;
+  });
+  const fmtDate = d => d.toISOString().slice(0,10);
+  const fmtDay = d => d.toLocaleDateString('en-IN', {weekday:'short'});
+  const fmtNum = d => d.getDate();
+  const todayStr = fmtDate(today);
+
+  const shifts = D.shifts && D.shifts.length ? D.shifts : [{name:'Morning',start:'06:00',end:'14:00'},{name:'Afternoon',start:'14:00',end:'22:00'},{name:'Night',start:'22:00',end:'06:00'}];
+  const emps = D.employees || [];
+
+  // Load saved roster from settings (in-memory for now, persisted via db.setSetting)
+  if (!window._rosterData) window._rosterData = {};
+  const roster = window._rosterData;
+
+  const shiftColors = ['rgba(212,148,15,0.12)','rgba(59,130,246,0.12)','rgba(139,92,246,0.12)','rgba(34,197,94,0.1)'];
+  const shiftBorderColors = ['var(--accent)','#3b82f6','#8b5cf6','#22c55e'];
+
+  // Build week header
+  const dayHeaders = weekDays.map(d => {
+    const isToday = fmtDate(d) === todayStr;
+    return `<th style="text-align:center;padding:8px 4px;min-width:90px;${isToday?'color:var(--accent-light);font-weight:800':''}">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase">${fmtDay(d)}</div>
+      <div style="font-size:18px;font-weight:800;margin-top:2px${isToday?';color:var(--accent)':''}">${fmtNum(d)}</div>
+    </th>`;
+  }).join('');
+
+  // Build rows — one per shift
+  const shiftRows = shifts.map((shift, si) => {
+    const cells = weekDays.map(d => {
+      const dateStr = fmtDate(d);
+      const key = dateStr + '_' + shift.name;
+      const assigned = roster[key] || [];
+      const isToday = dateStr === todayStr;
+      const assignedEmps = assigned.map(id => emps.find(e => String(e.id) === String(id))).filter(Boolean);
+      const empChips = assignedEmps.map(e =>
+        `<div style="display:flex;align-items:center;gap:5px;background:var(--bg-2);border-radius:5px;padding:3px 6px;margin-bottom:3px;font-size:10px;font-weight:600;color:var(--text-0)">
+          <span style="width:6px;height:6px;border-radius:50%;background:${e.color||'var(--accent)'};flex-shrink:0"></span>
+          ${sanitize(e.name)}
+          <button onclick="rosterUnassign('${dateStr}','${shift.name}',${e.id})" style="margin-left:auto;background:none;border:none;color:var(--text-3);cursor:pointer;font-size:10px;padding:0 2px" title="Remove">✕</button>
+        </div>`
+      ).join('');
+      const empSelect = `<select onchange="rosterAssign('${dateStr}','${shift.name}',this.value);this.value=''" style="width:100%;font-size:10px;padding:3px 4px;border-radius:5px;background:var(--bg-1);border:1px solid var(--border);color:var(--text-2);margin-top:${assignedEmps.length?'4px':'0'}">
+        <option value="">+ Assign</option>
+        ${emps.filter(e => !assigned.includes(String(e.id))).map(e => `<option value="${e.id}">${sanitize(e.name)}</option>`).join('')}
+      </select>`;
+      return `<td style="vertical-align:top;padding:6px;background:${isToday?'rgba(212,148,15,0.04)':'transparent'};border-left:1px solid var(--border-light)">
+        ${empChips}${empSelect}
+      </td>`;
+    }).join('');
+
+    return `<tr>
+      <td style="padding:10px 12px;white-space:nowrap;border-right:2px solid ${shiftBorderColors[si%shiftBorderColors.length]};background:${shiftColors[si%shiftColors.length]}">
+        <div style="font-size:12px;font-weight:800;color:var(--text-0)">${sanitize(shift.name)}</div>
+        <div style="font-size:10px;color:var(--text-3)">${sanitize(shift.start||'')}–${sanitize(shift.end||'')}</div>
+      </td>
+      ${cells}
+    </tr>`;
+  }).join('');
+
+  // Navigation buttons
+  const prevWeek = new Date(weekStart); prevWeek.setDate(prevWeek.getDate()-7);
+  const nextWeek = new Date(weekStart); nextWeek.setDate(nextWeek.getDate()+7);
+
+  return `
+    <div class="page-hdr"><h3>🗓️ Shift Roster</h3>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="rosterNavWeek(-1)">◀ Prev Week</button>
+        <button class="btn btn-ghost btn-sm" onclick="rosterNavWeek(1)">Next Week ▶</button>
+        <button class="btn btn-accent btn-sm" onclick="rosterSave()">💾 Save Roster</button>
+      </div>
+    </div>
+
+    <div style="font-size:12px;color:var(--text-3);margin-bottom:16px">
+      Week of <strong style="color:var(--text-1)">${weekStart.toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</strong>
+      — Click <em>+ Assign</em> in any cell to assign an employee to that shift on that day.
+    </div>
+
+    <div class="card mb-24" style="overflow-x:auto">
+      <table style="border-collapse:collapse;width:100%;min-width:680px">
+        <thead style="background:var(--bg-1);border-bottom:2px solid var(--border)">
+          <tr>
+            <th style="padding:10px 14px;text-align:left;min-width:100px;font-size:11px;text-transform:uppercase;color:var(--text-3)">Shift</th>
+            ${dayHeaders}
+          </tr>
+        </thead>
+        <tbody>${shiftRows}</tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h4>📋 Roster Summary — This Week</h4></div>
+      <div class="card-body">
+        <div class="g" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px">
+          ${(D.employees||[]).map(e => {
+            const totalAssigned = Object.entries(roster).filter(([k,v]) => v.includes(String(e.id))).length;
+            return `<div style="padding:12px;background:var(--bg-1);border-radius:var(--radius);border:1px solid var(--border-light)">
+              <div style="font-size:13px;font-weight:700;color:var(--text-0);margin-bottom:4px">${sanitize(e.name)}</div>
+              <div style="font-size:11px;color:var(--text-3)">${sanitize(e.role||'')} · <span style="color:var(--accent-light);font-weight:700">${totalAssigned} shift${totalAssigned!==1?'s':''} this week</span></div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+    </div>`;
+}
+
+window._rosterWeekOffset = 0;
+function rosterNavWeek(dir) {
+  window._rosterWeekOffset = (window._rosterWeekOffset || 0) + dir;
+  renderPage();
+}
+function rosterAssign(date, shiftName, empId) {
+  if (!empId) return;
+  const key = date + '_' + shiftName;
+  if (!window._rosterData) window._rosterData = {};
+  if (!window._rosterData[key]) window._rosterData[key] = [];
+  if (!window._rosterData[key].includes(String(empId))) {
+    window._rosterData[key].push(String(empId));
+  }
+  renderPage();
+}
+function rosterUnassign(date, shiftName, empId) {
+  const key = date + '_' + shiftName;
+  if (!window._rosterData || !window._rosterData[key]) return;
+  window._rosterData[key] = window._rosterData[key].filter(id => String(id) !== String(empId));
+  renderPage();
+}
+async function rosterSave() {
+  try {
+    await db.setSetting('shift_roster', window._rosterData || {});
+    toast('Roster saved successfully', 'success');
+  } catch(e) {
+    toast('Failed to save roster: ' + (e.message||e), 'error');
+  }
+}
+window.renderRoster = renderRoster;
+window.rosterNavWeek = rosterNavWeek;
+window.rosterAssign = rosterAssign;
+window.rosterUnassign = rosterUnassign;
+window.rosterSave = rosterSave;
+
+// ── ATTENDANCE ────────────────────────────────────────────────
+function renderAttendance(D) {
+  const today = new Date().toISOString().slice(0,10);
+  if (!window._attendanceData) window._attendanceData = {};
+  const att = window._attendanceData;
+  const emps = (D.employees || []).filter(e => e.status !== 'inactive');
+  const shifts = D.shifts && D.shifts.length ? D.shifts : [{name:'Morning'},{name:'Afternoon'},{name:'Night'}];
+
+  // Date picker — default today
+  if (!window._attDate) window._attDate = today;
+  const attDate = window._attDate;
+  const dateKey = attDate;
+  if (!att[dateKey]) att[dateKey] = {};
+
+  const statusOpts = ['present','absent','half-day','leave','holiday'];
+  const statusColor = { present:'var(--green)', absent:'var(--red)', 'half-day':'var(--orange)', leave:'#8b5cf6', holiday:'#3b82f6' };
+  const statusEmoji = { present:'✅', absent:'❌', 'half-day':'🌓', leave:'🏖️', holiday:'🎉' };
+
+  // Summary counts
+  const counts = statusOpts.reduce((a,s) => { a[s]=0; return a; }, {});
+  emps.forEach(e => { const s = (att[dateKey]?.[e.id]?.status||'absent'); counts[s] = (counts[s]||0)+1; });
+
+  // Attendance rows
+  const rows = emps.map(e => {
+    const rec = att[dateKey]?.[e.id] || {};
+    const status = rec.status || '';
+    const note = rec.note || '';
+    return `<tr>
+      <td style="padding:10px 12px">
+        <div style="font-weight:700;color:var(--text-0);font-size:13px">${sanitize(e.name)}</div>
+        <div style="font-size:10px;color:var(--text-3)">${sanitize(e.role||'')} · ${sanitize((e.shift||'').split(',')[0]||'—')} shift</div>
+      </td>
+      <td style="padding:10px 12px">
+        <select class="form-input" style="padding:6px 10px;font-size:12px;width:130px" onchange="attSetStatus(${e.id},'${dateKey}',this.value)">
+          <option value="">Mark status</option>
+          ${statusOpts.map(s => `<option value="${s}" ${status===s?'selected':''} style="color:${statusColor[s]}">${statusEmoji[s]} ${s.charAt(0).toUpperCase()+s.slice(1)}</option>`).join('')}
+        </select>
+      </td>
+      <td style="padding:10px 12px">
+        ${status ? `<span style="padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;background:${statusColor[status]}22;color:${statusColor[status]};border:1px solid ${statusColor[status]}44">${statusEmoji[status]} ${status.charAt(0).toUpperCase()+status.slice(1)}</span>` : '<span style="font-size:11px;color:var(--text-3)">Not marked</span>'}
+      </td>
+      <td style="padding:10px 12px">
+        <input style="background:var(--bg-1);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:11px;color:var(--text-1);width:160px" placeholder="Note (optional)" value="${sanitize(note)}" oninput="attSetNote(${e.id},'${dateKey}',this.value)" />
+      </td>
+    </tr>`;
+  }).join('');
+
+  // Monthly summary for selected employee
+  const monthStr = attDate.slice(0,7);
+  const monthlyRows = emps.map(e => {
+    const pres = Object.entries(att).filter(([d]) => d.startsWith(monthStr) && att[d]?.[e.id]?.status==='present').length;
+    const abs = Object.entries(att).filter(([d]) => d.startsWith(monthStr) && att[d]?.[e.id]?.status==='absent').length;
+    const half = Object.entries(att).filter(([d]) => d.startsWith(monthStr) && att[d]?.[e.id]?.status==='half-day').length;
+    const leave = Object.entries(att).filter(([d]) => d.startsWith(monthStr) && att[d]?.[e.id]?.status==='leave').length;
+    return `<tr>
+      <td style="padding:8px 12px;font-weight:600;color:var(--text-0)">${sanitize(e.name)}</td>
+      <td style="padding:8px 12px;color:var(--green);font-weight:700;text-align:center">${pres}</td>
+      <td style="padding:8px 12px;color:var(--red);font-weight:700;text-align:center">${abs}</td>
+      <td style="padding:8px 12px;color:var(--orange);font-weight:700;text-align:center">${half}</td>
+      <td style="padding:8px 12px;color:#8b5cf6;font-weight:700;text-align:center">${leave}</td>
+      <td style="padding:8px 12px;text-align:center;font-size:11px;color:var(--text-3)">${Math.round((pres + half*0.5)/(pres+abs+half+leave||1)*100)||0}%</td>
+    </tr>`;
+  }).join('');
+
+  return `
+    <div class="page-hdr"><h3>✅ Attendance</h3>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="date" class="form-input" style="padding:6px 12px;font-size:13px;width:160px" value="${attDate}" onchange="window._attDate=this.value;renderPage()" />
+        <button class="btn btn-accent btn-sm" onclick="attSave()">💾 Save</button>
+        <button class="btn btn-ghost btn-sm" onclick="attMarkAllPresent('${dateKey}')">✅ All Present</button>
+      </div>
+    </div>
+
+    <!-- Summary pills -->
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px">
+      ${statusOpts.map(s => `<div style="padding:6px 14px;border-radius:20px;font-size:12px;font-weight:700;background:${statusColor[s]}18;color:${statusColor[s]};border:1px solid ${statusColor[s]}33">${statusEmoji[s]} ${s.charAt(0).toUpperCase()+s.slice(1)}: ${counts[s]}</div>`).join('')}
+    </div>
+
+    <!-- Daily attendance table -->
+    <div class="card mb-24">
+      <div class="card-head"><h4>📅 Daily Attendance — ${new Date(attDate+'T00:00:00').toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</h4></div>
+      <div class="card-body" style="padding:0">
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>Employee</th><th>Mark Status</th><th>Status</th><th>Note</th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:24px">No employees found. Add staff in Staff &amp; Allocation.</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Monthly summary -->
+    <div class="card">
+      <div class="card-head"><h4>📊 Monthly Summary — ${new Date(attDate+'-01').toLocaleDateString('en-IN',{month:'long',year:'numeric'})}</h4></div>
+      <div class="card-body" style="padding:0">
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>Employee</th><th style="text-align:center;color:var(--green)">✅ Present</th><th style="text-align:center;color:var(--red)">❌ Absent</th><th style="text-align:center;color:var(--orange)">🌓 Half-Day</th><th style="text-align:center;color:#8b5cf6">🏖️ Leave</th><th style="text-align:center">Attendance %</th></tr></thead>
+            <tbody>${monthlyRows || '<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:24px">No data</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>`;
+}
+
+function attSetStatus(empId, dateKey, status) {
+  if (!window._attendanceData) window._attendanceData = {};
+  if (!window._attendanceData[dateKey]) window._attendanceData[dateKey] = {};
+  window._attendanceData[dateKey][empId] = { ...(window._attendanceData[dateKey][empId]||{}), status };
+  renderPage();
+}
+function attSetNote(empId, dateKey, note) {
+  if (!window._attendanceData) window._attendanceData = {};
+  if (!window._attendanceData[dateKey]) window._attendanceData[dateKey] = {};
+  window._attendanceData[dateKey][empId] = { ...(window._attendanceData[dateKey][empId]||{}), note };
+}
+function attMarkAllPresent(dateKey) {
+  const emps = APP.data?.employees || [];
+  if (!window._attendanceData) window._attendanceData = {};
+  if (!window._attendanceData[dateKey]) window._attendanceData[dateKey] = {};
+  emps.forEach(e => { window._attendanceData[dateKey][e.id] = { ...(window._attendanceData[dateKey][e.id]||{}), status:'present' }; });
+  renderPage();
+}
+async function attSave() {
+  try {
+    await db.setSetting('attendance_data', window._attendanceData || {});
+    toast('Attendance saved', 'success');
+  } catch(e) {
+    toast('Failed to save: ' + (e.message||e), 'error');
+  }
+}
+window.renderAttendance = renderAttendance;
+window.attSetStatus = attSetStatus;
+window.attSetNote = attSetNote;
+window.attMarkAllPresent = attMarkAllPresent;
+window.attSave = attSave;
 window.mt_showSelector = mt_showSelector;
 window.mt_toggleStation = mt_toggleStation;
 window.mt_viewStationData = mt_viewStationData;
@@ -4035,6 +4320,8 @@ const PAGES = [
   { id: 'sales', label: 'Sales', icon: '💰', group: 'main' },
   { id: 'credit', label: 'Credit Mgmt', icon: '💳', group: 'finance' },
   { id: 'staff', label: 'Staff & Allocation', icon: '👥', group: 'finance' },
+  { id: 'roster', label: 'Shift Roster', icon: '🗓️', group: 'finance' },
+  { id: 'attendance', label: 'Attendance', icon: '✅', group: 'finance' },
   { id: 'finance', label: 'Finance', icon: '📈', group: 'finance' },
   { id: 'reports', label: 'Reports', icon: '📄', group: 'reports' },
   { id: 'settings', label: 'Settings', icon: '⚙️', group: 'reports' },
@@ -4157,6 +4444,8 @@ function renderPage() {
       case 'sales': html = renderSales(D, APP.salesFilter); break;
       case 'credit': html = renderCredit(D); break;
       case 'staff': html = renderStaff(D); break;
+      case 'roster': html = renderRoster(D); break;
+      case 'attendance': html = renderAttendance(D); break;
       case 'finance': html = renderFinance(D); break;
       case 'reports': html = renderReports(D); break;
       case 'employee': html = renderEmployeePortal(); break;
@@ -6273,6 +6562,8 @@ function openSetPINModal(empId) {
     <input type="hidden" id="setPINEmpId" value="${empId}" />`,
     `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-accent" onclick="saveEmployeePIN()">🔑 Set PIN</button>`
   );
+  // Fix (e): auto-focus the new PIN input
+  requestAnimationFrame(() => { const el = document.getElementById('newPIN'); if (el) el.focus(); });
 }
 
 async function saveEmployeePIN() {
@@ -6844,7 +7135,14 @@ function renderEmployeePortal() {
     default: inner = emp_renderLogin();
   }
 
-  return `<div style="max-width:520px;margin:0 auto">${subNav}${inner}</div>`;
+  return `<div style="max-width:520px;margin:0 auto">
+    ${empState.active || empState.page !== 'login' ? `
+      <div style="text-align:center;padding:12px 16px 8px;margin-bottom:12px;background:linear-gradient(135deg,rgba(212,148,15,0.1),rgba(240,180,41,0.05));border-radius:var(--radius);border:1px solid rgba(212,148,15,0.2)">
+        <div style="font-size:22px;margin-bottom:4px">⛽</div>
+        <div style="font-size:16px;font-weight:800;color:var(--text-0)">${sanitize(APP.tenant?.name || 'Fuel Station')}</div>
+        ${APP.tenant?.location ? `<div style="font-size:11px;color:var(--text-3)">${sanitize(APP.tenant.location)}</div>` : ''}
+      </div>` : ''}
+    ${subNav}${inner}</div>`;
 }
 
 // ── LOGIN ──
@@ -6857,13 +7155,15 @@ function emp_renderLogin() {
   return `<div style="text-align:center;margin-bottom:24px;padding-top:16px">
     <div style="font-size:42px;margin-bottom:10px">🧑‍🔧</div>
     <h2 class="fw-800" style="color:var(--text-0);font-size:20px;margin-bottom:4px">Employee Portal</h2>
-    <p style="font-size:12px;color:var(--text-3)">${APP.tenant ? sanitize(APP.tenant.name) + (APP.tenant.location ? ', ' + sanitize(APP.tenant.location) : '') : 'FuelBunk Pro'}</p>
+    <div style="display:inline-block;padding:6px 18px;background:linear-gradient(135deg,rgba(212,148,15,0.15),rgba(240,180,41,0.08));border-radius:20px;border:1px solid rgba(212,148,15,0.3);margin-top:4px">
+      <span style="font-size:13px;font-weight:700;color:var(--accent-light)">⛽ ${APP.tenant ? sanitize(APP.tenant.name) + (APP.tenant.location ? ', ' + sanitize(APP.tenant.location) : '') : 'FuelBunk Pro'}</span>
+    </div>
   </div>
   <div class="card"><div class="card-head"><h4>Login</h4>${badge(emp_today(),'badge-accent')}</div><div class="card-body">
     <div class="form-group"><label class="form-label">Select Your Name</label><select class="form-input" id="empLoginName" ${hasEmployees ? '' : 'disabled'}>${empOpts}</select></div>
     <div class="form-group"><label class="form-label">Last 4 Digits of Phone (PIN)</label><input class="form-input" id="empLoginPin" type="password" maxlength="4" placeholder="Enter 4-digit PIN" inputmode="numeric" autocomplete="off" /><div style="font-size:10px;color:var(--text-3);margin-top:4px">Use last 4 digits of registered mobile</div></div>
     <button class="btn btn-accent btn-block" style="padding:14px;font-size:14px;margin-top:6px;${hasEmployees ? '' : 'opacity:0.6;cursor:not-allowed;'}" onclick="emp_doLogin()" ${hasEmployees ? '' : 'disabled'}>🔐 Login</button>
-    ${hasEmployees ? '' : '<div style="font-size:11px;color:var(--red);margin-top:8px">No employees configured. Ask admin to add staff in Staff & Allocation.</div>'}
+    ${hasEmployees ? '' : '<div style="font-size:11px;color:var(--red);margin-top:8px">No employees with PIN set. Ask admin to assign PINs in Staff &amp; Allocation.</div>'}
   </div></div>`;
 }
 
@@ -7984,14 +8284,21 @@ async function fetchPublicEmployees() {
     if (Array.isArray(emps) && emps.length > 0) {
       // Update cache
       try { localStorage.setItem('fb_emp_cache', JSON.stringify(emps)); } catch {}
+      // Fix (h): Only show employees who have a PIN set
+      const empsWithPin = emps.filter(e => e.pinHash && e.pinHash.length > 0);
       // Refresh the employee dropdown if it's currently visible
       const sel = document.getElementById('empLoginName2') || document.getElementById('empLoginName');
       if (sel) {
         const currentVal = sel.value;
-        sel.innerHTML = emps.map(e =>
-          '<option value="' + e.id + '">' + sanitize(e.name) + ' — ' + sanitize(e.role) + '</option>'
-        ).join('');
-        if (currentVal) sel.value = currentVal;
+        if (empsWithPin.length > 0) {
+          sel.innerHTML = empsWithPin.map(e =>
+            '<option value="' + e.id + '">' + sanitize(e.name) + ' — ' + sanitize(e.role) + '</option>'
+          ).join('');
+          if (currentVal) sel.value = currentVal;
+        } else {
+          sel.innerHTML = '<option value="" disabled selected>No employees with PIN configured</option>';
+          sel.disabled = true;
+        }
         // Remove the "No employees" message if present
         const noEmpMsg = document.getElementById('noEmpMsg');
         if (noEmpMsg) noEmpMsg.style.display = 'none';
@@ -8020,7 +8327,7 @@ function showLoginScreen() {
     empOpts += '<option value="' + EMP_LIST[i].id + '">' + sanitize(EMP_LIST[i].name) + ' — ' + sanitize(EMP_LIST[i].role) + '</option>';
   }
   if (!hasEmployees) {
-    empOpts = '<option value="" disabled selected>No employees configured for this station</option>';
+    empOpts = '<option value="" disabled selected>No employees with PIN configured</option>';
   }
 
   el.innerHTML =
@@ -8051,7 +8358,7 @@ function showLoginScreen() {
       '<div class="form-group"><label class="form-label">Select Your Name</label><select class="form-input" id="empLoginName2"' + (hasEmployees ? '' : ' disabled') + '>' + empOpts + '</select></div>' +
       '<div class="form-group"><label class="form-label">PIN (Last 4 digits of phone)</label><input class="form-input" id="empLoginPin2" type="password" maxlength="4" placeholder="Enter 4-digit PIN" inputmode="numeric" autocomplete="off" onkeydown="if(event.key===\'Enter\')doEmpLogin()" /></div>' +
       '<button class="btn btn-block" style="background:var(--green);color:#fff;padding:14px;font-size:14px;margin-top:6px' + (hasEmployees ? '' : ';opacity:0.6;cursor:not-allowed') + '" onclick="doEmpLogin()"' + (hasEmployees ? '' : ' disabled') + '>\uD83E\uDDD1\u200D\uD83D\uDD27 Login</button>' +
-      (hasEmployees ? '' : '<div style="font-size:11px;color:var(--red);margin-top:8px">No employees configured. Ask admin to add staff in Staff & Allocation.</div>') +
+      (hasEmployees ? '' : '<div style="font-size:11px;color:var(--red);margin-top:8px">No employees with PIN set. Ask admin to set PINs in Staff &amp; Allocation.</div>') +
     '</div>' +
     '<div class="login-footer">FuelBunk Pro v3.0 &copy; 2026 &nbsp;·&nbsp; <a href="#" onclick="mt_switchStation();return false;" style="color:var(--accent-light);text-decoration:none;font-weight:600;">🏪 Switch Station</a></div>' +
     '</div></div>';
@@ -8981,6 +9288,18 @@ async function loadData() {
       console.warn('[Alloc] Failed to load from server:', allocErr.message);
     }
 
+    // ── Load Shift Roster from server ──────────────────────────────────────────
+    try {
+      const savedRoster = await db.getSetting('shift_roster');
+      if (savedRoster && typeof savedRoster === 'object') window._rosterData = savedRoster;
+    } catch {}
+
+    // ── Load Attendance data from server ───────────────────────────────────────
+    try {
+      const savedAtt = await db.getSetting('attendance_data');
+      if (savedAtt && typeof savedAtt === 'object') window._attendanceData = savedAtt;
+    } catch {}
+
     // ── Backfill: ensure every fuel purchase has a matching expense entry ──
     // This handles purchases entered before the auto-expense feature was added
     const existingPurchaseExpIds = new Set(
@@ -9225,6 +9544,8 @@ function openResetEmployeePasswordModal(empId) {
     `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn btn-accent" onclick="doResetEmployeePin()">🔑 Reset PIN</button>`
   );
+  // Fix (e): auto-focus the new PIN input
+  requestAnimationFrame(() => { const el = document.getElementById('newEmpPIN'); if (el) el.focus(); });
 }
 
 async function doResetEmployeePin() {
