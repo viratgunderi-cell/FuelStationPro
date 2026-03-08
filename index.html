@@ -5,10 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#d4940f">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="FuelBunk Pro">
-  <meta name="description" content="Complete fuel bunk operation and financial management system">
+  <meta name="description" content="Complete fuel station management — sales, readings, staff &amp; reports">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
+  <meta name="msapplication-TileColor" content="#d4940f">
+  <meta name="msapplication-TileImage" content="/icon-192.png">
   <title>FuelBunk Pro — Fuel Station Management</title>
   
   
@@ -107,21 +115,21 @@
 </div>
 
 <div class="install-banner" id="installBanner">
-  <div style="display:flex;align-items:center;gap:12px">
-    <div class="brand-icon" style="width:32px;height:32px;border-radius:8px;font-size:14px">⛽</div>
-    <div>
+  <div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0">
+    <img src="/icon-192.png" width="40" height="40" style="border-radius:10px;flex-shrink:0" onerror="this.outerHTML='<div style=&quot;width:40px;height:40px;background:#d4940f;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px&quot;>⛽</div>'" alt="">
+    <div style="min-width:0">
       <div class="fw-700" style="color:var(--text-0);font-size:14px">Install FuelBunk Pro</div>
-      <div style="font-size:11px;color:var(--text-3)">Works offline • Faster access • Home screen</div>
+      <div style="font-size:11px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Works offline · No app store needed</div>
     </div>
   </div>
-  <div style="display:flex;gap:8px">
-    <button class="btn btn-ghost btn-sm" onclick="dismissInstall()">Later</button>
-    <button class="btn btn-accent btn-sm" onclick="installPWA()">Install App</button>
+  <div style="display:flex;gap:8px;flex-shrink:0;margin-left:10px">
+    <button class="btn btn-ghost btn-sm" onclick="dismissInstall()" style="padding:8px 12px">Later</button>
+    <button class="btn btn-accent btn-sm" onclick="installPWA()" style="padding:8px 14px;font-weight:700">⬇ Install</button>
   </div>
 </div>
 
 <script>
-// Step 1: Kill ALL service workers and caches — runs before app.js
+// Step 1: Boot splash + register/update service worker
 (function() {
   try {
     var fill = document.getElementById('splash-bar-fill');
@@ -129,16 +137,13 @@
     document.getElementById('splash-msg').textContent = 'Starting...';
   } catch(e) {}
 
+  // Register service worker v6 — works on any HTTPS or localhost origin
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.getRegistrations().then(function(regs) {
-      var promises = regs.map(function(r) { return r.unregister(); });
-      return Promise.all(promises);
-    }).catch(function(){});
-  }
-  if (window.caches) {
-    caches.keys().then(function(keys) {
-      keys.forEach(function(k) { caches.delete(k); });
-    }).catch(function(){});
+    navigator.serviceWorker.register('/sw.js?v=6.0', { scope: '/' })
+      .then(function(reg) {
+        reg.update(); // check for updates on every load
+      })
+      .catch(function(e) { console.warn('[PWA] SW register failed:', e.message); });
   }
 
   // Show reload button after 8 seconds if app still hasn't loaded
@@ -559,39 +564,93 @@ body.is-offline .offline-bar { display: block; }
 .text-center { text-align: center; }
 
 /* ── RESPONSIVE ────────────────────────────────────────────── */
+/* ── MOBILE-FIRST BASE (applies to all, overridden by desktop) ─────────────── */
+:root {
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+}
+
+/* Prevent text size inflation on iOS */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
+/* Smooth scrolling + tap highlight removal */
+* { -webkit-tap-highlight-color: transparent; }
+input, button, select, textarea { touch-action: manipulation; }
+
+/* Full-height safe area on notched phones */
+body { padding-bottom: var(--safe-bottom); }
+
+/* Bottom-safe padding for main content when in standalone PWA */
+@media (display-mode: standalone) {
+  .main-area { padding-bottom: calc(16px + var(--safe-bottom)); }
+  .install-banner { display: none !important; } /* already installed */
+}
+
+/* Tap targets: minimum 44px for comfort */
+.btn { min-height: 44px; }
+.btn.btn-sm { min-height: 36px; }
+.nav-btn { min-height: 48px; }
+.form-input { min-height: 44px; font-size: 16px !important; } /* 16px prevents iOS zoom */
+
+/* ── MOBILE (≤768px) ──────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   :root { --sidebar-w: 0px; }
   .sidebar {
     position: fixed; left: 0; top: 0; bottom: 0;
-    width: 260px !important; transform: translateX(-100%);
-    box-shadow: 4px 0 20px rgba(0,0,0,0.5); z-index: 200;
+    width: 80vw !important; max-width: 280px;
+    transform: translateX(-100%);
+    box-shadow: 6px 0 32px rgba(0,0,0,0.6); z-index: 200;
+    transition: transform 0.28s cubic-bezier(.4,0,.2,1);
+    padding-bottom: calc(16px + var(--safe-bottom));
+    padding-top: calc(16px + var(--safe-top));
   }
   .sidebar.mobile-open { transform: translateX(0); }
-  .sidebar.collapsed { width: 260px !important; }
+  .sidebar.collapsed { width: 80vw !important; max-width: 280px !important; }
   .sidebar.collapsed .brand-text,
   .sidebar.collapsed .nav-label,
   .sidebar.collapsed .sidebar-foot { display: block; }
   .sidebar.collapsed .nav-btn { justify-content: flex-start; padding: 10px 14px; }
   .sidebar.collapsed .nav-btn span:last-child { display: inline; }
   .mobile-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
-    z-index: 150; display: none;
+    position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+    z-index: 150; display: none; backdrop-filter: blur(2px);
   }
   .sidebar.mobile-open ~ .mobile-overlay { display: block; }
   .g-2, .g-3, .g-4 { grid-template-columns: 1fr; }
-  .content { padding: 16px; }
-  .topbar { padding: 0 16px; }
+  .content { padding: 12px 14px; }
+  .topbar { padding: 0 14px; }
   .mobile-menu-btn { display: flex !important; }
   .status-pills { display: none; }
+  /* Cards breathe more on small screens */
+  .card-body { padding: 14px; }
+  .card-head { padding: 12px 14px; }
+  /* Stack form rows on mobile */
+  .form-row { grid-template-columns: 1fr !important; gap: 10px; }
+  /* Wider stat values */
+  .stat-value { font-size: 22px; }
+  /* Install banner: full-width, taller tap target */
+  .install-banner { padding: 14px 16px; }
 }
-@media (min-width: 769px) {
-  .mobile-menu-btn { display: none !important; }
-  .mobile-overlay { display: none !important; }
-}
+
+/* ── SMALL PHONES (≤480px) ────────────────────────────────────────────────── */
 @media (max-width: 480px) {
   .g-auto-sm, .g-auto, .g-auto-lg { grid-template-columns: 1fr; }
   .stat-value { font-size: 20px; }
-  .form-row { grid-template-columns: 1fr; }
+  .content { padding: 10px 12px; }
+  /* Pump & nozzle buttons wrap nicely */
+  #empPumpNozzleBtns { gap: 6px; }
+  #empPumpNozzleBtns .btn { min-width: 64px; flex: 1 1 auto; max-width: 50%; }
+  /* Vehicle chip row scrolls horizontally */
+  #empVehChips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
+  #empVehChips::-webkit-scrollbar { display: none; }
+}
+
+/* ── DESKTOP (≥769px) ─────────────────────────────────────────────────────── */
+@media (min-width: 769px) {
+  .mobile-menu-btn { display: none !important; }
+  .mobile-overlay { display: none !important; }
 }
 
 /* Print styles for reports */
@@ -13231,21 +13290,60 @@ async function loadData() {
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault();
   APP.deferredPrompt = e;
+  // Only show if not already installed
+  if (window.matchMedia('(display-mode: standalone)').matches) return;
   const banner = document.getElementById('installBanner');
   if (banner) banner.classList.add('show');
 });
 
+// Detect installed (standalone mode) — hide banner
+window.addEventListener('appinstalled', () => {
+  APP.deferredPrompt = null;
+  const banner = document.getElementById('installBanner');
+  if (banner) banner.classList.remove('show');
+  toast('FuelBunk Pro installed! 🎉', 'success');
+});
+
 function installPWA() {
   if (APP.deferredPrompt) {
+    // Android / Chrome
     APP.deferredPrompt.prompt();
     APP.deferredPrompt.userChoice.then(choice => {
-      if (choice.outcome === 'accepted') toast('App installed!', 'success');
+      if (choice.outcome === 'accepted') toast('Installing FuelBunk Pro…', 'success');
       APP.deferredPrompt = null;
       document.getElementById('installBanner').classList.remove('show');
     });
+  } else {
+    // iOS Safari — show manual instructions
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    if (isIOS) {
+      toast('Tap Share → "Add to Home Screen" to install on iOS', 'info');
+    } else {
+      toast('Open in Chrome or Edge to install', 'info');
+    }
   }
 }
-function dismissInstall() { document.getElementById('installBanner').classList.remove('show'); }
+function dismissInstall() {
+  document.getElementById('installBanner').classList.remove('show');
+  // Remember dismissal for 7 days
+  try { localStorage.setItem('installDismissed', Date.now()); } catch(e) {}
+}
+
+// Show banner on iOS if not standalone (iOS never fires beforeinstallprompt)
+(function checkIOSInstall() {
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isStandalone = window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+  if (isIOS && !isStandalone) {
+    try {
+      const dismissed = parseInt(localStorage.getItem('installDismissed') || '0');
+      if (Date.now() - dismissed < 7 * 24 * 3600 * 1000) return; // snoozed
+    } catch(e) {}
+    setTimeout(() => {
+      const banner = document.getElementById('installBanner');
+      if (banner) banner.classList.add('show');
+    }, 3000);
+  }
+})();
 
 // ── ONLINE/OFFLINE ───────────────────────────────────────────
 function updateOnlineStatus() {
@@ -13295,15 +13393,12 @@ async function initApp() {
   APP.data = JSON.parse(JSON.stringify(SEED));
   APP.auditLog = [];
 
-  // Register service worker (only on deployed site)
-  const isDeployed = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname.endsWith('.netlify.app') || location.hostname.endsWith('.netlify.com');
-  if ('serviceWorker' in navigator && isDeployed) {
-    try {
-      const reg = await navigator.serviceWorker.register('/sw.js?v=5.0');
-      navigator.serviceWorker.addEventListener('message', e => {
-        if (e.data.type === 'SYNC_COMPLETE') toast('Data synced!', 'info');
-      });
-    } catch (e) { /* skip */ }
+  // Listen for SW messages (sync complete, update available)
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', e => {
+      if (e.data?.type === 'SYNC_COMPLETE') toast('Data synced!', 'info');
+      if (e.data?.type === 'UPDATE_AVAILABLE') toast('App updated — reload for latest version', 'info');
+    });
   }
 
   // Clock + status

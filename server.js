@@ -32,6 +32,8 @@ async function startServer() {
         fontSrc:       ["'self'", 'data:', 'https://fonts.gstatic.com'],
         imgSrc:        ["'self'", 'data:', 'blob:'],
         connectSrc:    ["'self'"],
+        workerSrc:     ["'self'"],
+        manifestSrc:   ["'self'"],
         objectSrc:     ["'none'"],
         frameSrc:      ["'none'"],
       }
@@ -55,10 +57,38 @@ async function startServer() {
     ? path.join(__dirname, 'public')
     : __dirname;
 
+  // Serve PWA manifest + service worker with correct headers
+  app.get('/manifest.json', (req, res) => {
+    res.setHeader('Content-Type', 'application/manifest+json');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.sendFile(path.join(publicDir, 'manifest.json'));
+  });
+  app.get('/sw.js', (req, res) => {
+    res.setHeader('Content-Type', 'application/javascript');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Service-Worker-Allowed', '/');
+    res.sendFile(path.join(publicDir, 'sw.js'));
+  });
+  app.get('/icon-:size.png', (req, res) => {
+    const f = path.join(publicDir, `icon-${req.params.size}.png`);
+    if (require('fs').existsSync(f)) {
+      res.setHeader('Cache-Control', 'public, max-age=604800');
+      res.sendFile(f);
+    } else res.sendStatus(404);
+  });
+  app.get('/apple-touch-icon.png', (req, res) => {
+    const f = path.join(publicDir, 'apple-touch-icon.png');
+    if (require('fs').existsSync(f)) {
+      res.setHeader('Cache-Control', 'public, max-age=604800');
+      res.sendFile(f);
+    } else res.sendStatus(404);
+  });
+
   app.use(express.static(publicDir, {
     maxAge: 0,
     setHeaders: (res, fp) => {
       if (fp.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      if (fp.endsWith('.png') || fp.endsWith('.svg')) res.setHeader('Cache-Control', 'public, max-age=604800');
     }
   }));
 
