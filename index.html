@@ -7738,6 +7738,13 @@ window.emp_vehCamera = emp_vehCamera;
 window.emp_vehProcessImage = emp_vehProcessImage;
 window.emp_vehVoice = emp_vehVoice;
 window.emp_vehParseSpeech = emp_vehParseSpeech;
+window.emp_biometricLogin = emp_biometricLogin;
+window.emp_bioRegister = emp_bioRegister;
+window.emp_bioRegisterFromModal = emp_bioRegisterFromModal;
+window.emp_bioIsRegistered = emp_bioIsRegistered;
+window.emp_showPinFallback = emp_showPinFallback;
+window.emp_loginNameChanged = emp_loginNameChanged;
+window.emp_completeLogin = emp_completeLogin;
 
 // ═══════════════════════════════════════════════════════════
 // FUELBUNK PRO — Main Application
@@ -10241,13 +10248,32 @@ function openSetPINModal(empId) {
     <div class="form-group"><label class="form-label">Confirm PIN *</label>
       <input class="form-input mono" id="confirmPIN" type="password" inputmode="numeric" maxlength="4" placeholder="••••" style="font-size:24px;letter-spacing:8px;text-align:center" />
     </div>
-    <input type="hidden" id="setPINEmpId" value="${empId}" />`,
+    <input type="hidden" id="setPINEmpId" value="${empId}" />
+    ${window.PublicKeyCredential ? `<div style='margin-top:14px;padding-top:14px;border-top:1px solid var(--border)'>
+      <div style='font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:8px;text-transform:uppercase'>Biometric Login (Optional)</div>
+      <button class='btn btn-ghost btn-block' id='bioRegBtn' onclick='emp_bioRegisterFromModal()'
+        style='border:1px dashed var(--border);font-size:13px;padding:10px'>
+        ${emp_bioIsRegistered(${empId}) ? '✅ Registered — tap to re-register' : '🔒 Register fingerprint / Face ID'}
+      </button>
+      <div style='font-size:10px;color:var(--text-3);margin-top:5px'>Employee must be present on their device. Set PIN first.</div>
+    </div>` : ''}`,
     `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-accent" onclick="saveEmployeePIN()">🔑 Set PIN</button>`
   );
   // Fix (e): auto-focus the new PIN input
   requestAnimationFrame(() => { const el = document.getElementById('newPIN'); if (el) el.focus(); });
 }
 
+async function emp_bioRegisterFromModal() {
+  const empId = parseInt(document.getElementById('setPINEmpId')?.value);
+  if (!empId) { toast('Save PIN first', 'error'); return; }
+  const btn = document.getElementById('bioRegBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Waiting for biometric…'; }
+  const ok = await emp_bioRegister(empId);
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = ok ? '✅ Biometric registered — tap to re-register' : '🔒 Register fingerprint / Face ID for this employee';
+  }
+}
 async function saveEmployeePIN() {
   const empId = parseInt(document.getElementById('setPINEmpId')?.value);
   const pin = document.getElementById('newPIN')?.value?.trim();
@@ -10882,6 +10908,8 @@ function emp_renderLogin() {
     ? EMP_LIST.map(e => `<option value="${e.id}">${e.name} — ${e.role}</option>`).join('')
     : `<option value="" selected disabled>No employees configured for this station</option>`;
 
+  const bioSupported = window.PublicKeyCredential && typeof PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function';
+
   return `<div style="text-align:center;margin-bottom:24px;padding-top:16px">
     <div style="font-size:42px;margin-bottom:10px">🧑‍🔧</div>
     <h2 class="fw-800" style="color:var(--text-0);font-size:20px;margin-bottom:4px">Employee Portal</h2>
@@ -10890,11 +10918,66 @@ function emp_renderLogin() {
     </div>
   </div>
   <div class="card"><div class="card-head"><h4>Login</h4>${badge(emp_today(),'badge-accent')}</div><div class="card-body">
-    <div class="form-group"><label class="form-label">Select Your Name</label><select class="form-input" id="empLoginName" ${hasEmployees ? '' : 'disabled'}>${empOpts}</select></div>
-    <div class="form-group"><label class="form-label">Last 4 Digits of Phone (PIN)</label><input class="form-input" id="empLoginPin" type="password" maxlength="4" placeholder="Enter 4-digit PIN" inputmode="numeric" autocomplete="off" /><div style="font-size:10px;color:var(--text-3);margin-top:4px">Use last 4 digits of registered mobile</div></div>
-    <button class="btn btn-accent btn-block" style="padding:14px;font-size:14px;margin-top:6px;${hasEmployees ? '' : 'opacity:0.6;cursor:not-allowed;'}" onclick="emp_doLogin()" ${hasEmployees ? '' : 'disabled'}>🔐 Login</button>
+    <div class="form-group"><label class="form-label">Select Your Name</label>
+      <select class="form-input" id="empLoginName" ${hasEmployees ? '' : 'disabled'} onchange="emp_loginNameChanged()">${empOpts}</select>
+    </div>
+    ${bioSupported ? `<div id="empBioSection">
+      <button class="btn btn-block" id="empBioBtn" onclick="emp_biometricLogin()"
+        style="background:linear-gradient(135deg,#1e3a5f,#2563eb);color:#fff;padding:14px;font-size:15px;font-weight:700;margin-bottom:10px;border-radius:12px;display:flex;align-items:center;justify-content:center;gap:10px">
+        <span style="font-size:22px">🔒</span> Login with Biometrics
+      </button>
+      <div id="empBioStatus" style="font-size:11px;text-align:center;color:var(--text-3);margin-bottom:10px"></div>
+    </div>` : ''}
+    <div id="empPinSection" style="${bioSupported ? 'display:none' : ''}">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <div style="flex:1;height:1px;background:var(--border)"></div>
+        <span style="font-size:10px;color:var(--text-3);font-weight:700;white-space:nowrap">${bioSupported ? 'OR ENTER PIN' : 'ENTER PIN'}</span>
+        <div style="flex:1;height:1px;background:var(--border)"></div>
+      </div>
+      <div class="form-group">
+        <input class="form-input" id="empLoginPin" type="password" maxlength="4" placeholder="4-digit PIN"
+          inputmode="numeric" autocomplete="off"
+          style="font-size:28px;letter-spacing:10px;text-align:center;padding:14px"
+          oninput="if(this.value.length===4)emp_doLogin()" />
+        <div style="font-size:10px;color:var(--text-3);margin-top:4px;text-align:center">Last 4 digits of registered mobile</div>
+      </div>
+      <button class="btn btn-accent btn-block" style="padding:14px;font-size:14px;margin-top:4px;${hasEmployees ? '' : 'opacity:0.6;cursor:not-allowed;'}"
+        onclick="emp_doLogin()" ${hasEmployees ? '' : 'disabled'}>🔐 Login with PIN</button>
+    </div>
+    ${bioSupported && hasEmployees ? `<button id="empUsePinBtn" onclick="emp_showPinFallback(false)"
+      style="background:none;border:none;color:var(--text-3);font-size:11px;cursor:pointer;display:block;width:100%;text-align:center;margin-top:8px;padding:4px">
+      Use PIN instead →
+    </button>` : ''}
     ${hasEmployees ? '' : '<div style="font-size:11px;color:var(--red);margin-top:8px">No employees with PIN set. Ask admin to assign PINs in Staff &amp; Allocation.</div>'}
   </div></div>`;
+}
+
+// Called when employee selection changes — check if bio registered for them
+function emp_loginNameChanged() {
+  const id = parseInt(document.getElementById('empLoginName')?.value);
+  if (!id) return;
+  const hasBio = emp_bioIsRegistered(id);
+  const bioSection = document.getElementById('empBioSection');
+  const pinSection = document.getElementById('empPinSection');
+  const usePinBtn = document.getElementById('empUsePinBtn');
+  if (bioSection) bioSection.style.display = hasBio ? '' : 'none';
+  if (pinSection) pinSection.style.display = hasBio ? 'none' : '';
+  if (usePinBtn) usePinBtn.style.display = hasBio ? '' : 'none';
+  if (hasBio) emp_biometricLogin(); // auto-prompt on name change
+}
+
+function emp_showPinFallback(fromBioFail) {
+  const bioSection = document.getElementById('empBioSection');
+  const pinSection = document.getElementById('empPinSection');
+  const usePinBtn = document.getElementById('empUsePinBtn');
+  if (bioSection) bioSection.style.display = 'none';
+  if (pinSection) { pinSection.style.display = ''; }
+  if (usePinBtn) usePinBtn.style.display = 'none';
+  if (fromBioFail) {
+    const status = document.getElementById('empBioStatus');
+    if (status) status.textContent = '';
+  }
+  setTimeout(() => document.getElementById('empLoginPin')?.focus(), 100);
 }
 
 // ── OVERVIEW ──
@@ -11435,18 +11518,249 @@ function emp_renderComplete() {
 // EMPLOYEE ACTIONS
 // ═══════════════════════════════════════════════════════════════
 
+// ── WEBAUTHN BIOMETRIC LOGIN ────────────────────────────────────────────────
+// Credentials stored in localStorage keyed by empId + tenantId
+// No biometric data ever leaves the device — only a public key is stored
+
+const BIO_FAIL_KEY = 'fb_bio_fails'; // { empId: count }
+const BIO_MAX_FAILS = 3;
+
+function emp_bioStorageKey(empId) {
+  const tid = APP.tenant?.id || 'default';
+  return `fb_bio_cred_${tid}_${empId}`;
+}
+
+function emp_bioIsRegistered(empId) {
+  try {
+    const raw = localStorage.getItem(emp_bioStorageKey(empId));
+    return !!raw;
+  } catch(e) { return false; }
+}
+
+function emp_bioGetFails(empId) {
+  try {
+    const d = JSON.parse(localStorage.getItem(BIO_FAIL_KEY) || '{}');
+    return d[empId] || 0;
+  } catch(e) { return 0; }
+}
+
+function emp_bioRecordFail(empId) {
+  try {
+    const d = JSON.parse(localStorage.getItem(BIO_FAIL_KEY) || '{}');
+    d[empId] = (d[empId] || 0) + 1;
+    localStorage.setItem(BIO_FAIL_KEY, JSON.stringify(d));
+    return d[empId];
+  } catch(e) { return BIO_MAX_FAILS; }
+}
+
+function emp_bioClearFails(empId) {
+  try {
+    const d = JSON.parse(localStorage.getItem(BIO_FAIL_KEY) || '{}');
+    delete d[empId];
+    localStorage.setItem(BIO_FAIL_KEY, JSON.stringify(d));
+  } catch(e) {}
+}
+
+// Called from admin panel: register biometric for an employee after PIN verified
+async function emp_bioRegister(empId) {
+  if (!window.PublicKeyCredential) {
+    toast('Biometrics not supported on this device/browser', 'error'); return false;
+  }
+  try {
+    const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+    if (!available) {
+      toast('No fingerprint/face sensor available', 'error'); return false;
+    }
+
+    const challenge = new Uint8Array(32);
+    crypto.getRandomValues(challenge);
+    const tid = APP.tenant?.id || 'default';
+    const emp = EMP_LIST.find(e => e.id === empId);
+    if (!emp) { toast('Employee not found', 'error'); return false; }
+
+    const credential = await navigator.credentials.create({
+      publicKey: {
+        challenge,
+        rp: { name: 'FuelBunk Pro', id: location.hostname },
+        user: {
+          id: new TextEncoder().encode(`${tid}_${empId}`),
+          name: emp.name,
+          displayName: emp.name,
+        },
+        pubKeyCredParams: [
+          { alg: -7, type: 'public-key' },   // ES256
+          { alg: -257, type: 'public-key' },  // RS256
+        ],
+        authenticatorSelection: {
+          authenticatorAttachment: 'platform',
+          userVerification: 'required',
+          residentKey: 'preferred',
+        },
+        timeout: 60000,
+        attestation: 'none',
+      }
+    });
+
+    // Store credential ID (not biometric data — that never leaves the OS)
+    const credId = btoa(String.fromCharCode(...new Uint8Array(credential.rawId)));
+    localStorage.setItem(emp_bioStorageKey(empId), JSON.stringify({ credId, empId, registered: Date.now() }));
+    emp_bioClearFails(empId);
+    toast(`Biometric registered for ${emp.name} ✓`, 'success');
+    return true;
+  } catch(e) {
+    if (e.name === 'NotAllowedError') toast('Biometric registration cancelled', 'info');
+    else toast('Registration failed: ' + e.message, 'error');
+    return false;
+  }
+}
+
+async function emp_biometricLogin() {
+  const id = parseInt(document.getElementById('empLoginName')?.value);
+  if (!id) { toast('Select your name first', 'error'); return; }
+  const emp = EMP_LIST.find(e => e.id === id);
+  if (!emp) { toast('Select your name first', 'error'); return; }
+
+  // Check fail count — force PIN if already hit 3 fails
+  const fails = emp_bioGetFails(id);
+  if (fails >= BIO_MAX_FAILS) {
+    emp_showPinFallback(true);
+    toast('Too many failed attempts — please use PIN', 'error');
+    return;
+  }
+
+  if (!emp_bioIsRegistered(id)) {
+    emp_showPinFallback(false);
+    return;
+  }
+
+  const btn = document.getElementById('empBioBtn');
+  const status = document.getElementById('empBioStatus');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span style="font-size:22px">⏳</span> Verifying…'; }
+  if (status) status.textContent = `Attempt ${fails + 1} of ${BIO_MAX_FAILS} — touch sensor or look at camera`;
+
+  try {
+    if (!window.PublicKeyCredential) throw new Error('WebAuthn not supported');
+
+    const challenge = new Uint8Array(32);
+    crypto.getRandomValues(challenge);
+
+    const assertion = await navigator.credentials.get({
+      publicKey: {
+        challenge,
+        timeout: 30000,
+        userVerification: 'required',
+        rpId: location.hostname,
+      }
+    });
+
+    if (!assertion) throw new Error('No credential returned');
+
+    // Biometric verified by device OS — grant access
+    emp_bioClearFails(id);
+    if (btn) { btn.disabled = false; btn.innerHTML = '<span style="font-size:22px">🔒</span> Login with Biometrics'; }
+    if (status) status.textContent = '';
+
+    // Complete login (same flow as PIN login, skip PIN check)
+    await emp_completeLogin(emp, false);
+
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<span style="font-size:22px">🔒</span> Login with Biometrics'; }
+
+    if (e.name === 'NotAllowedError') {
+      // User cancelled or sensor failed
+      const newFails = emp_bioRecordFail(id);
+      const remaining = BIO_MAX_FAILS - newFails;
+      if (newFails >= BIO_MAX_FAILS) {
+        emp_showPinFallback(true);
+        toast(`Biometric failed ${BIO_MAX_FAILS} times — enter PIN`, 'error');
+      } else {
+        if (status) status.textContent = `Failed ${newFails}/${BIO_MAX_FAILS} — ${remaining} attempt${remaining > 1 ? 's' : ''} left`;
+        toast(`Biometric failed — ${remaining} attempt${remaining > 1 ? 's' : ''} left`, 'error');
+      }
+    } else {
+      toast('Biometric error: ' + (e.message || e.name), 'error');
+    }
+  }
+}
+
+// Shared login completion — called by both biometric and PIN paths
+async function emp_completeLogin(emp, isPinLogin) {
+  recordSuccessLogin('emp_' + emp.id);
+  APP.loggedIn = true; APP.role = 'employee'; saveSession();
+
+  // Get JWT token
+  try {
+    const tenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
+    if (tenant && tenant.id && isPinLogin) {
+      const pin = document.getElementById('empLoginPin')?.value || '';
+      const tokenResult = await AuthAPI.employeeLogin(pin, tenant.id).catch(() => null);
+      if (tokenResult?.token && tokenResult?.employeeId) {
+        emp = { ...emp, permissions: tokenResult.permissions || emp.permissions || {} };
+      }
+    }
+  } catch(e) {}
+
+  let inAppRestored = false;
+  try {
+    const rawS = localStorage.getItem('fb_emp_session');
+    if (rawS) {
+      const savedS = verifyData(rawS);
+      if (savedS && savedS.user && savedS.user.id === emp.id && savedS.active) {
+        empState = { ...empState, ...savedS };
+        inAppRestored = true;
+      }
+    }
+  } catch(ex) {}
+
+  if (!inAppRestored) {
+    const freshOpenings = {};
+    (APP.data?.pumps || []).forEach(p => {
+      const nr = p.nozzleReadings || {};
+      const labels = p.nozzleLabels || (p.nozzles === 1 ? ['A'] : p.nozzles === 2 ? ['A','B'] : ['A','B','C'].slice(0, p.nozzles));
+      labels.forEach(n => {
+        const k = emp_key(p.id, n);
+        if (nr[n] !== undefined && nr[n] > 0) freshOpenings[k] = nr[n];
+      });
+    });
+    empState.openReadings = freshOpenings;
+    empState.closeReadings = {}; empState.sales = []; empState.dipReadings = [];
+    empState.page = 'readings';
+  } else {
+    if (!empState.page || empState.page === 'login') empState.page = 'readings';
+  }
+  empState.user = { id: emp.id, name: emp.name, role: emp.role, permissions: emp.permissions || {} };
+  empState.active = true;
+
+  const allAllocFuels = [];
+  emp_myPumps().forEach(p => {
+    (p.nozzles || []).forEach(n => {
+      const ft = (p.nozzleFuels || {})[n] || p.fuelType;
+      if (!allAllocFuels.includes(ft)) allAllocFuels.push(ft);
+    });
+  });
+  if (allAllocFuels.length > 0) empSaleFuel = allAllocFuels[0];
+
+  emp_saveSession(); auditLog('login', { employee: emp.name });
+  toast((inAppRestored && empState.sales.length > 0)
+    ? `Welcome back ${sanitize(emp.name)}! ${empState.sales.length} sale(s) restored.`
+    : `Welcome ${sanitize(emp.name)}!`, 'success');
+  renderPage();
+}
+
 async function emp_doLogin() {
   if (!Array.isArray(EMP_LIST) || EMP_LIST.length === 0) {
     toast('No employees configured for this station','error');
     return;
   }
   const id = parseInt(document.getElementById('empLoginName').value);
-  const pin = document.getElementById('empLoginPin').value;
+  const pin = (document.getElementById('empLoginPin')?.value || '').trim();
   const emp = EMP_LIST.find(e => e.id === id);
   if (!emp) { toast('Select employee','error'); return; }
   if (!checkRateLimit('emp_' + id)) return;
   const pinHash = await hashPassword(pin);
   if (pinHash !== emp.pinHash) { recordFailedLogin('emp_' + id); toast('Incorrect PIN','error'); return; }
+  // PIN success — clear bio fail counter so they get fresh 3 attempts next time
+  emp_bioClearFails(id);
   recordSuccessLogin('emp_' + id);
 
   // Restore existing session if same employee re-logging in during same shift
