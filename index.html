@@ -3266,25 +3266,24 @@ function renderStaff(D) {
         const dayEmps = getRosteredEmps(date);
         const opts = dayEmps.map(e => `<option value="${e.id}" ${emp && parseInt(e.id)===parseInt(emp.id)?'selected':''}>${e.name}</option>`).join('');
 
-        const dayEmpButtons = dayEmps.map(e => {
-          const isCurrent = emp && parseInt(e.id) === parseInt(emp.id);
-          return `<button title="${isCurrent ? 'Currently assigned — click to remove' : 'Assign ' + sanitize(e.name)}"
-            onclick="${isCurrent
-              ? `event.stopPropagation();allocDate='${date}';removeAllocForDate(${p.id},'${n}','${date}')`
-              : `allocDate='${date}';assignNozzleForDate(${p.id},'${n}','${date}',${e.id})`}"
-            style="display:flex;align-items:center;gap:4px;width:100%;background:${isCurrent?'rgba(34,197,94,0.1)':'var(--bg-1)'};border:1px ${isCurrent?'solid rgba(34,197,94,0.35)':'dashed var(--border)'};border-radius:6px;padding:4px 6px;cursor:pointer;transition:all 0.15s;margin-bottom:2px"
-            onmouseover="this.style.background='${isCurrent?'rgba(239,68,68,0.08)':'var(--bg-2)'}';this.style.borderColor='${isCurrent?'var(--red)':'var(--accent)'}'"
-            onmouseout="this.style.background='${isCurrent?'rgba(34,197,94,0.1)':'var(--bg-1)'}';this.style.borderColor='${isCurrent?'rgba(34,197,94,0.35)':'var(--border)'}'">
-            <span style="width:20px;height:20px;border-radius:5px;background:${empColor(e)};display:grid;place-items:center;color:#fff;font-size:8px;font-weight:800;flex-shrink:0">${empInitials(e.name)}</span>
-            <span style="font-size:10px;font-weight:${isCurrent?'800':'600'};color:${isCurrent?'var(--green)':'var(--text-2)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:62px">${sanitize(e.name.split(' ')[0])}</span>
-            ${isCurrent ? '<span style="margin-left:auto;font-size:9px;color:var(--red);font-weight:700">✕</span>' : '<span style="margin-left:auto;font-size:9px;color:var(--text-3)">+</span>'}
-          </button>`;
-        }).join('');
+        const selectOpts = dayEmps.map(e =>
+          `<option value="${e.id}" ${emp && parseInt(e.id)===parseInt(emp.id) ? 'selected' : ''}>${sanitize(e.name)}</option>`
+        ).join('');
 
-        return `<td style="padding:5px;background:${isSelected?'rgba(212,148,15,0.04)':isToday?'rgba(34,197,94,0.03)':'transparent'};border-right:1px solid var(--border-light);vertical-align:top;min-width:100px">
-          ${dayEmps.length === 0
-            ? `<div style="padding:4px;font-size:10px;color:var(--text-3);text-align:center">No roster</div>`
-            : dayEmpButtons}
+        return `<td style="padding:5px;background:${isSelected?'rgba(212,148,15,0.04)':isToday?'rgba(34,197,94,0.03)':'transparent'};border-right:1px solid var(--border-light);vertical-align:middle;min-width:110px">
+          ${emp ? `
+            <div style="display:flex;align-items:center;gap:5px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.25);border-radius:7px;padding:5px 7px;margin-bottom:4px">
+              <span style="width:22px;height:22px;border-radius:6px;background:${empColor(emp)};display:grid;place-items:center;color:#fff;font-size:9px;font-weight:800;flex-shrink:0">${empInitials(emp.name)}</span>
+              <span style="font-size:11px;font-weight:700;color:var(--green);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${sanitize(emp.name)}</span>
+              <button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;padding:0;line-height:1;opacity:0.7" title="Remove"
+                onclick="allocDate='${date}';removeAllocForDate(${p.id},'${n}','${date}')">✕</button>
+            </div>
+          ` : ''}
+          <select onchange="allocDate='${date}';assignNozzleForDate(${p.id},'${n}','${date}',this.value);this.value=''"
+            style="width:100%;font-size:11px;padding:5px 7px;border-radius:7px;background:var(--bg-1);border:1px solid var(--border);color:var(--text-2);cursor:pointer;outline:none">
+            <option value="">${emp ? '↺ Change' : '＋ Assign'}</option>
+            ${selectOpts}
+          </select>
         </td>`;
       }).join('');
 
