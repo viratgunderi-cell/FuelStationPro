@@ -10592,10 +10592,25 @@ function emp_myPumps() {
     });
   });
 
-  // If no date-keyed allocations found, fall back to legacy shift-only keys
+  // FIX: If shift field is blank or roster not loaded, scan ALL of today's allocation
+  // keys directly. This handles the common case where the employee's shift field is
+  // not set but they are allocated on today's date in the allocation board.
   if (myKeys.size === 0) {
     Object.entries(allocations).forEach(([dk, shiftAlloc]) => {
-      // Legacy keys are shift names without date prefix
+      if (dk.startsWith(todayStr + '_') && typeof shiftAlloc === 'object') {
+        Object.entries(shiftAlloc).forEach(([key, empId]) => {
+          if (parseInt(empId) === parseInt(uid)) {
+            const [pid, nozzle] = key.split('_');
+            myKeys.add(`${String(parseInt(pid) || pid)}_${nozzle}`);
+          }
+        });
+      }
+    });
+  }
+
+  // If still nothing, fall back to legacy shift-only keys (no date prefix)
+  if (myKeys.size === 0) {
+    Object.entries(allocations).forEach(([dk, shiftAlloc]) => {
       if (!dk.match(/^\d{4}-\d{2}-\d{2}_/)) {
         Object.entries(shiftAlloc).forEach(([key, empId]) => {
           if (parseInt(empId) === parseInt(uid)) {
