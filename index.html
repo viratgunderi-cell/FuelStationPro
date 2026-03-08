@@ -645,6 +645,26 @@ body { padding-bottom: var(--safe-bottom); }
   /* Vehicle chip row scrolls horizontally */
   #empVehChips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
   #empVehChips::-webkit-scrollbar { display: none; }
+
+/* Vehicle segmented input */
+.veh-seg {
+  background: var(--bg-0);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-0);
+  font-family: var(--mono);
+  font-weight: 800;
+  font-size: 20px;
+  text-align: center;
+  text-transform: uppercase;
+  padding: 10px 4px;
+  min-height: 52px;
+  outline: none;
+  transition: border-color 0.15s;
+  -webkit-appearance: none;
+}
+.veh-seg::placeholder { color: var(--text-4, #555); font-weight: 500; font-size: 14px; }
+.veh-seg:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
 }
 
 /* ── DESKTOP (≥769px) ─────────────────────────────────────────────────────── */
@@ -7709,9 +7729,15 @@ window.emp_selPump = emp_selPump;
 window.emp_selNozzle = emp_selNozzle;
 window.emp_selPumpNozzle = emp_selPumpNozzle;
 window.emp_pickVeh = emp_pickVeh;
-window.emp_vehSuggest = emp_vehSuggest;
 window.emp_vehHide = emp_vehHide;
-window.emp_vehKey = emp_vehKey;
+window.emp_vehGetPlate = emp_vehGetPlate;
+window.emp_vehSetPlate = emp_vehSetPlate;
+window.emp_vehSegInput = emp_vehSegInput;
+window.emp_vehSegKey = emp_vehSegKey;
+window.emp_vehCamera = emp_vehCamera;
+window.emp_vehProcessImage = emp_vehProcessImage;
+window.emp_vehVoice = emp_vehVoice;
+window.emp_vehParseSpeech = emp_vehParseSpeech;
 
 // ═══════════════════════════════════════════════════════════
 // FUELBUNK PRO — Main Application
@@ -11146,28 +11172,36 @@ function emp_renderSales() {
       <div class="form-row"><div class="form-group"><label class="form-label">Liters</label><input class="form-input" id="empSaleLiters" type="number" inputmode="decimal" step="0.1" placeholder="0.0" oninput="emp_calcAmt()" style="font-family:var(--mono);font-weight:600" /></div>
       <div class="form-group"><label class="form-label">Amount (₹)</label><input class="form-input" id="empSaleAmt" type="number" inputmode="decimal" step="0.01" placeholder="${emp_hasPerm('prices')?'Auto — price applied':'Enter amount'}" style="font-family:var(--mono);font-weight:600" oninput="emp_calcLiters()" /></div></div>
       ${emp_hasPerm('prices') ? `<div style="font-size:11px;color:var(--text-3);margin-top:-6px;margin-bottom:8px">Current price: <strong style="color:var(--accent-light)">${cur(EMP_PRICES[empSaleFuel] || 0)}/L</strong></div>` : ''}
-      <div class="form-group"><label class="form-label">Vehicle Number</label>
-        ${(() => {
-          // Collect recent unique vehicles: today's empState.sales first, then APP.data.sales (last 60 days)
-          const seen = new Set();
-          const recent = [];
-          [...(empState.sales || [])].reverse().forEach(s => {
-            if (s.vehicle && s.vehicle.length >= 3 && !seen.has(s.vehicle)) { seen.add(s.vehicle); recent.push(s.vehicle); }
-          });
-          (APP.data?.sales || []).slice().reverse().forEach(s => {
-            if (s.vehicle && s.vehicle.length >= 3 && !seen.has(s.vehicle)) { seen.add(s.vehicle); recent.push(s.vehicle); }
-          });
-          const chips = recent.slice(0, 8);
-          return chips.length ? `<div id="empVehChips" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">${chips.map(v=>`<button class="btn btn-ghost btn-sm" style="font-family:var(--mono);font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px" onclick="emp_pickVeh('${v}')">${v}</button>`).join('')}</div>` : '';
-        })()}
-        <div style="position:relative">
-          <input class="form-input" id="empSaleVeh" placeholder="KA00XX0000" autocomplete="off"
-            oninput="this.value=this.value.toUpperCase();emp_vehSuggest(this.value)"
-            onpaste="setTimeout(()=>{this.value=this.value.toUpperCase();emp_vehSuggest(this.value)},0)"
-            onkeydown="emp_vehKey(event)"
-            onblur="setTimeout(()=>emp_vehHide(),150)"
-            style="text-transform:uppercase;font-family:var(--mono);font-weight:600" />
-          <div id="empVehDrop" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:999;background:var(--bg-2);border:1px solid var(--border);border-radius:0 0 10px 10px;max-height:180px;overflow-y:auto"></div>
+      <div class="form-group">
+        <label class="form-label" style="margin-bottom:8px">Vehicle Number</label>
+        <div style="display:flex;align-items:stretch;gap:6px">
+          <div id="vehSegWrap" style="display:flex;gap:3px;flex:1;min-width:0">
+            <input id="veh_state" class="veh-seg" maxlength="2" placeholder="KA"
+              oninput="emp_vehSegInput(this,'veh_dist',null,2,'alpha')"
+              onkeydown="emp_vehSegKey(event,null,'veh_dist')"
+              style="width:52px" />
+            <input id="veh_dist" class="veh-seg" maxlength="2" placeholder="06" inputmode="numeric"
+              oninput="emp_vehSegInput(this,'veh_series','veh_state',2,'num')"
+              onkeydown="emp_vehSegKey(event,'veh_state','veh_series')"
+              style="width:52px" />
+            <input id="veh_series" class="veh-seg" maxlength="3" placeholder="AB"
+              oninput="emp_vehSegInput(this,'veh_num','veh_dist',3,'alpha')"
+              onkeydown="emp_vehSegKey(event,'veh_dist','veh_num')"
+              style="width:58px" />
+            <input id="veh_num" class="veh-seg" maxlength="4" placeholder="0000" inputmode="numeric"
+              oninput="emp_vehSegInput(this,null,'veh_series',4,'num')"
+              onkeydown="emp_vehSegKey(event,'veh_series',null)"
+              style="flex:1;min-width:56px" />
+          </div>
+          <button class="btn btn-ghost" id="vehCamBtn" onclick="emp_vehCamera()" title="Scan plate with camera"
+            style="width:50px;padding:0;font-size:20px;flex-shrink:0">📷</button>
+          <button class="btn btn-ghost" id="vehMicBtn" onclick="emp_vehVoice()" title="Say plate number"
+            style="width:50px;padding:0;font-size:20px;flex-shrink:0">🎤</button>
+        </div>
+        <input type="file" id="vehCamInput" accept="image/*" capture="environment"
+          style="display:none" onchange="emp_vehProcessImage(this)" />
+        <div id="vehHint" style="font-size:10px;color:var(--text-3);margin-top:5px">
+          Type each part · 📷 point at plate · 🎤 say &quot;KA zero six P six six seven two&quot;
         </div>
       </div>
       <div class="form-group"><label class="form-label">Payment Mode</label><div style="display:flex;gap:6px;flex-wrap:wrap">${['cash','upi','card','credit']
@@ -11580,65 +11614,237 @@ function emp_calcLiters() {
   else amtEl.dataset.manualAmt = '';
 }
 
-function emp_pickVeh(v) {
-  const el = document.getElementById('empSaleVeh');
-  if (el) { el.value = v; el.focus(); }
-  emp_vehHide();
+// ── VEHICLE — SEGMENTED INPUT ──────────────────────────────────────────────
+
+function emp_vehGetPlate() {
+  const state  = (document.getElementById('veh_state')?.value  || '').toUpperCase().replace(/[^A-Z]/g, '');
+  const dist   = (document.getElementById('veh_dist')?.value   || '').replace(/[^0-9]/g, '');
+  const series = (document.getElementById('veh_series')?.value || '').toUpperCase().replace(/[^A-Z]/g, '');
+  const num    = (document.getElementById('veh_num')?.value    || '').replace(/[^0-9]/g, '');
+  return state + dist + series + num;
 }
-function emp_vehSuggest(q) {
-  const drop = document.getElementById('empVehDrop');
-  if (!drop) return;
-  q = (q || '').toUpperCase().trim();
-  if (q.length < 2) { emp_vehHide(); return; }
-  // Build full vehicle list: today's sales + APP data
-  const seen = new Set();
-  const all = [];
-  [...(empState.sales || [])].reverse().forEach(s => {
-    if (s.vehicle && !seen.has(s.vehicle)) { seen.add(s.vehicle); all.push(s.vehicle); }
+
+function emp_vehSetPlate(plate) {
+  plate = (plate || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const m = plate.match(/^([A-Z]{2})(\d{2})([A-Z]{0,3})(\d{1,4})$/);
+  const s  = document.getElementById('veh_state');
+  const d  = document.getElementById('veh_dist');
+  const sr = document.getElementById('veh_series');
+  const n  = document.getElementById('veh_num');
+  if (m) {
+    if (s)  s.value  = m[1];
+    if (d)  d.value  = m[2];
+    if (sr) sr.value = m[3];
+    if (n)  n.value  = m[4];
+    if (n) n.focus();
+  } else if (plate.length >= 2) {
+    if (s)  s.value  = plate.slice(0,2);
+    if (d)  d.value  = plate.slice(2,4).replace(/[^0-9]/g,'');
+    if (sr) sr.value = plate.slice(4,7).replace(/[^A-Z]/g,'');
+    if (n)  n.value  = plate.slice(-4).replace(/[^0-9]/g,'');
+    if (n) n.focus();
+  }
+  document.querySelectorAll('.veh-seg').forEach(el => {
+    el.style.borderColor = 'var(--green)';
+    setTimeout(() => { el.style.borderColor = ''; }, 800);
   });
-  (APP.data?.sales || []).slice().reverse().forEach(s => {
-    if (s.vehicle && !seen.has(s.vehicle)) { seen.add(s.vehicle); all.push(s.vehicle); }
-  });
-  const matches = all.filter(v => v.toUpperCase().includes(q)).slice(0, 8);
-  if (!matches.length) { emp_vehHide(); return; }
-  drop.innerHTML = matches.map((v, i) =>
-    `<div data-vehopt="${i}" onmousedown="emp_pickVeh('${v}')"
-      style="padding:10px 14px;cursor:pointer;font-family:var(--mono);font-weight:700;font-size:13px;
-             border-bottom:1px solid var(--border-light);color:var(--text-0)"
-      onmouseover="this.style.background='var(--bg-3)'" onmouseout="this.style.background=''">${v}</div>`
-  ).join('');
-  drop.style.display = 'block';
 }
-function emp_vehHide() {
-  const d = document.getElementById('empVehDrop');
-  if (d) d.style.display = 'none';
-}
-function emp_vehKey(e) {
-  const drop = document.getElementById('empVehDrop');
-  if (!drop || drop.style.display === 'none') return;
-  const items = drop.querySelectorAll('[data-vehopt]');
-  let cur = [...items].findIndex(i => i.style.background === 'var(--bg-3)');
-  if (e.key === 'ArrowDown') {
-    e.preventDefault();
-    if (cur >= 0) items[cur].style.background = '';
-    const next = (cur + 1) % items.length;
-    items[next].style.background = 'var(--bg-3)';
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault();
-    if (cur >= 0) items[cur].style.background = '';
-    const prev = (cur - 1 + items.length) % items.length;
-    items[prev].style.background = 'var(--bg-3)';
-  } else if (e.key === 'Enter' && cur >= 0) {
-    e.preventDefault();
-    emp_pickVeh(items[cur].textContent);
-  } else if (e.key === 'Escape') {
-    emp_vehHide();
+
+function emp_vehSegInput(el, nextId, prevId, maxLen, type) {
+  let v = el.value.toUpperCase();
+  if (type === 'num') v = v.replace(/[^0-9]/g, '');
+  else v = v.replace(/[^A-Z0-9]/g, '');
+  el.value = v;
+  if (v.length >= maxLen && nextId) {
+    setTimeout(() => document.getElementById(nextId)?.focus(), 0);
   }
 }
+
+function emp_vehSegKey(e, prevId, nextId) {
+  const el = e.target;
+  if (e.key === 'Backspace' && el.value === '' && prevId) {
+    e.preventDefault();
+    const prev = document.getElementById(prevId);
+    if (prev) { prev.focus(); prev.setSelectionRange(prev.value.length, prev.value.length); }
+  }
+  if (e.key === 'ArrowRight' && el.selectionStart === el.value.length && nextId) {
+    document.getElementById(nextId)?.focus();
+  }
+  if (e.key === 'ArrowLeft' && el.selectionStart === 0 && prevId) {
+    const prev = document.getElementById(prevId);
+    if (prev) { prev.focus(); prev.setSelectionRange(prev.value.length, prev.value.length); }
+  }
+}
+
+function emp_pickVeh(v) { emp_vehSetPlate(v); }
+function emp_vehHide() {}
+
+// ── CAMERA OCR ──────────────────────────────────────────────────────────────
+function emp_vehCamera() {
+  document.getElementById('vehCamInput')?.click();
+}
+
+async function emp_vehProcessImage(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  input.value = '';
+  const btn = document.getElementById('vehCamBtn');
+  const hint = document.getElementById('vehHint');
+  if (btn) btn.textContent = '⏳';
+  if (hint) hint.textContent = 'Reading plate…';
+
+  const img = new Image();
+  img.onload = async () => {
+    let plateText = null;
+
+    // 1) Native TextDetector — Chrome Android, no deps, fast
+    if ('TextDetector' in window) {
+      try {
+        const det = new window.TextDetector();
+        const results = await det.detect(img);
+        for (const r of results) {
+          const t = r.rawValue.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+          if (/^[A-Z]{2}\d{2}[A-Z]{0,3}\d{4}$/.test(t)) { plateText = t; break; }
+        }
+        if (!plateText) {
+          for (const r of results) {
+            const t = r.rawValue.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+            if (t.length >= 6 && t.length <= 12) { plateText = t; break; }
+          }
+        }
+      } catch(e) {}
+    }
+
+    // 2) Tesseract.js — lazy-loaded fallback
+    if (!plateText) {
+      try {
+        if (!window.Tesseract) {
+          await new Promise((res, rej) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+            s.onload = res; s.onerror = rej;
+            document.head.appendChild(s);
+          });
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const id = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        for (let i = 0; i < id.data.length; i += 4) {
+          const avg = 0.299*id.data[i] + 0.587*id.data[i+1] + 0.114*id.data[i+2];
+          const v = avg > 120 ? 255 : 0;
+          id.data[i] = id.data[i+1] = id.data[i+2] = v;
+        }
+        ctx.putImageData(id, 0, 0);
+        const worker = await Tesseract.createWorker('eng', 1, { logger: () => {} });
+        await worker.setParameters({ tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', tessedit_pageseg_mode: '7' });
+        const { data: { text } } = await worker.recognize(canvas);
+        await worker.terminate();
+        const raw = text.replace(/[^A-Z0-9]/gi, '').toUpperCase().trim();
+        if (raw.length >= 5) plateText = raw;
+      } catch(e) { console.warn('[OCR]', e); }
+    }
+
+    if (btn) btn.textContent = '📷';
+    if (hint) hint.textContent = 'Type each part · 📷 point at plate · 🎤 say the plate number';
+    URL.revokeObjectURL(img.src);
+
+    if (plateText) {
+      emp_vehSetPlate(plateText);
+      toast('Plate read: ' + plateText, 'success');
+    } else {
+      toast('Could not read plate — type manually', 'info');
+    }
+  };
+  img.onerror = () => { if (btn) btn.textContent = '📷'; toast('Image error', 'error'); };
+  img.src = URL.createObjectURL(file);
+}
+
+// ── VOICE INPUT ──────────────────────────────────────────────────────────────
+let _vehRecognition = null;
+function emp_vehVoice() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { toast('Voice not supported — try Chrome', 'error'); return; }
+  const btn = document.getElementById('vehMicBtn');
+
+  if (_vehRecognition) {
+    _vehRecognition.stop(); _vehRecognition = null;
+    if (btn) { btn.textContent = '🎤'; btn.style.background = ''; }
+    return;
+  }
+
+  _vehRecognition = new SR();
+  _vehRecognition.lang = 'en-IN';
+  _vehRecognition.continuous = false;
+  _vehRecognition.interimResults = false;
+  _vehRecognition.maxAlternatives = 5;
+
+  _vehRecognition.onstart = () => {
+    if (btn) { btn.textContent = '🔴'; btn.style.background = 'var(--red-dim)'; }
+    const hint = document.getElementById('vehHint');
+    if (hint) hint.textContent = '🎤 Listening… say e.g. "KA zero six P six six seven two"';
+    toast('Listening…', 'info');
+  };
+
+  _vehRecognition.onresult = (e) => {
+    let bestPlate = null;
+    for (let i = 0; i < e.results[0].length; i++) {
+      const t = e.results[0][i].transcript;
+      const p = emp_vehParseSpeech(t);
+      if (p && (!bestPlate || p.length > bestPlate.length)) bestPlate = p;
+    }
+    const hint = document.getElementById('vehHint');
+    if (hint) hint.textContent = 'Type each part · 📷 point at plate · 🎤 say the plate number';
+    const raw = e.results[0][0].transcript;
+    if (bestPlate) {
+      emp_vehSetPlate(bestPlate);
+      toast('Got: ' + bestPlate, 'success');
+    } else {
+      const r2 = raw.replace(/[^A-Z0-9]/gi,'').toUpperCase();
+      if (r2) emp_vehSetPlate(r2);
+      toast('Heard: "' + raw + '" — correct if needed', 'info');
+    }
+  };
+
+  _vehRecognition.onerror = (e) => {
+    if (e.error !== 'no-speech') toast('Voice error: ' + e.error, 'error');
+  };
+
+  _vehRecognition.onend = () => {
+    _vehRecognition = null;
+    if (btn) { btn.textContent = '🎤'; btn.style.background = ''; }
+  };
+
+  _vehRecognition.start();
+}
+
+function emp_vehParseSpeech(text) {
+  text = text.toUpperCase().trim();
+  const direct = text.replace(/[^A-Z0-9]/g, '');
+  if (/^[A-Z]{2}\d{2}[A-Z]{0,3}\d{4}$/.test(direct)) return direct;
+  const map = {
+    'ZERO':'0','ONE':'1','TWO':'2','THREE':'3','FOUR':'4',
+    'FIVE':'5','SIX':'6','SEVEN':'7','EIGHT':'8','NINE':'9',
+    '\\bOH\\b':'0','\\bAYE\\b':'A','\\bBEE\\b':'B','\\bSEE\\b':'C',
+    '\\bDEE\\b':'D','\\bEFF\\b':'F','\\bGEE\\b':'G','\\bJAY\\b':'J',
+    '\\bKAY\\b':'K','\\bELL\\b':'L','\\bEMM\\b':'M','\\bEN\\b':'N',
+    '\\bPEE\\b':'P','\\bCUE\\b':'Q','\\bARE\\b':'R','\\bESS\\b':'S',
+    '\\bTEE\\b':'T','\\bVEE\\b':'V','\\bEX\\b':'X','\\bWHY\\b':'Y',
+    '\\bZED\\b':'Z',
+  };
+  let r = text;
+  Object.entries(map).forEach(([w, c]) => { r = r.replace(new RegExp(w, 'g'), c); });
+  r = r.replace(/[^A-Z0-9]/g, '');
+  if (/^[A-Z]{2}\d{2}[A-Z]{0,3}\d{4}$/.test(r)) return r;
+  if (r.length >= 6) return r;
+  return null;
+}
+
 function emp_recordSale() {
   const l = parseFloat(document.getElementById('empSaleLiters')?.value);
   const a = parseFloat(document.getElementById('empSaleAmt')?.value);
-  const v = (document.getElementById('empSaleVeh')?.value || '').toUpperCase().trim();
+  const v = emp_vehGetPlate();
   const _activeBtn = document.querySelector('[data-pumpbtn].btn-accent');
   const p = String(_activeBtn?.dataset?.pumpbtn || '');  // pump.id from active combined button
   if (isNaN(l)||l<=0) { toast('Enter valid liters','error'); return; }

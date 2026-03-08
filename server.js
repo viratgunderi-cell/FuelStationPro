@@ -26,13 +26,13 @@ async function startServer() {
     contentSecurityPolicy: {
       directives: {
         defaultSrc:    ["'self'"],
-        scriptSrc:     ["'self'", "'unsafe-inline'"],
+        scriptSrc:     ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],
         scriptSrcAttr: ["'unsafe-inline'"],
         styleSrc:      ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         fontSrc:       ["'self'", 'data:', 'https://fonts.gstatic.com'],
         imgSrc:        ["'self'", 'data:', 'blob:'],
-        connectSrc:    ["'self'"],
-        workerSrc:     ["'self'"],
+        connectSrc:    ["'self'", 'https://cdn.jsdelivr.net'],
+        workerSrc:     ["'self'", 'blob:'],
         manifestSrc:   ["'self'"],
         objectSrc:     ["'none'"],
         frameSrc:      ["'none'"],
