@@ -2824,6 +2824,39 @@ function renderDashboard(D) {
     </div>
     <div class="card card-pad">
       <div class="flex-between mb-16">
+        <h4 class="fw-700" style="color:var(--text-0);font-size:13px">🕐 Hourly Sales Pattern</h4>
+        <span style="font-size:11px;color:var(--text-3)">${todaySales.length} txns today</span>
+      </div>
+      ${(() => {
+        // Build 24-hour revenue buckets from today's sales
+        const hourBuckets = Array(24).fill(0);
+        todaySales.forEach(s => {
+          const t = s.time || '';
+          const hr = parseInt(t.slice(0,2));
+          if (!isNaN(hr) && hr >= 0 && hr < 24) hourBuckets[hr] += (s.amount || 0);
+        });
+        const maxVal = Math.max(...hourBuckets, 1);
+        const barCols = hourBuckets.map((v, i) => {
+          const pct = Math.round((v / maxVal) * 100);
+          const isNow = i === h;
+          const isPeak = v === maxVal && v > 0;
+          const bg = isNow ? 'var(--accent-light)' : isPeak ? 'var(--green)' : 'var(--bg-3)';
+          return `<div style="display:flex;flex-direction:column;align-items:center;flex:1;min-width:0;gap:2px">
+            <div style="width:100%;height:50px;display:flex;align-items:flex-end">
+              <div style="width:100%;height:${Math.max(pct,2)}%;background:${bg};border-radius:3px 3px 0 0;transition:height 0.3s" title="${v>0?cur(v):''} at ${String(i).padStart(2,'0')}:00"></div>
+            </div>
+            <div style="font-size:9px;color:${isNow?'var(--accent-light)':'var(--text-3)'};font-weight:${isNow?'700':'400'}">${i%4===0?String(i).padStart(2,'0'):''}</div>
+          </div>`;
+        }).join('');
+        const peakHr = hourBuckets.indexOf(maxVal);
+        const peakVal = hourBuckets[peakHr];
+        return `<div style="display:flex;gap:1px;align-items:flex-end;margin-bottom:4px">${barCols}</div>
+          ${peakVal > 0 ? `<div style="font-size:11px;color:var(--text-3);margin-top:4px">Peak hour: <span style="color:var(--green);font-weight:700">${String(peakHr).padStart(2,'0')}:00–${String(peakHr+1).padStart(2,'0')}:00</span> · <span class="mono">${cur(peakVal)}</span></div>` : '<div style="font-size:11px;color:var(--text-3)">No sales recorded today yet</div>'}`;
+      })()}
+    </div>
+
+    <div class="card card-pad">
+      <div class="flex-between mb-16">
         <h4 class="fw-700" style="color:var(--text-0);font-size:13px">🧑‍🔧 Employee Status</h4>
         <span style="font-size:11px;color:var(--text-3)">${D.employees.filter(e=>e.status!=='inactive').length} active staff</span>
       </div>
@@ -3890,7 +3923,26 @@ function renderSettings(D) {
     <div class="card card-pad mt-16" style="text-align:center">
       <div style="font-size:11px;color:var(--text-3);margin-bottom:12px">You are managing: <strong style="color:var(--accent-light)">${sanitize(_t.name||'Demo')}</strong></div>
       <button class="btn btn-ghost btn-block" onclick="mt_switchStation()">🏪 Switch to a Different Station</button>
-    </div>`;
+    </div>
+
+    <div class="card card-pad mt-16" style="border:1px solid rgba(212,148,15,0.25);background:rgba(212,148,15,0.04)">
+      <h4 class="mb-14 fw-700" style="color:var(--text-0);font-size:13px">🗺️ Suggested Build Order — Roadmap</h4>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        ${[
+          { tier:'✅ Live', color:'var(--green)', items:['Fuel Tax Rates (ZLST/GST)', 'Purchase density + IS-1460 check', 'Payroll Run + bulk calculate', 'Salary Advances + EMI plan', 'Employee Performance leaderboard', 'Vehicle-wise Fuel Report', 'Bank Reconciliation (Cash/UPI/Card)', 'Hourly Sales Pattern chart', 'Analytics page (Vehicle / Density / Bank Recon)'] },
+          { tier:'🔜 Next', color:'var(--accent-light)', items:['📟 Nozzle Meter Readings at Shift Open/Close — captures physical odometer, flags meter vs system variance', '💬 WhatsApp Alerts — low tank, daily summary, credit reminder, meter mismatch', '🧾 GST Module — GSTR-1/3B JSON + Tally XML (after lubes)'] },
+          { tier:'🔮 Later', color:'#a855f7', items:['🛢️ Lubes & Products Inventory — product catalogue, HSN, GST%, stock tracking, lube sale modal', '📄 Excel Export — daily report, credit statements, payslip download'] },
+        ].map(section => `
+          <div style="margin-bottom:4px">
+            <div class="fw-700" style="color:${section.color};font-size:11px;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:6px">${section.tier}</div>
+            <div style="display:flex;flex-wrap:wrap;gap:5px">
+              ${section.items.map(item => `<span style="font-size:11px;padding:3px 10px;border-radius:20px;background:var(--bg-0);border:1px solid var(--border);color:var(--text-2)">${item}</span>`).join('')}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
 }
 
 // Expose to global
@@ -4379,6 +4431,755 @@ window.confirmDeleteShift = confirmDeleteShift;
 window.deleteShift = deleteShift;
 window.renderFinance = renderFinance;
 window.renderReports = renderReports;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── ANALYTICS PAGE (Vehicle Report + Density Variance + Bank Reconciliation) ──
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let _analyticsTab = 'vehicle';
+let _bankReconData = {}; // { 'YYYY-MM-DD': { cash, phonepe, gpay, paytm, card, notes } }
+
+function renderAnalytics(D) {
+  if (!D) return '<div style="padding:40px;text-align:center;color:var(--text-3)">Loading...</div>';
+  if (!window._analyticsTab) window._analyticsTab = 'vehicle';
+  const _analyticsTab = window._analyticsTab;
+
+  const tabs = [
+    { id: 'vehicle',  icon: '🚗', label: 'Vehicle Report' },
+    { id: 'density',  icon: '⚗️', label: 'Density Variance' },
+    { id: 'bankrecon', icon: '🏦', label: 'Bank Reconciliation' },
+  ];
+
+  const tabBar = `<div style="display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap">
+    ${tabs.map(t => `<button onclick="window._analyticsTab='${t.id}';renderPage()" style="padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:${_analyticsTab===t.id?'var(--accent-light)':'var(--bg-1)'};color:${_analyticsTab===t.id?'#000':'var(--text-2)'};font-weight:700;cursor:pointer;font-size:12px">${t.icon} ${t.label}</button>`).join('')}
+  </div>`;
+
+  let body = '';
+
+  if (_analyticsTab === 'vehicle') {
+    // ── Vehicle Report ──────────────────────────────────────────────────────
+    const vFrom = window._vFrom || new Date(Date.now()-30*86400000).toISOString().slice(0,10);
+    const vTo   = window._vTo   || new Date().toISOString().slice(0,10);
+    const vFuel = window._vFuel || '';
+    const vNum  = (window._vNum || '').trim().toUpperCase();
+
+    let filtered = D.sales.filter(s => {
+      const d = (s.date||'').slice(0,10);
+      return d >= vFrom && d <= vTo && (s.vehicle||'').trim() !== '';
+    });
+    if (vFuel) filtered = filtered.filter(s => s.fuelType === vFuel);
+    if (vNum)  filtered = filtered.filter(s => (s.vehicle||'').toUpperCase().includes(vNum));
+
+    // Group by vehicle
+    const byVehicle = {};
+    filtered.forEach(s => {
+      const vno = (s.vehicle||'').trim().toUpperCase() || '—';
+      if (!byVehicle[vno]) byVehicle[vno] = { txns:0, liters:0, amount:0, lastDate:'', fuelTypes:new Set(), customer: s.customer||'' };
+      byVehicle[vno].txns++;
+      byVehicle[vno].liters += s.liters||0;
+      byVehicle[vno].amount += s.amount||0;
+      if ((s.date||'') > byVehicle[vno].lastDate) byVehicle[vno].lastDate = s.date||'';
+      byVehicle[vno].fuelTypes.add(s.fuelType);
+    });
+
+    const rows = Object.entries(byVehicle).sort((a,b) => b[1].amount - a[1].amount);
+    const totalVehicles = rows.length;
+    const totalLiters   = rows.reduce((a,[,v]) => a + v.liters, 0);
+    const totalAmt      = rows.reduce((a,[,v]) => a + v.amount, 0);
+
+    const fuelOpts = ['petrol','diesel','premium_petrol'].map(id => {
+      const f = getFuel(id);
+      return `<option value="${id}" ${vFuel===id?'selected':''}>${f.short}</option>`;
+    }).join('');
+
+    body = `
+      <div class="g g-auto-sm gap-12 mb-16">
+        ${statCard('Vehicles', totalVehicles, 'in date range', '🚗')}
+        ${statCard('Fuel Dispensed', fmt(totalLiters) + ' L', 'all vehicles', '⛽')}
+        ${statCard('Revenue', cur(totalAmt), 'from vehicles', '💰')}
+      </div>
+      <div class="card card-pad mb-16">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <div class="form-group" style="margin:0;flex:1;min-width:130px">
+            <label class="form-label">From</label>
+            <input type="date" class="form-input" value="${vFrom}" max="${vTo}" onchange="window._vFrom=this.value;renderPage()" />
+          </div>
+          <div class="form-group" style="margin:0;flex:1;min-width:130px">
+            <label class="form-label">To</label>
+            <input type="date" class="form-input" value="${vTo}" max="${new Date().toISOString().slice(0,10)}" onchange="window._vTo=this.value;renderPage()" />
+          </div>
+          <div class="form-group" style="margin:0;flex:1;min-width:120px">
+            <label class="form-label">Fuel</label>
+            <select class="form-input" onchange="window._vFuel=this.value;renderPage()">
+              <option value="">All</option>${fuelOpts}
+            </select>
+          </div>
+          <div class="form-group" style="margin:0;flex:1;min-width:130px">
+            <label class="form-label">Vehicle No.</label>
+            <input class="form-input" placeholder="e.g. KA01" value="${window._vNum||''}" oninput="window._vNum=this.value" onchange="renderPage()" style="text-transform:uppercase" />
+          </div>
+        </div>
+      </div>
+      ${rows.length > 0 ? `<div class="card card-pad" style="padding:0;overflow:hidden">
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Vehicle No</th><th>Fuel Types</th><th>Txns</th><th>Litres</th><th>Amount</th><th>Last Visit</th><th>Customer</th></tr></thead>
+          <tbody>
+            ${rows.map(([vno, v]) => `<tr>
+              <td class="fw-700" style="color:var(--text-0)">${sanitize(vno)}</td>
+              <td>${[...v.fuelTypes].map(f => { const fi=getFuel(f); return `<span style="font-size:10px;font-weight:700;color:${fi.color};background:${fi.color}20;padding:1px 6px;border-radius:4px">${fi.short}</span>`; }).join(' ')}</td>
+              <td class="mono">${v.txns}</td>
+              <td class="mono fw-700">${fmt(v.liters)} L</td>
+              <td class="mono fw-700" style="color:var(--green)">${cur(v.amount)}</td>
+              <td style="font-size:11px;color:var(--text-3)">${v.lastDate||'—'}</td>
+              <td style="font-size:11px;color:var(--text-3)">${sanitize(v.customer||'—')}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table></div>
+      </div>` : `<div class="card card-pad" style="text-align:center;padding:40px;color:var(--text-3)">
+        <div style="font-size:32px;margin-bottom:12px">🚗</div>
+        <div class="fw-600">No vehicle data found</div>
+        <div style="font-size:12px;margin-top:6px">Vehicle numbers are captured during sales recording</div>
+      </div>`}`;
+
+  } else if (_analyticsTab === 'density') {
+    // ── Density Variance Analysis ──────────────────────────────────────────
+    const DENSITY_RANGES = {
+      petrol:         { min: 0.720, max: 0.775, name: 'Petrol (MS)' },
+      diesel:         { min: 0.820, max: 0.860, name: 'Diesel (HSD)' },
+      premium_petrol: { min: 0.720, max: 0.775, name: 'Premium (XP95)' },
+    };
+
+    const purchases = (D.fuelPurchases||[]).filter(p => p.density != null);
+    const allPurchases = D.fuelPurchases||[];
+
+    const flagPurchase = p => {
+      if (p.density == null) return 'missing';
+      const r = DENSITY_RANGES[p.fuelType];
+      if (!r) return 'ok';
+      return (p.density < r.min || p.density > r.max) ? 'anomaly' : 'ok';
+    };
+
+    const stats = { total: allPurchases.length, ok:0, anomalies:0, missing:0 };
+    allPurchases.forEach(p => {
+      const fl = flagPurchase(p);
+      if (fl==='ok') stats.ok++;
+      else if (fl==='anomaly') stats.anomalies++;
+      else stats.missing++;
+    });
+
+    const flagColor = f => f==='ok'?'var(--green)':f==='missing'?'var(--text-3)':'var(--red)';
+    const flagBadge = f => f==='ok'
+      ? badge('✅ In Range','badge-green')
+      : f==='missing'
+      ? badge('❓ Not Recorded','badge-blue')
+      : badge('🚨 Anomaly','badge-red');
+
+    body = `
+      <div class="g g-auto-sm gap-12 mb-16">
+        ${statCard('Total Purchases', stats.total, 'all time', '🛢️')}
+        ${statCard('In Range', stats.ok, 'IS-1460 compliant', '✅')}
+        ${statCard('Anomalies', stats.anomalies, 'outside standard', '🚨')}
+        ${statCard('Not Recorded', stats.missing, 'density missing', '❓')}
+      </div>
+      <div class="card card-pad mb-16" style="background:rgba(59,130,246,0.05);border-color:rgba(59,130,246,0.2)">
+        <div style="font-size:12px;color:var(--text-2);line-height:1.8">
+          <strong style="color:var(--text-1)">IS-1460 Standard Density Ranges:</strong>
+          ${Object.entries(DENSITY_RANGES).map(([,r]) => `<span style="margin-left:12px">${r.name}: <strong>${r.min}–${r.max} kg/L</strong></span>`).join('')}
+          <br><span style="font-size:11px;color:var(--text-3)">Density outside these ranges may indicate adulteration or measurement error. Add density when recording fuel purchases.</span>
+        </div>
+      </div>
+      ${allPurchases.length > 0 ? `<div class="card card-pad" style="padding:0;overflow:hidden">
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Date</th><th>Fuel</th><th>Qty (L)</th><th>Supplier</th><th>Invoice</th><th>Density (kg/L)</th><th>Status</th></tr></thead>
+          <tbody>
+            ${[...allPurchases].sort((a,b)=>(b.id||0)-(a.id||0)).map(p => {
+              const fi = getFuel(p.fuelType);
+              const fl = flagPurchase(p);
+              return `<tr>
+                <td style="font-size:12px">${p.date||'—'}</td>
+                <td style="color:${fi.color}" class="fw-700">${fi.short}</td>
+                <td class="mono">${fmt(p.liters||0)}</td>
+                <td style="font-size:11px;color:var(--text-3)">${sanitize(p.supplier||'—')}</td>
+                <td style="font-size:11px;color:var(--text-3)">${sanitize(p.invoice||'—')}</td>
+                <td class="mono fw-700" style="color:${flagColor(fl)}">${p.density != null ? p.density : '—'}</td>
+                <td>${flagBadge(fl)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table></div>
+      </div>` : `<div class="card card-pad" style="text-align:center;padding:40px;color:var(--text-3)">
+        <div style="font-size:32px;margin-bottom:12px">🛢️</div>
+        <div class="fw-600">No fuel purchases recorded yet</div>
+      </div>`}`;
+
+  } else if (_analyticsTab === 'bankrecon') {
+    // ── Bank Reconciliation ────────────────────────────────────────────────
+    if (!window._bankReconData) window._bankReconData = {};
+    const recon = window._bankReconData;
+
+    const today = new Date().toISOString().slice(0,10);
+    const selDate = window._brSelDate || today;
+    const D2 = APP.data;
+
+    // System totals for selected date
+    const daySales = D2.sales.filter(s => (s.date||'').slice(0,10) === selDate);
+    const sysCash  = daySales.filter(s=>s.mode==='cash').reduce((a,s)=>a+s.amount,0);
+    const sysUpi   = daySales.filter(s=>s.mode==='upi').reduce((a,s)=>a+s.amount,0);
+    const sysCard  = daySales.filter(s=>s.mode==='card').reduce((a,s)=>a+s.amount,0);
+
+    const entry = recon[selDate] || {};
+
+    // Month summary
+    const month = selDate.slice(0,7);
+    const monthDays = Object.entries(recon).filter(([d]) => d.startsWith(month));
+
+    const diff = (bank, sys) => {
+      const d = (bank||0) - sys;
+      if (d === 0) return `<span style="color:var(--green)" class="fw-700">✓ Match</span>`;
+      return `<span style="color:${d<0?'var(--red)':'var(--orange)'}" class="fw-700">${d>0?'+':''}${cur(Math.abs(d))}</span>`;
+    };
+
+    body = `
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+        <div class="card card-pad" style="flex:1;min-width:200px">
+          <div class="fw-700 mb-10" style="font-size:13px;color:var(--text-0)">✏️ Enter Bank Data</div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label class="form-label">Date</label>
+            <input type="date" class="form-input" value="${selDate}" max="${today}" onchange="window._brSelDate=this.value;renderPage()" />
+          </div>
+          <div class="g g-2 gap-10">
+            <div class="form-group" style="margin-bottom:8px">
+              <label class="form-label" style="font-size:11px">💵 Cash Deposited (₹)</label>
+              <input type="number" class="form-input" id="br_cash" placeholder="0" value="${entry.cash||''}" style="font-size:13px" />
+            </div>
+            <div class="form-group" style="margin-bottom:8px">
+              <label class="form-label" style="font-size:11px">📱 UPI Settled (₹)</label>
+              <input type="number" class="form-input" id="br_upi" placeholder="0" value="${entry.upi||''}" style="font-size:13px" />
+            </div>
+            <div class="form-group" style="margin-bottom:8px">
+              <label class="form-label" style="font-size:11px">💳 Card/POS (₹)</label>
+              <input type="number" class="form-input" id="br_card" placeholder="0" value="${entry.card||''}" style="font-size:13px" />
+            </div>
+            <div class="form-group" style="margin-bottom:8px">
+              <label class="form-label" style="font-size:11px">📝 Notes</label>
+              <input class="form-input" id="br_notes" placeholder="e.g. T+1 settlement" value="${sanitize(entry.notes||'')}" style="font-size:13px" />
+            </div>
+          </div>
+          <button class="btn btn-accent btn-block mt-8" onclick="saveBankReconEntry('${selDate}')">💾 Save Bank Entry</button>
+        </div>
+        <div class="card card-pad" style="flex:2;min-width:260px">
+          <div class="fw-700 mb-14" style="font-size:13px;color:var(--text-0)">📊 Comparison — ${selDate}</div>
+          <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <thead>
+              <tr style="background:var(--bg-0);font-size:11px;color:var(--text-3)">
+                <th style="padding:8px 10px;text-align:left">Mode</th>
+                <th style="padding:8px 10px;text-align:right">System</th>
+                <th style="padding:8px 10px;text-align:right">Bank</th>
+                <th style="padding:8px 10px;text-align:right">Diff</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style="border-bottom:1px solid var(--border-light)">
+                <td style="padding:10px">💵 Cash</td>
+                <td style="padding:10px;text-align:right" class="mono">${cur(sysCash)}</td>
+                <td style="padding:10px;text-align:right" class="mono">${cur(entry.cash||0)}</td>
+                <td style="padding:10px;text-align:right">${diff(entry.cash, sysCash)}</td>
+              </tr>
+              <tr style="border-bottom:1px solid var(--border-light)">
+                <td style="padding:10px">📱 UPI</td>
+                <td style="padding:10px;text-align:right" class="mono">${cur(sysUpi)}</td>
+                <td style="padding:10px;text-align:right" class="mono">${cur(entry.upi||0)}</td>
+                <td style="padding:10px;text-align:right">${diff(entry.upi, sysUpi)}</td>
+              </tr>
+              <tr>
+                <td style="padding:10px">💳 Card</td>
+                <td style="padding:10px;text-align:right" class="mono">${cur(sysCard)}</td>
+                <td style="padding:10px;text-align:right" class="mono">${cur(entry.card||0)}</td>
+                <td style="padding:10px;text-align:right">${diff(entry.card, sysCard)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      ${monthDays.length > 0 ? `<div class="card card-pad" style="padding:0;overflow:hidden">
+        <div style="padding:12px 16px;font-size:12px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.6px;border-bottom:1px solid var(--border-light)">📅 Past Entries — ${month}</div>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Date</th><th>Cash</th><th>UPI</th><th>Card</th><th>Notes</th></tr></thead>
+          <tbody>
+            ${monthDays.sort((a,b)=>b[0]<a[0]?-1:1).map(([d,e]) => `<tr onclick="window._brSelDate='${d}';renderPage()" style="cursor:pointer">
+              <td class="fw-600">${d}</td>
+              <td class="mono">${e.cash ? cur(e.cash) : '—'}</td>
+              <td class="mono">${e.upi  ? cur(e.upi)  : '—'}</td>
+              <td class="mono">${e.card ? cur(e.card) : '—'}</td>
+              <td style="font-size:11px;color:var(--text-3)">${sanitize(e.notes||'')}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table></div>
+      </div>` : `<div class="card card-pad" style="text-align:center;padding:30px;color:var(--text-3);font-size:12px">No bank entries for ${month} yet</div>`}`;
+  }
+
+  return `<div class="page-hdr"><h3>🔍 Analytics</h3></div>${tabBar}${body}`;
+}
+
+function saveBankReconEntry(date) {
+  if (!window._bankReconData) window._bankReconData = {};
+  const cash  = parseFloat(document.getElementById('br_cash')?.value) || 0;
+  const upi   = parseFloat(document.getElementById('br_upi')?.value)  || 0;
+  const card  = parseFloat(document.getElementById('br_card')?.value) || 0;
+  const notes = document.getElementById('br_notes')?.value || '';
+  window._bankReconData[date] = { cash, upi, card, notes };
+  // Persist
+  db.setSetting('bank_recon_data', window._bankReconData).catch(()=>{});
+  toast('✅ Bank entry saved for ' + date, 'success');
+  renderPage();
+}
+window.saveBankReconEntry = saveBankReconEntry;
+window.renderAnalytics = renderAnalytics;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── PAYROLL PAGE ──────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function renderPayroll(D) {
+  if (!D) return '<div style="padding:40px;text-align:center;color:var(--text-3)">Loading...</div>';
+
+  const payTab = window._payTab || 'run';
+  const tabs = [
+    { id: 'run',      icon: '💰', label: 'Payroll Run' },
+    { id: 'advances', icon: '💸', label: 'Salary Advances' },
+    { id: 'perf',     icon: '📈', label: 'Performance' },
+  ];
+  const tabBar = `<div style="display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap">
+    ${tabs.map(t => `<button onclick="window._payTab='${t.id}';renderPage()" style="padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:${payTab===t.id?'var(--accent-light)':'var(--bg-1)'};color:${payTab===t.id?'#000':'var(--text-2)'};font-weight:700;cursor:pointer;font-size:12px">${t.icon} ${t.label}</button>`).join('')}
+  </div>`;
+
+  // ── Shared data ──────────────────────────────────────────────────────────
+  const today = new Date();
+  const payMonth = window._payMonth || (today.getMonth()+1);
+  const payYear  = window._payYear  || today.getFullYear();
+  const monthLabel = new Date(payYear, payMonth-1, 1).toLocaleString('en-IN',{month:'long', year:'numeric'});
+
+  // Attendance for this month
+  const att = window._attendanceData || {};
+  const monthPrefix = payYear + '-' + String(payMonth).padStart(2,'0');
+
+  // Working days in the month (Mon-Sat = 26 typical; we count actual calendar days Mon-Sat)
+  const daysInMonth = new Date(payYear, payMonth, 0).getDate();
+  let workingDays = 0;
+  for (let d=1; d<=daysInMonth; d++) {
+    const dow = new Date(payYear, payMonth-1, d).getDay();
+    if (dow !== 0) workingDays++; // count Mon-Sat (exclude Sun)
+  }
+
+  const emps = (D.employees||[]).filter(e => e.status !== 'inactive');
+
+  // Build per-employee attendance summary for the month
+  const empAttSummary = empId => {
+    let present=0, absent=0, halfDay=0, leave=0, otHours=0;
+    for (let d=1; d<=daysInMonth; d++) {
+      const dateKey = payYear + '-' + String(payMonth).padStart(2,'0') + '-' + String(d).padStart(2,'0');
+      const rec = att[dateKey]?.[empId];
+      const status = rec?.status || '';
+      if (status==='present') present++;
+      else if (status==='half-day') halfDay++;
+      else if (status==='leave') leave++;
+      else if (status==='holiday') { present++; } // holiday counts as present
+      else if (dateKey <= today.toISOString().slice(0,10)) absent++;
+    }
+    otHours = parseInt((att[monthPrefix]?.[empId]?.otHours || 0));
+    const effectiveDays = present + halfDay*0.5;
+    return { present, absent, halfDay, leave, otHours, effectiveDays, workingDays };
+  };
+
+  if (payTab === 'run') {
+    // ── Payroll Run ──────────────────────────────────────────────────────────
+    const advances = window._advancesData || [];
+    const payrollSaved = window._payrollSaved || {}; // { empId: { net, status } }
+
+    const totalPayroll = emps.reduce((a, e) => a + (e.salary||0), 0);
+    const paidCount = Object.values(payrollSaved).filter(p=>p.status==='paid').length;
+
+    const empCards = emps.map(e => {
+      const s = empAttSummary(e.id);
+      const baseSalary = e.salary || 0;
+      const grossEarned = baseSalary > 0 ? (baseSalary / workingDays) * s.effectiveDays : 0;
+      const otPay = s.otHours * 50; // ₹50/hr overtime rate
+      const grossSalary = grossEarned + otPay;
+      const activeAdvances = advances.filter(a => a.empId === e.id && a.status === 'active');
+      const advDeduction = activeAdvances.reduce((a, adv) => a + (adv.monthlyEmi || 0), 0);
+      const savedPayroll = payrollSaved[e.id] || {};
+      const netSalary = Math.max(0, grossSalary - advDeduction - (savedPayroll.otherDeductions||0));
+      const statusColor = {draft:'var(--orange)', approved:'var(--accent-light)', paid:'var(--green)'}[savedPayroll.status] || 'var(--text-3)';
+      const ini = sanitize(e.name||'').charAt(0).toUpperCase();
+
+      return `<div class="card card-pad mb-12">
+        <div class="flex-between mb-10">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:36px;height:36px;border-radius:50%;background:rgba(212,148,15,0.12);border:2px solid rgba(212,148,15,0.3);display:grid;place-items:center;font-size:14px;font-weight:800;color:var(--accent-light)">${ini}</div>
+            <div>
+              <div class="fw-700" style="color:var(--text-0);font-size:14px">${sanitize(e.name)}</div>
+              <div style="font-size:11px;color:var(--text-3)">${sanitize(e.role||'')} · Base ₹${fmt(baseSalary)}/mo</div>
+            </div>
+          </div>
+          ${savedPayroll.status ? `<span style="font-size:11px;font-weight:700;color:${statusColor};text-transform:uppercase">${savedPayroll.status}</span>` : `<span style="font-size:11px;color:var(--text-3)">Not calculated</span>`}
+        </div>
+        <div class="g" style="grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+          <div class="dbox text-center"><div class="fw-800 mono" style="color:var(--green)">${s.present}</div><div style="font-size:10px;color:var(--text-3)">Present</div></div>
+          <div class="dbox text-center"><div class="fw-800 mono" style="color:var(--red)">${s.absent}</div><div style="font-size:10px;color:var(--text-3)">Absent</div></div>
+          <div class="dbox text-center"><div class="fw-800 mono" style="color:var(--orange)">${s.halfDay}</div><div style="font-size:10px;color:var(--text-3)">Half Day</div></div>
+          <div class="dbox text-center"><div class="fw-800 mono" style="color:var(--accent-light)">${s.otHours}h</div><div style="font-size:10px;color:var(--text-3)">Overtime</div></div>
+        </div>
+        ${savedPayroll.net != null ? `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg-0);border-radius:8px;margin-bottom:10px">
+          <div style="font-size:12px;color:var(--text-2)">
+            <div>Gross: <span class="mono fw-700">₹${fmt(savedPayroll.gross||grossSalary)}</span></div>
+            ${advDeduction>0?`<div style="color:var(--red)">Advance EMI: -₹${fmt(advDeduction)}</div>`:''}
+          </div>
+          <div class="mono fw-800" style="font-size:20px;color:var(--accent-light)">₹${fmt(savedPayroll.net||netSalary)}</div>
+        </div>` : ''}
+        <div style="display:flex;gap:6px">
+          <button onclick="calcPayrollSlip(${e.id},'${sanitize(e.name)}',${payMonth},${payYear})" style="flex:2;padding:8px;background:var(--bg-0);border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;color:var(--text-1)">🧮 Calculate</button>
+          ${savedPayroll.net != null && savedPayroll.status !== 'paid' ? `<button onclick="markPayrollPaid(${e.id})" style="flex:1;padding:8px;background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);color:var(--green);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600">✓ Mark Paid</button>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+
+    return `<div class="page-hdr"><h3>💸 Payroll</h3></div>
+      ${tabBar}
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+        <button onclick="prevPayMonth()" style="background:var(--bg-1);border:1px solid var(--border);color:var(--text-2);padding:6px 14px;border-radius:8px;cursor:pointer">‹</button>
+        <span class="fw-700" style="flex:1;text-align:center;font-size:14px;color:var(--text-0)">${monthLabel}</span>
+        <button onclick="nextPayMonth()" style="background:var(--bg-1);border:1px solid var(--border);color:var(--text-2);padding:6px 14px;border-radius:8px;cursor:pointer">›</button>
+      </div>
+      <div class="g g-auto-sm gap-12 mb-16">
+        ${statCard('Employees', emps.length, 'active staff', '👥')}
+        ${statCard('Total Payroll', cur(totalPayroll), 'base salaries', '💰')}
+        ${statCard('Working Days', workingDays, 'in ' + monthLabel, '📅')}
+        ${statCard('Paid', paidCount + '/' + emps.length, 'processed', '✅')}
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <button onclick="bulkCalcPayroll()" class="btn btn-accent">⚡ Calculate All</button>
+      </div>
+      ${empCards || '<div class="card card-pad" style="text-align:center;padding:40px;color:var(--text-3)">No active employees</div>'}`;
+
+  } else if (payTab === 'advances') {
+    // ── Salary Advances ──────────────────────────────────────────────────────
+    if (!window._advancesData) window._advancesData = [];
+    const advances = window._advancesData;
+    const activeAdv = advances.filter(a => a.status==='active');
+    const totalBalance = activeAdv.reduce((a,adv) => a + (adv.balance||0), 0);
+
+    const advCards = advances.map((adv, idx) => {
+      const emp = emps.find(e => e.id === adv.empId);
+      const ini = (emp?.name||adv.empName||'?').charAt(0).toUpperCase();
+      return `<div class="card card-pad mb-10">
+        <div class="flex-between mb-8">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:32px;height:32px;border-radius:50%;background:rgba(168,85,247,0.12);display:grid;place-items:center;font-weight:800;color:#a855f7">${ini}</div>
+            <div>
+              <div class="fw-700" style="color:var(--text-0)">${sanitize(emp?.name||adv.empName||'Unknown')}</div>
+              <div style="font-size:11px;color:var(--text-3)">${sanitize(adv.reason||'Advance')} · ${adv.date||''}</div>
+            </div>
+          </div>
+          <div style="text-align:right">
+            <div class="mono fw-800" style="color:${adv.status==='active'?'var(--red)':'var(--green)'}">₹${fmt(adv.balance||0)}</div>
+            ${adv.status==='active' ? badge('Active','badge-red') : badge('Cleared','badge-green')}
+          </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-3);margin-bottom:10px">
+          <span>Original: ₹${fmt(adv.amount)}</span>
+          <span>Monthly EMI: ₹${fmt(adv.monthlyEmi)}</span>
+          <span>${adv.repayMonths} month${adv.repayMonths>1?'s':''}</span>
+        </div>
+        ${adv.status==='active' ? `<button onclick="clearAdvance(${idx})" style="width:100%;padding:7px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.25);color:var(--green);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600">✓ Mark Cleared</button>` : ''}
+      </div>`;
+    }).join('') || `<div class="card card-pad" style="text-align:center;padding:40px;color:var(--text-3)">
+      <div style="font-size:32px;margin-bottom:12px">💸</div>
+      <div class="fw-600">No advances recorded</div>
+    </div>`;
+
+    return `<div class="page-hdr">
+      <h3>💸 Payroll</h3>
+      <button class="btn btn-accent" onclick="openAddAdvanceModal()">＋ New Advance</button>
+    </div>
+    ${tabBar}
+    <div class="g g-auto-sm gap-12 mb-16">
+      ${statCard('Active Advances', activeAdv.length, 'ongoing', '💸')}
+      ${statCard('Total Balance', cur(totalBalance), 'outstanding', '💰')}
+      ${statCard('Cleared', advances.filter(a=>a.status==='cleared').length, 'all time', '✅')}
+    </div>
+    ${advCards}`;
+
+  } else if (payTab === 'perf') {
+    // ── Performance Report ───────────────────────────────────────────────────
+    const medals = ['🥇','🥈','🥉'];
+
+    // Per-employee: litres, txns, attendance %, avg cash variance
+    const empPerf = emps.map(e => {
+      const attS = empAttSummary(e.id);
+      const empSales = D.sales.filter(s => {
+        const d = (s.date||'');
+        return d.startsWith(monthPrefix) && (s.employeeId === e.id || String(s.employeeId) === String(e.id));
+      });
+      const liters = empSales.reduce((a,s) => a+(s.liters||0), 0);
+      const txns   = empSales.length;
+      const attRate = attS.workingDays > 0 ? Math.round((attS.effectiveDays / attS.workingDays)*100) : null;
+      const advances = (window._advancesData||[]).filter(a=>a.empId===e.id&&a.status==='active');
+      const totalAdv = advances.reduce((a,adv)=>a+(adv.balance||0),0);
+      return { emp: e, liters, txns, attRate, totalAdv, effectiveDays: attS.effectiveDays };
+    }).sort((a,b) => b.liters - a.liters);
+
+    const perfCards = empPerf.map((ep, i) => {
+      const medalBorder = i < 3 ? ['rgba(255,215,0,0.4)','rgba(192,192,192,0.4)','rgba(205,127,50,0.4)'][i] : 'var(--border)';
+      const ini = sanitize(ep.emp.name||'').charAt(0).toUpperCase();
+      return `<div class="card card-pad mb-10" style="border-color:${medalBorder}">
+        <div class="flex-between mb-10">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="font-size:24px;width:36px;text-align:center">${medals[i]||'#'+(i+1)}</div>
+            <div style="width:34px;height:34px;border-radius:50%;background:rgba(212,148,15,0.12);display:grid;place-items:center;font-size:13px;font-weight:800;color:var(--accent-light)">${ini}</div>
+            <div>
+              <div class="fw-700" style="color:var(--text-0)">${sanitize(ep.emp.name)}</div>
+              <div style="font-size:11px;color:var(--text-3)">${sanitize(ep.emp.role||'')}${ep.emp.empCode?' · #'+ep.emp.empCode:''}</div>
+            </div>
+          </div>
+          <div style="text-align:right">
+            <div class="mono fw-800" style="font-size:18px;color:var(--accent-light)">${fmt(ep.liters)} L</div>
+            <div style="font-size:10px;color:var(--text-3)">dispensed</div>
+          </div>
+        </div>
+        <div class="g" style="grid-template-columns:repeat(4,1fr);gap:8px">
+          <div class="dbox text-center" style="padding:8px">
+            <div class="fw-800 mono" style="color:var(--accent-light);font-size:14px">${ep.txns}</div>
+            <div style="font-size:10px;color:var(--text-3)">Sales</div>
+          </div>
+          <div class="dbox text-center" style="padding:8px">
+            <div class="fw-800 mono" style="color:${ep.attRate!=null?(ep.attRate>=80?'var(--green)':'var(--orange)'):'var(--text-3)'};font-size:14px">${ep.attRate!=null?ep.attRate+'%':'—'}</div>
+            <div style="font-size:10px;color:var(--text-3)">Attendance</div>
+          </div>
+          <div class="dbox text-center" style="padding:8px">
+            <div class="fw-800 mono" style="color:var(--green);font-size:14px">${ep.effectiveDays.toFixed(1)}</div>
+            <div style="font-size:10px;color:var(--text-3)">Eff. Days</div>
+          </div>
+          <div class="dbox text-center" style="padding:8px">
+            <div class="fw-800 mono" style="color:${ep.totalAdv>0?'var(--orange)':'var(--green)'};font-size:14px">${ep.totalAdv>0?'₹'+fmt(ep.totalAdv):'—'}</div>
+            <div style="font-size:10px;color:var(--text-3)">Adv. Bal</div>
+          </div>
+        </div>
+      </div>`;
+    }).join('') || `<div class="card card-pad" style="text-align:center;padding:40px;color:var(--text-3)">No employee data for ${monthLabel}</div>`;
+
+    return `<div class="page-hdr"><h3>💸 Payroll</h3></div>
+      ${tabBar}
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+        <button onclick="prevPayMonth()" style="background:var(--bg-1);border:1px solid var(--border);color:var(--text-2);padding:6px 14px;border-radius:8px;cursor:pointer">‹</button>
+        <span class="fw-700" style="flex:1;text-align:center;font-size:14px;color:var(--text-0)">${monthLabel}</span>
+        <button onclick="nextPayMonth()" style="background:var(--bg-1);border:1px solid var(--border);color:var(--text-2);padding:6px 14px;border-radius:8px;cursor:pointer">›</button>
+      </div>
+      ${perfCards}`;
+  }
+
+  return `<div class="page-hdr"><h3>💸 Payroll</h3></div>${tabBar}`;
+}
+
+// ── Payroll helper functions ─────────────────────────────────────────────────
+function prevPayMonth() {
+  const m = window._payMonth || (new Date().getMonth()+1);
+  const y = window._payYear  || new Date().getFullYear();
+  window._payMonth = m===1 ? 12 : m-1;
+  window._payYear  = m===1 ? y-1 : y;
+  renderPage();
+}
+function nextPayMonth() {
+  const m = window._payMonth || (new Date().getMonth()+1);
+  const y = window._payYear  || new Date().getFullYear();
+  window._payMonth = m===12 ? 1 : m+1;
+  window._payYear  = m===12 ? y+1 : y;
+  renderPage();
+}
+
+function calcPayrollSlip(empId, empName, month, year) {
+  const D = APP.data;
+  const emps = D.employees||[];
+  const emp = emps.find(e => e.id === empId);
+  if (!emp) return;
+
+  const today2 = new Date();
+  const daysInMonth = new Date(year, month, 0).getDate();
+  let workingDays = 0;
+  for (let d=1; d<=daysInMonth; d++) { if (new Date(year,month-1,d).getDay()!==0) workingDays++; }
+
+  const att = window._attendanceData || {};
+  let present=0, absent=0, halfDay=0, leave=0, otHours=0;
+  for (let d=1; d<=daysInMonth; d++) {
+    const dateKey = year+'-'+String(month).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+    const rec = att[dateKey]?.[empId];
+    const status = rec?.status || '';
+    if (status==='present'||status==='holiday') present++;
+    else if (status==='half-day') halfDay++;
+    else if (status==='leave') leave++;
+    else if (dateKey <= today2.toISOString().slice(0,10)) absent++;
+  }
+  const effectiveDays = present + halfDay*0.5;
+  const baseSalary = emp.salary||0;
+  const grossEarned = baseSalary > 0 ? (baseSalary / workingDays) * effectiveDays : 0;
+  const otPay = otHours * 50;
+  const grossSalary = grossEarned + otPay;
+  const activeAdv = (window._advancesData||[]).filter(a=>a.empId===empId&&a.status==='active');
+  const advDeduction = activeAdv.reduce((a,adv)=>a+(adv.monthlyEmi||0),0);
+
+  openModal(`🧮 Salary Preview — ${sanitize(empName)}`, `
+    <div class="card card-pad mb-12" style="background:var(--bg-0)">
+      <div style="font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:10px">Attendance — ${new Date(year,month-1,1).toLocaleString('en-IN',{month:'long',year:'numeric'})}</div>
+      <div class="g" style="grid-template-columns:repeat(3,1fr);gap:8px">
+        <div class="dbox text-center" style="padding:8px"><div class="fw-800 mono" style="color:var(--green)">${present}</div><div style="font-size:10px;color:var(--text-3)">Present</div></div>
+        <div class="dbox text-center" style="padding:8px"><div class="fw-800 mono" style="color:var(--red)">${absent}</div><div style="font-size:10px;color:var(--text-3)">Absent</div></div>
+        <div class="dbox text-center" style="padding:8px"><div class="fw-800 mono" style="color:var(--orange)">${halfDay}</div><div style="font-size:10px;color:var(--text-3)">Half Day</div></div>
+        <div class="dbox text-center" style="padding:8px"><div class="fw-800 mono" style="color:#a855f7">${leave}</div><div style="font-size:10px;color:var(--text-3)">Leave</div></div>
+        <div class="dbox text-center" style="padding:8px"><div class="fw-800 mono" style="color:var(--accent-light)">${otHours}h</div><div style="font-size:10px;color:var(--text-3)">OT Hours</div></div>
+        <div class="dbox text-center" style="padding:8px"><div class="fw-800 mono" style="color:var(--text-1)">${effectiveDays.toFixed(1)}</div><div style="font-size:10px;color:var(--text-3)">Eff. Days</div></div>
+      </div>
+    </div>
+    <div class="card card-pad mb-12" style="background:var(--bg-0)">
+      <div style="font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:8px">Earnings & Deductions</div>
+      <div class="flex-between" style="font-size:13px;padding:6px 0;border-bottom:1px solid var(--border-light)"><span style="color:var(--text-3)">Base Salary</span><span class="mono fw-700">₹${fmt(baseSalary)}</span></div>
+      <div class="flex-between" style="font-size:13px;padding:6px 0;border-bottom:1px solid var(--border-light)"><span style="color:var(--text-3)">Earned (${effectiveDays.toFixed(1)}/${workingDays} days)</span><span class="mono fw-700">₹${fmt(grossEarned)}</span></div>
+      ${otPay>0?`<div class="flex-between" style="font-size:13px;padding:6px 0;border-bottom:1px solid var(--border-light)"><span style="color:var(--green)">Overtime (${otHours}h × ₹50)</span><span class="mono fw-700" style="color:var(--green)">+₹${fmt(otPay)}</span></div>`:''}
+      <div class="flex-between" style="font-size:13px;padding:6px 0;border-bottom:1px solid var(--border-light)"><span class="fw-600">Gross Salary</span><span class="mono fw-800">₹${fmt(grossSalary)}</span></div>
+      ${advDeduction>0?`<div class="flex-between" style="font-size:13px;padding:6px 0;border-bottom:1px solid var(--border-light)"><span style="color:var(--red)">Advance Deduction</span><span class="mono fw-700" style="color:var(--red)">-₹${fmt(advDeduction)}</span></div>`:''}
+      <div class="form-group mt-10"><label class="form-label">Other Deductions (₹)</label><input class="form-input" type="number" id="otherDed" value="0" min="0" /></div>
+    </div>
+    <div style="background:rgba(212,148,15,0.08);border:2px solid rgba(212,148,15,0.3);border-radius:12px;padding:18px;text-align:center">
+      <div style="font-size:11px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.8px">Net Salary</div>
+      <div class="mono fw-900" style="font-size:32px;color:var(--accent-light)">₹${fmt(grossSalary - advDeduction)}</div>
+    </div>
+  `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-accent" onclick="savePayrollSlip(${empId},${month},${year},${grossSalary},${advDeduction})">💾 Save Payroll</button>`);
+}
+
+function savePayrollSlip(empId, month, year, gross, advDed) {
+  const otherDed = parseFloat(document.getElementById('otherDed')?.value) || 0;
+  const net = Math.max(0, gross - advDed - otherDed);
+  if (!window._payrollSaved) window._payrollSaved = {};
+  window._payrollSaved[empId] = { gross, advDed, otherDeductions: otherDed, net, status:'draft', month, year };
+  db.setSetting('payroll_' + year + '_' + month, window._payrollSaved).catch(()=>{});
+  closeModal();
+  toast(`✅ Payroll saved — Net: ₹${fmt(net)}`, 'success');
+  renderPage();
+}
+
+function markPayrollPaid(empId) {
+  if (!window._payrollSaved?.[empId]) return;
+  window._payrollSaved[empId].status = 'paid';
+  const m = window._payMonth||(new Date().getMonth()+1);
+  const y = window._payYear||new Date().getFullYear();
+  db.setSetting('payroll_' + y + '_' + m, window._payrollSaved).catch(()=>{});
+  toast('✅ Marked as paid', 'success');
+  renderPage();
+}
+
+function bulkCalcPayroll() {
+  const D = APP.data;
+  const emps = (D.employees||[]).filter(e=>e.status!=='inactive');
+  const m = window._payMonth||(new Date().getMonth()+1);
+  const y = window._payYear||new Date().getFullYear();
+  const today2 = new Date();
+  const daysInMonth = new Date(y, m, 0).getDate();
+  let workingDays = 0;
+  for (let d=1; d<=daysInMonth; d++) { if (new Date(y,m-1,d).getDay()!==0) workingDays++; }
+  const att = window._attendanceData||{};
+  if (!window._payrollSaved) window._payrollSaved = {};
+  emps.forEach(e => {
+    let present=0, halfDay=0, leave=0;
+    for (let d=1; d<=daysInMonth; d++) {
+      const dk = y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+      const rec = att[dk]?.[e.id];
+      const status = rec?.status||'';
+      if (status==='present'||status==='holiday') present++;
+      else if (status==='half-day') halfDay++;
+      else if (status==='leave') leave++;
+    }
+    const effectiveDays = present + halfDay*0.5;
+    const baseSalary = e.salary||0;
+    const grossEarned = baseSalary > 0 ? (baseSalary/workingDays)*effectiveDays : 0;
+    const activeAdv = (window._advancesData||[]).filter(a=>a.empId===e.id&&a.status==='active');
+    const advDed = activeAdv.reduce((a,adv)=>a+(adv.monthlyEmi||0),0);
+    const net = Math.max(0, grossEarned - advDed);
+    window._payrollSaved[e.id] = { gross: grossEarned, advDed, otherDeductions:0, net, status:'draft', month:m, year:y };
+  });
+  db.setSetting('payroll_'+y+'_'+m, window._payrollSaved).catch(()=>{});
+  toast(`✅ Payroll calculated for ${emps.length} employees`, 'success');
+  renderPage();
+}
+
+function openAddAdvanceModal() {
+  const D = APP.data;
+  const emps = (D.employees||[]).filter(e=>e.status!=='inactive');
+  const empOpts = emps.map(e=>`<option value="${e.id}">${sanitize(e.name)}</option>`).join('');
+  openModal('💸 New Salary Advance', `
+    <div class="form-group"><label class="form-label">Employee *</label><select class="form-input" id="advEmp">${empOpts}</select></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Amount (₹) *</label><input class="form-input" type="number" id="advAmt" placeholder="e.g. 5000" oninput="updateAdvPreview()" /></div>
+      <div class="form-group"><label class="form-label">Repay in months</label>
+        <select class="form-input" id="advMonths" onchange="updateAdvPreview()">
+          ${[1,2,3,4,5,6].map(n=>`<option value="${n}">${n} month${n>1?'s':''}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="form-group"><label class="form-label">Reason</label><input class="form-input" id="advReason" placeholder="Medical / Personal / Other" /></div>
+    <div class="form-group"><label class="form-label">Date</label><input class="form-input" type="date" id="advDate" value="${new Date().toISOString().slice(0,10)}" /></div>
+    <div id="advPreview" style="padding:10px 14px;background:var(--bg-0);border-radius:8px;font-size:13px;color:var(--text-3)">Monthly EMI: —</div>
+  `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-accent" onclick="saveAdvance()">Record Advance</button>`);
+}
+
+function updateAdvPreview() {
+  const amt    = parseFloat(document.getElementById('advAmt')?.value||0);
+  const months = parseInt(document.getElementById('advMonths')?.value||1);
+  const prev   = document.getElementById('advPreview');
+  if (!prev) return;
+  if (amt > 0 && months > 0) {
+    const emi = (amt/months).toFixed(2);
+    prev.innerHTML = `<span style="color:var(--text-1)">Monthly EMI: <strong class="mono">₹${fmt(parseFloat(emi))}</strong> × ${months} month${months>1?'s':''}</span>`;
+  }
+}
+
+function saveAdvance() {
+  const empId = parseInt(document.getElementById('advEmp')?.value);
+  const amount = parseFloat(document.getElementById('advAmt')?.value);
+  const reason = (document.getElementById('advReason')?.value||'').trim();
+  const repayMonths = parseInt(document.getElementById('advMonths')?.value||1);
+  const date = document.getElementById('advDate')?.value || new Date().toISOString().slice(0,10);
+  if (!empId || isNaN(amount) || amount <= 0) { toast('Enter valid amount', 'error'); return; }
+  const monthlyEmi = Math.ceil(amount / repayMonths);
+  const emp = APP.data.employees.find(e => e.id === empId);
+  if (!window._advancesData) window._advancesData = [];
+  window._advancesData.unshift({ id: Date.now(), empId, empName: emp?.name||'', amount, reason, repayMonths, monthlyEmi, balance: amount, date, status:'active' });
+  db.setSetting('advances_data', window._advancesData).catch(()=>{});
+  closeModal();
+  toast(`✅ Advance ₹${fmt(amount)} recorded. EMI ₹${fmt(monthlyEmi)}/mo`, 'success');
+  renderPage();
+}
+
+function clearAdvance(idx) {
+  if (!window._advancesData?.[idx]) return;
+  window._advancesData[idx].status = 'cleared';
+  window._advancesData[idx].balance = 0;
+  db.setSetting('advances_data', window._advancesData).catch(()=>{});
+  toast('✅ Advance cleared', 'success');
+  renderPage();
+}
+
+window.renderPayroll = renderPayroll;
+window.calcPayrollSlip = calcPayrollSlip;
+window.savePayrollSlip = savePayrollSlip;
+window.markPayrollPaid = markPayrollPaid;
+window.bulkCalcPayroll = bulkCalcPayroll;
+window.openAddAdvanceModal = openAddAdvanceModal;
+window.updateAdvPreview = updateAdvPreview;
+window.saveAdvance = saveAdvance;
+window.clearAdvance = clearAdvance;
+window.prevPayMonth = prevPayMonth;
+window.nextPayMonth = nextPayMonth;
+
 window.renderSettings = renderSettings;
 
 // ── FUEL TAX RATE MANAGEMENT ─────────────────────────────────────────────────
@@ -4566,8 +5367,10 @@ const PAGES = [
   { id: 'sales', label: 'Sales', icon: '💰', group: 'main' },
   { id: 'credit', label: 'Credit Mgmt', icon: '💳', group: 'finance' },
   { id: 'staff', label: 'Staff & Allocation', icon: '👥', group: 'finance' },
+  { id: 'payroll', label: 'Payroll', icon: '💸', group: 'finance' },
   { id: 'finance', label: 'Finance', icon: '📈', group: 'finance' },
   { id: 'reports', label: 'Reports', icon: '📄', group: 'reports' },
+  { id: 'analytics', label: 'Analytics', icon: '🔍', group: 'reports' },
   { id: 'settings', label: 'Settings', icon: '⚙️', group: 'reports' },
 ];
 
@@ -4688,8 +5491,10 @@ function renderPage() {
       case 'sales': html = renderSales(D, APP.salesFilter); break;
       case 'credit': html = renderCredit(D); break;
       case 'staff': html = renderStaff(D); break;
+      case 'payroll': html = renderPayroll(D); break;
       case 'finance': html = renderFinance(D); break;
       case 'reports': html = renderReports(D); break;
+      case 'analytics': html = renderAnalytics(D); break;
       case 'employee': html = renderEmployeePortal(); break;
       case 'settings': html = renderSettings(D); break;
       default: html = renderDashboard(D);
@@ -5693,6 +6498,14 @@ function openPurchaseModal() {
         <input class="form-input" id="purchSupplier" placeholder="e.g. IOCL Bangalore Terminal" />
       </div>
     </div>
+    <div class="form-group">
+      <label class="form-label">Fuel Density (kg/L)
+        <span style="font-size:10px;color:var(--text-3);font-weight:400"> — from delivery note, IS-1460 standard</span>
+      </label>
+      <input class="form-input" id="purchDensity" type="number" min="0.5" max="1.0" step="0.001" placeholder="e.g. 0.742 (Petrol: 0.720–0.775)" oninput="checkDensityFlag()" />
+      <div id="purchDensityFlag" style="font-size:11px;margin-top:3px"></div>
+      </div>
+    </div>
 
     <div id="purchTotalPreview" style="display:none;background:rgba(212,148,15,0.08);border:1px solid rgba(212,148,15,0.3);border-radius:10px;padding:14px 16px;margin-top:4px">
       <div style="font-size:11px;font-weight:700;color:var(--accent-light);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px">💰 Purchase Breakdown</div>
@@ -5718,6 +6531,22 @@ function openPurchaseModal() {
     </div>
   `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-accent" onclick="savePurchase()">💾 Save Purchase</button>`);
 }
+
+function checkDensityFlag() {
+  const fuelType = document.getElementById('purchFuel')?.value;
+  const density  = parseFloat(document.getElementById('purchDensity')?.value);
+  const flagEl   = document.getElementById('purchDensityFlag');
+  if (!flagEl || isNaN(density)) { if(flagEl) flagEl.textContent=''; return; }
+  const ranges = { petrol:{min:0.720,max:0.775}, diesel:{min:0.820,max:0.860}, premium_petrol:{min:0.720,max:0.775} };
+  const r = ranges[fuelType];
+  if (!r) { flagEl.textContent=''; return; }
+  if (density < r.min || density > r.max) {
+    flagEl.innerHTML = `<span style="color:var(--red);font-weight:700">⚠️ Outside IS-1460 range (${r.min}–${r.max} kg/L) — possible adulteration</span>`;
+  } else {
+    flagEl.innerHTML = `<span style="color:var(--green);font-weight:700">✅ Within IS-1460 standard range</span>`;
+  }
+}
+window.checkDensityFlag = checkDensityFlag;
 
 function purchFuelChanged() {
   const fuelType = document.getElementById('purchFuel')?.value;
@@ -5771,6 +6600,7 @@ async function savePurchase() {
   const taxPerL   = basicPerL * (taxPct / 100);
   const rate      = Math.round((basicPerL + taxPerL) * 1000) / 1000;
   const total     = Math.round(liters * rate * 100) / 100;
+  const density   = parseFloat(document.getElementById('purchDensity')?.value) || null;
   const purchase  = {
     id: Date.now(), date: today(), fuelType, liters,
     basicRate: basicKL,   // per KL — from invoice
@@ -5778,6 +6608,7 @@ async function savePurchase() {
     taxPct,               // e.g. 29.84
     rate,                 // effective per-litre rate
     total,
+    density,              // kg/L — IS-1460 check
     invoice: sanitize(invoice), supplier
   };
   APP.data.fuelPurchases.unshift(purchase);
@@ -9612,7 +10443,7 @@ async function loadData() {
     prices, purchasePrices,
     upiVPA, upiName, stationCode, omcName,
     serverAlloc, savedRoster, savedAtt,
-    savedTaxRates
+    savedTaxRates, savedAdvances, savedBankRecon
   ] = await Promise.all([
     db.getSetting('seeded').catch(() => null),
     db.getSetting('razorpayKey').catch(() => ''),
@@ -9635,6 +10466,8 @@ async function loadData() {
     db.getSetting('shift_roster').catch(() => null),
     db.getSetting('attendance_data').catch(() => null),
     db.getSetting('fuelTaxRates').catch(() => null),
+    db.getSetting('advances_data').catch(() => null),
+    db.getSetting('bank_recon_data').catch(() => null),
   ]);
 
   APP.data.razorpayKey = razorpayKey || '';
@@ -9747,6 +10580,15 @@ async function loadData() {
     // ── Roster & Attendance ───────────────────────────────────────────────────
     if (savedRoster && typeof savedRoster === 'object') window._rosterData = savedRoster;
     if (savedAtt && typeof savedAtt === 'object') window._attendanceData = savedAtt;
+    if (Array.isArray(savedAdvances)) window._advancesData = savedAdvances;
+    if (savedBankRecon && typeof savedBankRecon === 'object') window._bankReconData = savedBankRecon;
+    // Load payroll for current month
+    try {
+      const now2 = new Date();
+      const pm = now2.getMonth()+1, py = now2.getFullYear();
+      const savedPayrollRaw = await db.getSetting('payroll_'+py+'_'+pm).catch(()=>null);
+      if (savedPayrollRaw && typeof savedPayrollRaw === 'object') window._payrollSaved = savedPayrollRaw;
+    } catch(e) {}
 
     // ── Load Fuel Tax Rates ───────────────────────────────────────────────────
     APP.data.fuelTaxRates = (Array.isArray(savedTaxRates) && savedTaxRates.length > 0)
