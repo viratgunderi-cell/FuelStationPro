@@ -2784,12 +2784,16 @@ function renderDashboard(D) {
     </div>`;
   }).join('');
 
+  const petrolLiters  = todaySales.filter(s => s.fuelType === 'petrol').reduce((a, s) => a + s.liters, 0);
+  const dieselLiters  = todaySales.filter(s => s.fuelType === 'diesel').reduce((a, s) => a + s.liters, 0);
+  const premiumLiters = todaySales.filter(s => s.fuelType !== 'petrol' && s.fuelType !== 'diesel').reduce((a, s) => a + s.liters, 0);
+
   return `
     <div class="g g-auto-sm mb-24 gap-16">
       ${statCard('Today\'s Revenue', cur(totalRevenue), 'all pumps today', '💰')}
-      ${statCard('Liters Sold Today', fmt(totalLiters) + ' L', 'all fuel types', '⛽')}
-      ${statCard('Cash in Hand', cur(cashSales), 'cash sales today', '💵')}
-      ${statCard('Credit Pending', cur(totalCredit), D.creditCustomers.length + ' accounts', '📋')}
+      ${statCard('Petrol Sold', fmt(petrolLiters) + ' L', 'today', '🔴')}
+      ${statCard('Diesel Sold', fmt(dieselLiters) + ' L', 'today', '🟠')}
+      ${statCard('Premium Sold', fmt(premiumLiters) + ' L', 'today', '🟣')}
     </div>
 
     <div class="g g-2 gap-16 mb-24">
@@ -3334,8 +3338,8 @@ function renderStaff(D) {
   // ── Internal tab rendering ──────────────────────────────────
   const tabs = [
     { id: 'shifts',     icon: '⏰', label: 'Shifts' },
-    { id: 'allocation', icon: '⛽', label: 'Allocation' },
     { id: 'roster',     icon: '🗓️', label: 'Roster' },
+    { id: 'allocation', icon: '⛽', label: 'Allocation' },
     { id: 'attendance', icon: '✅', label: 'Attendance' },
     { id: 'directory',  icon: '📋', label: 'Directory' },
   ];
