@@ -7648,6 +7648,7 @@ window.emp_nozzleSalesLiters = emp_nozzleSalesLiters;
 window.emp_refreshNozzles = emp_refreshNozzles;
 window.emp_selPump = emp_selPump;
 window.emp_selNozzle = emp_selNozzle;
+window.emp_selPumpNozzle = emp_selPumpNozzle;
 
 // ═══════════════════════════════════════════════════════════
 // FUELBUNK PRO — Main Application
@@ -11056,33 +11057,25 @@ function emp_renderSales() {
     </div>
     <div class="card" style="margin-bottom:16px"><div class="card-body">
       <div class="form-group"><label class="form-label">Fuel Type</label><div style="display:flex;gap:6px;flex-wrap:wrap">${fuels.map(f=>`<button class="btn btn-sm ${empSaleFuel===f?'btn-accent':'btn-ghost'}" data-fuelbtn="${f}" onclick="emp_selFuel('${f}')">${EMP_FUEL[f]?.split(' ')[0]||f}</button>`).join('')}</div></div>
-      <div class="form-group"><label class="form-label">Pump</label>
-        <div id="empPumpBtns" style="display:flex;gap:6px;flex-wrap:wrap">
+      <div class="form-group"><label class="form-label">Pump &amp; Nozzle</label>
+        <div id="empPumpNozzleBtns" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           ${(() => {
             const pumps = emp_myPumps().filter(p => {
               const nf = p.nozzleFuels || {};
               return p.fuelType === empSaleFuel || Object.values(nf).includes(empSaleFuel);
             });
             if (!pumps.length) return '<span style="font-size:12px;color:var(--text-3)">No pump for this fuel</span>';
-            const firstId = pumps[0].id;
-            return pumps.map(p => `<button class="btn btn-sm ${String(p.id)===String(firstId)?'btn-accent':'btn-ghost'}" data-pumpbtn="${p.id}" onclick="emp_selPump('${p.id}')">${p.name}</button>`).join('');
-          })()}
-        </div>
-      </div>
-      <div class="form-group"><label class="form-label">Nozzle</label>
-        <div id="empNozzleBtns" style="display:flex;gap:6px;flex-wrap:wrap">
-          ${(() => {
-            const pumps = emp_myPumps().filter(p => {
-              const nf = p.nozzleFuels || {};
-              return p.fuelType === empSaleFuel || Object.values(nf).includes(empSaleFuel);
-            });
-            const p = pumps[0];
-            if (!p) return '<span style="font-size:12px;color:var(--text-3)">—</span>';
-            const nf = p.nozzleFuels || {};
-            const nozzles = (p.nozzles || []).filter(n => (nf[n] || p.fuelType) === empSaleFuel);
-            return nozzles.map((n, i) => {
-              const fuel = getFuel(nf[n] || p.fuelType);
-              return `<button class="btn btn-sm ${i===0?'btn-accent':'btn-ghost'}" data-nozzlebtn="${n}" onclick="emp_selNozzle('${n}')">${p.name} · ${n}<span style="font-size:9px;margin-left:3px;opacity:0.7">${fuel?.short||''}</span></button>`;
+            let firstSet = true;
+            return pumps.map(pump => {
+              const nf = pump.nozzleFuels || {};
+              const nozzles = (pump.nozzles || []).filter(n => (nf[n] || pump.fuelType) === empSaleFuel);
+              if (!nozzles.length) return '';
+              const pumpActive = firstSet;
+              firstSet = false;
+              return nozzles.map((n, ni) => {
+                const active = pumpActive && ni === 0;
+                return `<button class="btn btn-sm ${active?'btn-accent':'btn-ghost'}" data-pumpbtn="${pump.id}" data-nozzlebtn="${n}" onclick="emp_selPumpNozzle('${pump.id}','${n}')" style="display:flex;flex-direction:column;align-items:center;padding:8px 14px;min-width:72px"><span style="font-size:13px;font-weight:800">${pump.name}</span><span style="font-size:10px;opacity:0.8;margin-top:1px">Nozzle ${n}</span></button>`;
+              }).join('');
             }).join('');
           })()}
         </div>
@@ -11418,21 +11411,25 @@ function emp_switchMode(mode) {
 }
 
 function emp_refreshNozzles() {
-  // Get active pump from button selection
-  const activePumpBtn = document.querySelector('[data-pumpbtn].btn-accent');
-  const pumpId = activePumpBtn ? activePumpBtn.dataset.pumpbtn : null;
-  const nozzleWrap = document.getElementById('empNozzleBtns');
-  if (!nozzleWrap || !pumpId) return;
-  const p = emp_myPumps().find(px => String(px.id) === String(pumpId));
-  if (!p) return;
-  const nf = p.nozzleFuels || {};
-  const matchingNozzles = (p.nozzles || []).filter(n => (nf[n] || p.fuelType) === empSaleFuel);
-  nozzleWrap.innerHTML = matchingNozzles.length
-    ? matchingNozzles.map((n, i) => {
-        const fuel = getFuel(nf[n] || p.fuelType);
-        return `<button class="btn btn-sm ${i===0?'btn-accent':'btn-ghost'}" data-nozzlebtn="${n}" onclick="emp_selNozzle('${n}')">${p.name} · ${n}<span style="font-size:9px;margin-left:3px;opacity:0.7">${fuel?.short||''}</span></button>`;
-      }).join('')
-    : '<span style="font-size:12px;color:var(--text-3)">No nozzle for this fuel</span>';
+  // Rebuild combined pump+nozzle button row for the current fuel
+  const wrap = document.getElementById('empPumpNozzleBtns');
+  if (!wrap) return;
+  const pumps = emp_myPumps().filter(p => {
+    const nf = p.nozzleFuels || {};
+    return p.fuelType === empSaleFuel || Object.values(nf).includes(empSaleFuel);
+  });
+  if (!pumps.length) { wrap.innerHTML = '<span style="font-size:12px;color:var(--text-3)">No pump for this fuel</span>'; return; }
+  let firstSet = true;
+  wrap.innerHTML = pumps.map(pump => {
+    const nf = pump.nozzleFuels || {};
+    const nozzles = (pump.nozzles || []).filter(n => (nf[n] || pump.fuelType) === empSaleFuel);
+    if (!nozzles.length) return '';
+    const pumpActive = firstSet; firstSet = false;
+    return nozzles.map((n, ni) => {
+      const active = pumpActive && ni === 0;
+      return `<button class="btn btn-sm ${active?'btn-accent':'btn-ghost'}" data-pumpbtn="${pump.id}" data-nozzlebtn="${n}" onclick="emp_selPumpNozzle('${pump.id}','${n}')" style="display:flex;flex-direction:column;align-items:center;padding:8px 14px;min-width:72px"><span style="font-size:13px;font-weight:800">${pump.name}</span><span style="font-size:10px;opacity:0.8;margin-top:1px">Nozzle ${n}</span></button>`;
+    }).join('');
+  }).join('');
 }
 
 function emp_selFuel(f) {
@@ -11442,41 +11439,28 @@ function emp_selFuel(f) {
     btn.classList.toggle('btn-accent', btn.dataset.fuelbtn === f);
     btn.classList.toggle('btn-ghost', btn.dataset.fuelbtn !== f);
   });
-  // Rebuild pump buttons for this fuel
-  const pumpWrap = document.getElementById('empPumpBtns');
-  if (pumpWrap) {
-    const filtered = emp_myPumps().filter(p => {
-      const nf = p.nozzleFuels || {};
-      return p.fuelType === f || Object.values(nf).includes(f);
-    });
-    if (filtered.length) {
-      pumpWrap.innerHTML = filtered.map((p, i) =>
-        `<button class="btn btn-sm ${i===0?'btn-accent':'btn-ghost'}" data-pumpbtn="${p.id}" onclick="emp_selPump('${p.id}')">${p.name}</button>`
-      ).join('');
-    } else {
-      pumpWrap.innerHTML = '<span style="font-size:12px;color:var(--text-3)">No pump for this fuel</span>';
-      const nw = document.getElementById('empNozzleBtns');
-      if (nw) nw.innerHTML = '<span style="font-size:12px;color:var(--text-3)">—</span>';
-    }
-  }
+  // Rebuild combined pump+nozzle buttons for new fuel
   emp_refreshNozzles();
   emp_calcAmt();
   // Update price display if visible
   const priceEl = document.getElementById('empFuelPrice');
   if (priceEl) priceEl.textContent = cur(EMP_PRICES[f] || 0) + '/L';
 }
-function emp_selPump(pumpId) {
+function emp_selPumpNozzle(pumpId, nozzle) {
   document.querySelectorAll('[data-pumpbtn]').forEach(btn => {
-    btn.classList.toggle('btn-accent', String(btn.dataset.pumpbtn) === String(pumpId));
-    btn.classList.toggle('btn-ghost',  String(btn.dataset.pumpbtn) !== String(pumpId));
+    const match = String(btn.dataset.pumpbtn) === String(pumpId) && btn.dataset.nozzlebtn === nozzle;
+    btn.classList.toggle('btn-accent', match);
+    btn.classList.toggle('btn-ghost',  !match);
   });
-  emp_refreshNozzles();
+}
+// Keep legacy shims so any other callers don't crash
+function emp_selPump(pumpId) {
+  const first = document.querySelector(`[data-pumpbtn="${pumpId}"]`);
+  if (first) emp_selPumpNozzle(pumpId, first.dataset.nozzlebtn);
 }
 function emp_selNozzle(n) {
-  document.querySelectorAll('[data-nozzlebtn]').forEach(btn => {
-    btn.classList.toggle('btn-accent', btn.dataset.nozzlebtn === n);
-    btn.classList.toggle('btn-ghost',  btn.dataset.nozzlebtn !== n);
-  });
+  const first = document.querySelector(`[data-nozzlebtn="${n}"]`);
+  if (first) emp_selPumpNozzle(first.dataset.pumpbtn, n);
 }
 function emp_selPay(m) {
   empPayMode = m;
@@ -11514,7 +11498,8 @@ function emp_recordSale() {
   const l = parseFloat(document.getElementById('empSaleLiters')?.value);
   const a = parseFloat(document.getElementById('empSaleAmt')?.value);
   const v = (document.getElementById('empSaleVeh')?.value || '').toUpperCase().trim();
-  const p = String(document.querySelector('[data-pumpbtn].btn-accent')?.dataset?.pumpbtn || '');  // pump.id from active button
+  const _activeBtn = document.querySelector('[data-pumpbtn].btn-accent');
+  const p = String(_activeBtn?.dataset?.pumpbtn || '');  // pump.id from active combined button
   if (isNaN(l)||l<=0) { toast('Enter valid liters','error'); return; }
   // No upper liter limit
   if (!v || v.length < 2) { toast('Enter valid vehicle number','error'); return; }
@@ -11522,7 +11507,7 @@ function emp_recordSale() {
   const amt = isNaN(a) || a <= 0 ? l * (EMP_PRICES[empSaleFuel] || 0) : a;
   if (isNaN(amt) || amt <= 0) { toast('Invalid amount','error'); return; }
 
-  const nozzle = document.querySelector('[data-nozzlebtn].btn-accent')?.dataset?.nozzlebtn || 'A';
+  const nozzle = _activeBtn?.dataset?.nozzlebtn || 'A';  // nozzle from same active combined button
 
   const customerEl = document.getElementById('empSaleCustomer');
   const customer = customerEl ? customerEl.value.trim() : '';
