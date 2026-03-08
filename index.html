@@ -3180,19 +3180,33 @@ function renderStaff(D) {
     `<button class="shift-tab ${allocShift === s.name ? 'active' : ''}" onclick="allocShift='${s.name}'; renderPage()">${s.name} <span style="font-size:10px;opacity:0.6;margin-left:3px">${s.start}–${s.end}</span></button>`
   ).join('');
   // Date navigation for allocation
-  const prevDate = new Date(new Date(allocDate).getTime() - 86400000).toISOString().slice(0,10);
-  const nextDate = new Date(new Date(allocDate).getTime() + 86400000).toISOString().slice(0,10);
   const todayIsoAlloc = new Date().toISOString().slice(0,10);
-  const allocDateLabel = allocDate === todayIsoAlloc ? 'Today' : new Date(allocDate).toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short'});
-  const dateNavHTML = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-    <button class="btn btn-ghost btn-sm" onclick="allocDate='${prevDate}';renderPage()">&#8249;</button>
-    <div style="display:flex;align-items:center;gap:6px;flex:1">
-      <span style="font-weight:700;font-size:13px;color:var(--text-1)">${allocDateLabel}</span>
-      <input type="date" value="${allocDate}" onchange="allocDate=this.value;renderPage()"
-        style="background:var(--bg-0);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text-1);font-size:12px;cursor:pointer" />
-    </div>
-    <button class="btn btn-ghost btn-sm" onclick="allocDate='${nextDate}';renderPage()">&#8250;</button>
-    ${allocDate !== todayIsoAlloc ? `<button class="btn btn-ghost btn-sm" onclick="allocDate='${todayIsoAlloc}';renderPage()">Today</button>` : ''}
+
+  // ── Week range for week view ──────────────────────────────────────────────
+  // anchorDate drives the week — default to current week's Monday
+  if (!window.allocWeekAnchor) {
+    const d = new Date(); const day = d.getDay(); const diff = (day === 0 ? -6 : 1 - day);
+    d.setDate(d.getDate() + diff); window.allocWeekAnchor = d.toISOString().slice(0,10);
+  }
+  const weekStart = new Date(window.allocWeekAnchor);
+  const weekDays = Array.from({length:7}, (_,i) => {
+    const d = new Date(weekStart); d.setDate(d.getDate() + i);
+    return d.toISOString().slice(0,10);
+  });
+  const prevWeekAnchor = new Date(weekStart); prevWeekAnchor.setDate(prevWeekAnchor.getDate()-7);
+  const nextWeekAnchor = new Date(weekStart); nextWeekAnchor.setDate(nextWeekAnchor.getDate()+7);
+  const pvW = prevWeekAnchor.toISOString().slice(0,10);
+  const nxW = nextWeekAnchor.toISOString().slice(0,10);
+  const weekLabel = weekStart.toLocaleDateString('en-IN',{day:'numeric',month:'short'}) + ' – ' +
+    new Date(weekDays[6]).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+  // also keep allocDate in sync with selected week (default today or weekStart)
+  if (!weekDays.includes(allocDate)) allocDate = weekDays.includes(todayIsoAlloc) ? todayIsoAlloc : weekDays[0];
+
+  const dateNavHTML = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+    <button class="btn btn-ghost btn-sm" onclick="window.allocWeekAnchor='${pvW}';renderPage()">&#8249; Prev Week</button>
+    <span style="font-weight:700;font-size:13px;color:var(--text-1);flex:1;text-align:center">${weekLabel}</span>
+    <button class="btn btn-ghost btn-sm" onclick="window.allocWeekAnchor='${nxW}';renderPage()">Next Week &#8250;</button>
+    ${!weekDays.includes(todayIsoAlloc) ? `<button class="btn btn-ghost btn-sm" onclick="window.allocWeekAnchor=null;allocDate='${todayIsoAlloc}';renderPage()">This Week</button>` : ''}
   </div>`;
 
   // Fuel info helper
@@ -3202,64 +3216,90 @@ function renderStaff(D) {
     premium_petrol: { name:'XP95 Premium', short:'Premium', color:'var(--premium-color)', cls:'badge-purple' },
   };
 
-  // ═══ ALLOCATION BOARD ═══
-  const allocBoard = D.pumps.map(p => {
-    const f = fuelInfo[p.fuelType] || fuelInfo.petrol;
-    const nLabels = p.nozzleLabels || (p.nozzles === 1 ? ['A'] : ['A','B']);
+  // ═══ ALLOCATION WEEK GRID ═══
+  // Build week-grid: rows = pump nozzles, columns = 7 days
+  // Helper: get rostered employees for a specific date+shift
+  function getRosteredEmps(date) {
+    const rk = date + '_' + allocShift;
+    const ids = (window._rosterData && window._rosterData[rk]) || [];
+    return ids.length > 0
+      ? D.employees.filter(e => ids.includes(String(e.id)))
+      : D.employees.filter(e => (e.shift||'').split(',').map(s=>s.trim()).includes(allocShift));
+  }
 
+  // Day header row
+  const dayHeaders = weekDays.map(date => {
+    const isToday = date === todayIsoAlloc;
+    const isSelected = date === allocDate;
+    const d = new Date(date);
+    const dayName = d.toLocaleDateString('en-IN',{weekday:'short'});
+    const dayNum = d.getDate();
+    return `<th style="padding:8px 4px;text-align:center;min-width:100px;cursor:pointer;border-bottom:2px solid ${isSelected?'var(--accent)':isToday?'var(--green)':'var(--border)'}"
+      onclick="allocDate='${date}';renderPage()">
+      <div style="font-size:10px;font-weight:700;color:${isToday?'var(--green)':isSelected?'var(--accent-light)':'var(--text-3)'};letter-spacing:0.5px">${dayName.toUpperCase()}</div>
+      <div style="font-size:15px;font-weight:800;color:${isToday?'var(--green)':isSelected?'var(--accent-light)':'var(--text-0)'}">${dayNum}</div>
+    </th>`;
+  }).join('');
+
+  // Build rows: one per pump-nozzle combination
+  const allocTableRows = [];
+  D.pumps.forEach(p => {
     const pNozzleFuels = p.nozzleFuels || {};
-    const nozzleRows = nLabels.map(n => {
-      const key = `${String(p.id)}_${n}`;
-      const empId = shiftAlloc[key];
-      const emp = empId ? D.employees.find(e => parseInt(e.id) === parseInt(empId)) : null;
-      const isAssigned = !!emp;
+    const nLabels = p.nozzleLabels || (p.nozzles === 1 ? ['A'] : ['A','B']);
+    nLabels.forEach(n => {
+      const nKey = `${String(p.id)}_${n}`;
       const nFuelType = pNozzleFuels[n] || p.fuelType;
       const nFuelInfo = fuelInfo[nFuelType] || fuelInfo.petrol;
 
-      return `<div class="alloc-nozzle ${isAssigned ? 'assigned' : ''}">
-        <div class="alloc-nozzle-head">
-          <span class="alloc-nozzle-label">Nozzle ${n} <span style="font-size:9px;font-weight:700;color:${nFuelInfo.color};background:${nFuelInfo.color}18;padding:1px 6px;border-radius:3px;margin-left:4px">${nFuelInfo.short}</span></span>
-          <span class="alloc-nozzle-status" style="background:${isAssigned ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)'};color:${isAssigned ? 'var(--green)' : 'var(--red)'}">
-            ${isAssigned ? '✓ Assigned' : '⚠ Unassigned'}
-          </span>
-        </div>
-        ${isAssigned ? `
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <div class="emp-chip assigned">
-              <span class="emp-av" style="background:${empColor(emp)}">${empInitials(emp.name)}</span>
-              <span>${sanitize(emp.name)}</span>
-              <span style="font-size:10px;color:var(--text-3);font-weight:500">${sanitize(emp.role)}</span>
-            </div>
-            <div style="display:flex;gap:4px">
-              <button class="btn btn-ghost btn-sm" onclick="openChangeAllocModal(${p.id},'${n}')" title="Change">✏️</button>
-              <button class="btn btn-sm" style="background:rgba(239,68,68,0.08);color:var(--red);border:none" onclick="removeAlloc(${p.id},'${n}')" title="Remove">✕</button>
-            </div>
-          </div>
-        ` : `
-          <select class="alloc-select" onchange="assignNozzle(${p.id},'${n}',this.value)">
-            <option value="">— Select Employee —</option>
-            ${empOptions}
-          </select>
-        `}
-      </div>`;
-    }).join('');
+      const rowLabel = `<td style="padding:10px 12px;white-space:nowrap;border-right:1px solid var(--border);background:var(--bg-3);position:sticky;left:0;z-index:1">
+        <div style="font-weight:800;font-size:12px;color:var(--text-0)">${p.name}</div>
+        <div style="font-size:10px;margin-top:2px"><span style="color:${nFuelInfo.color};font-weight:700">N${n}</span> <span style="color:var(--text-3)">${nFuelInfo.short}</span></div>
+      </td>`;
 
-    // Build per-nozzle fuel pills for pump header
-    const pumpNozzlePills = nLabels.map(n => {
-      const ft = pNozzleFuels[n] || p.fuelType;
-      const fi2 = fuelInfo[ft] || fuelInfo.petrol;
-      return `<span style="font-size:9px;font-weight:800;color:${fi2.color};background:${fi2.color}18;padding:2px 7px;border-radius:4px">N${n}: ${fi2.short}</span>`;
-    }).join(' ');
-    return `<div class="alloc-pump">
-      <div class="alloc-pump-head">
-        <div>
-          <div class="alloc-pump-name">${p.name}</div>
-          <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">${pumpNozzlePills}</div>
-        </div>
-      </div>
-      <div class="alloc-nozzles">${nozzleRows}</div>
-    </div>`;
-  }).join('');
+      const dayCells = weekDays.map(date => {
+        const dk = date + '_' + allocShift;
+        const dayAlloc = allocations[dk] || {};
+        const empId = dayAlloc[nKey];
+        const emp = empId ? D.employees.find(e => parseInt(e.id) === parseInt(empId)) : null;
+        const isToday = date === todayIsoAlloc;
+        const isSelected = date === allocDate;
+        const dayEmps = getRosteredEmps(date);
+        const opts = dayEmps.map(e => `<option value="${e.id}" ${emp && parseInt(e.id)===parseInt(emp.id)?'selected':''}>${e.name}</option>`).join('');
+
+        return `<td style="padding:6px;text-align:center;background:${isSelected?'rgba(212,148,15,0.04)':isToday?'rgba(34,197,94,0.03)':'transparent'};border-right:1px solid var(--border-light)">
+          ${emp ? `
+            <div style="display:flex;align-items:center;gap:5px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:6px;padding:5px 7px;cursor:pointer"
+              onclick="allocDate='${date}';openWeekAllocCell(${p.id},'${n}','${date}')">
+              <span style="width:22px;height:22px;border-radius:6px;background:${empColor(emp)};display:grid;place-items:center;color:#fff;font-size:9px;font-weight:800;flex-shrink:0">${empInitials(emp.name)}</span>
+              <span style="font-size:11px;font-weight:700;color:var(--text-0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:68px">${sanitize(emp.name)}</span>
+              <button style="margin-left:auto;background:none;border:none;color:var(--text-3);cursor:pointer;font-size:11px;padding:0 2px;line-height:1" 
+                onclick="event.stopPropagation();allocDate='${date}';removeAllocForDate(${p.id},'${n}','${date}')" title="Remove">✕</button>
+            </div>
+          ` : `
+            <div style="border:1px dashed var(--border);border-radius:6px;padding:4px 2px;cursor:pointer;transition:border-color 0.15s"
+              onclick="allocDate='${date}';openWeekAllocCell(${p.id},'${n}','${date}')"
+              onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+              <span style="font-size:11px;color:var(--text-3)">+ Assign</span>
+            </div>
+          `}
+        </td>`;
+      }).join('');
+
+      allocTableRows.push(`<tr style="border-bottom:1px solid var(--border-light)">${rowLabel}${dayCells}</tr>`);
+    });
+  });
+
+  const allocBoard = `<div style="overflow-x:auto;border-radius:var(--radius);border:1px solid var(--border)">
+    <table style="width:100%;border-collapse:collapse;min-width:700px">
+      <thead>
+        <tr style="background:var(--bg-3)">
+          <th style="padding:10px 12px;text-align:left;font-size:11px;color:var(--text-3);font-weight:700;border-right:1px solid var(--border);position:sticky;left:0;z-index:2;background:var(--bg-3)">PUMP / NOZZLE</th>
+          ${dayHeaders}
+        </tr>
+      </thead>
+      <tbody>${allocTableRows.join('')}</tbody>
+    </table>
+  </div>`;
 
   // ═══ EMPLOYEE ASSIGNMENT SUMMARY ═══
   const empSummaryRows = shiftEmps.map(emp => {
@@ -3412,8 +3452,8 @@ function renderStaff(D) {
           <div style="font-size:12px;color:var(--text-3);margin-bottom:14px">
             Assign employees to individual pump nozzles for <strong style="color:var(--accent-light)">${allocShift}</strong> shift
             · <span style="color:var(--text-2)">${shiftEmps.length} employees available</span>
-            ${rosterFiltered ? `<span style="margin-left:6px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(34,197,94,0.12);color:var(--green);border:1px solid rgba(34,197,94,0.25)">🗓️ Roster filtered</span>` : `<span style="margin-left:6px;font-size:10px;color:var(--text-3)">(set roster to filter)</span>`}
-            ${assignedCount >= totalNozzles ? ' · <span style="color:var(--green);font-weight:600">All nozzles covered ✓</span>' : ''}
+            ${rosterFiltered ? `<span style="margin-left:6px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(34,197,94,0.12);color:var(--green);border:1px solid rgba(34,197,94,0.25)">🗓️ Roster filtered</span>` : `<span style="margin-left:6px;font-size:10px;color:var(--text-3)">(set roster to filter by day)</span>`}
+            · <span style="font-size:11px;color:var(--text-3)">Click any cell to assign · Week view shows 7 days</span>
           </div>
         </div>
         <div style="padding:0 20px 20px">
@@ -6284,6 +6324,21 @@ function enableNotifications() {
 // ── ALLOCATION ACTIONS ────────────────────────────────────────
 function _allocKey() { return allocDate + '_' + allocShift; }
 
+// Opens the assign modal for a specific cell in the week grid
+function openWeekAllocCell(pumpId, nozzle, date) {
+  allocDate = date;
+  openChangeAllocModal(pumpId, nozzle);
+}
+
+// Removes allocation for a specific date (used by week grid ✕ button)
+function removeAllocForDate(pumpId, nozzle, date) {
+  const dk = date + '_' + allocShift;
+  if (allocations[dk]) delete allocations[dk][`${String(pumpId)}_${nozzle}`];
+  saveAllocations();
+  toast('Assignment removed', 'info');
+  renderPage();
+}
+
 function assignNozzle(pumpId, nozzle, empIdStr) {
   const empId = parseInt(empIdStr);
   const dk = _allocKey();
@@ -6353,41 +6408,57 @@ function openChangeAllocModal(pumpId, nozzle) {
 
 function autoAssignAlloc() {
   const D = APP.data;
-  const dk = _allocKey();
-  const rosterKey = allocDate + '_' + allocShift;
-  const rosteredIds = (window._rosterData && window._rosterData[rosterKey]) || [];
-  const shiftEmps = rosteredIds.length > 0
-    ? D.employees.filter(e => rosteredIds.includes(String(e.id)))
-    : D.employees.filter(e => (e.shift||'').split(',').map(s=>s.trim()).includes(allocShift));
-  if (shiftEmps.length === 0) { toast('No employees rostered for this shift on this date', 'error'); return; }
-
-  if (!allocations[dk]) allocations[dk] = {};
-  let idx = 0;
-  D.pumps.forEach(p => {
-    const nLabels = p.nozzleLabels || (p.nozzles === 1 ? ['A'] : ['A','B']);
-    nLabels.forEach(n => {
-      allocations[dk][`${String(p.id)}_${n}`] = shiftEmps[idx % shiftEmps.length].id;
-      idx++;
+  // Fill entire visible week
+  const weekStart = new Date(window.allocWeekAnchor || new Date().toISOString().slice(0,10));
+  const weekDays = Array.from({length:7}, (_,i) => {
+    const d = new Date(weekStart); d.setDate(d.getDate() + i);
+    return d.toISOString().slice(0,10);
+  });
+  let totalAssigned = 0;
+  weekDays.forEach(date => {
+    const rosteredIds = (window._rosterData && window._rosterData[date + '_' + allocShift]) || [];
+    const dayEmps = rosteredIds.length > 0
+      ? D.employees.filter(e => rosteredIds.includes(String(e.id)))
+      : D.employees.filter(e => (e.shift||'').split(',').map(s=>s.trim()).includes(allocShift));
+    if (dayEmps.length === 0) return;
+    const dk = date + '_' + allocShift;
+    if (!allocations[dk]) allocations[dk] = {};
+    let idx = 0;
+    D.pumps.forEach(p => {
+      const nLabels = p.nozzleLabels || (p.nozzles === 1 ? ['A'] : ['A','B']);
+      nLabels.forEach(n => {
+        allocations[dk][`${String(p.id)}_${n}`] = dayEmps[idx % dayEmps.length].id;
+        idx++; totalAssigned++;
+      });
     });
   });
   saveAllocations();
-  toast(`Auto-assigned ${idx} nozzles across ${shiftEmps.length} employees`, 'success');
+  toast(`Auto-assigned ${totalAssigned} nozzles across the week for ${allocShift}`, 'success');
   renderPage();
 }
 
 function clearShiftAllocConfirm() {
-  openModal('Clear Allocations', `
-    <p style="color:var(--red);font-weight:600;margin-bottom:8px">This will remove all nozzle assignments for <strong>${allocShift}</strong> on <strong>${allocDate}</strong>.</p>
-    <p style="color:var(--text-2);font-size:13px">Are you sure you want to proceed?</p>
-  `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn" style="background:var(--red);color:#fff" onclick="doClearAlloc()">Yes, Clear All</button>`);
+  const weekStart = new Date(window.allocWeekAnchor || new Date().toISOString().slice(0,10));
+  const d1 = weekStart.toLocaleDateString('en-IN',{day:'numeric',month:'short'});
+  const d7 = new Date(weekStart.getTime() + 6*86400000).toLocaleDateString('en-IN',{day:'numeric',month:'short'});
+  openModal('Clear Week Allocations', `
+    <p style="color:var(--red);font-weight:600;margin-bottom:8px">Clear all nozzle assignments for <strong>${allocShift}</strong> from <strong>${d1}</strong> to <strong>${d7}</strong>?</p>
+    <p style="color:var(--text-2);font-size:13px">This removes all 7 days of assignments for this shift.</p>
+  `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn" style="background:var(--red);color:#fff" onclick="doClearAlloc()">Yes, Clear Week</button>`);
 }
 
 function doClearAlloc() {
-  const dk = _allocKey();
-  delete allocations[dk];
+  const weekStart = new Date(window.allocWeekAnchor || new Date().toISOString().slice(0,10));
+  Array.from({length:7}, (_,i) => {
+    const d = new Date(weekStart); d.setDate(d.getDate() + i);
+    return d.toISOString().slice(0,10);
+  }).forEach(date => {
+    const dk = date + '_' + allocShift;
+    delete allocations[dk];
+  });
   saveAllocations();
   closeModal();
-  toast('All allocations cleared for ' + allocShift + ' on ' + allocDate, 'info');
+  toast('Week allocations cleared for ' + allocShift, 'info');
   renderPage();
 }
 
