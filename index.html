@@ -8404,6 +8404,12 @@ async function fetchPublicEmployees() {
 }
 
 function showLoginScreen() {
+  // Pre-load data in background while user types credentials
+  // Store promise so doAdminLogin can await it instead of re-loading
+  if (!window._preloadPromise) {
+    window._preloadPromise = loadData().catch(() => {});
+  }
+
   // Hide app shell
   document.getElementById('sidebar').style.display = 'none';
   document.querySelector('.main-area').style.display = 'none';
@@ -8493,8 +8499,27 @@ async function doAdminLogin() {
   if (!admin) { recordFailedLogin('admin_' + u); toast('Invalid username or password', 'error'); return; }
   recordSuccessLogin('admin_' + u);
   APP.loggedIn = true; APP.role = 'admin'; APP.adminUser = { id: admin.id, name: admin.name, role: admin.role };
-  saveSession(); enterApp();
+  saveSession();
+
+  // Show loading state on button while data loads from server
+  var btn = document.querySelector('#adminLoginForm .btn-accent');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Loading data...'; btn.style.opacity = '0.7'; }
+
+  try {
+    // If preload already started (background load while user typed), await that
+    // Otherwise start a fresh load — either way cap at 8s
+    var loadPromise = window._preloadPromise || loadData();
+    window._preloadPromise = null; // consume it
+    await Promise.race([
+      loadPromise,
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))
+    ]);
+  } catch(e) {
+    console.warn('[doAdminLogin] loadData timeout/error:', e.message);
+  }
+
   auditLog('login', { username: u, role: admin.role });
+  enterApp();
   toast('Welcome ' + sanitize(admin.name) + '!', 'success');
 }
 
