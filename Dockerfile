@@ -6,12 +6,12 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 WORKDIR /app
 
 # Copy package files first for better layer caching
-COPY package.json ./
+# BOTH files must be present before npm ci runs — npm ci reads package-lock.json
+COPY package.json package-lock.json ./
 
-# Install production dependencies — no lock file to avoid EINTEGRITY errors
-# Railway generates a fresh install each build from package.json only
+# Use npm ci for reproducible builds — respects package-lock.json exactly.
 RUN npm cache clean --force && \
-    npm install --production --no-audit --no-fund --no-package-lock
+    npm ci --production --no-audit --no-fund
 
 # Copy application files
 COPY . .

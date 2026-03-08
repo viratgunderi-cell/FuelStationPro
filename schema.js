@@ -139,12 +139,15 @@ class PgDbWrapper {
   pragma() {} // no-op
 
   transaction(fn) {
+    // BUG-05 FIX: fn() must receive the transactional client, not use pool directly.
+    // Original code called fn(...args) without passing client, so fn's pool.query()
+    // calls bypassed the transaction entirely — no atomicity.
     const pool = this.pool;
     return async (...args) => {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        const result = await fn(...args);
+        const result = await fn(client, ...args);  // Pass client as first arg
         await client.query('COMMIT');
         return result;
       } catch (e) {
@@ -371,6 +374,47 @@ async function initDatabase() {
       updated_at TIMESTAMPTZ DEFAULT NOW(),
       PRIMARY KEY(key, tenant_id)
     )`,
+    // BUG-10 FIX: Lubes & Products tables — previously stored as JSON blobs in settings
+    // which can grow > 5MB. Proper tables prevent settings row bloat.
+    // Frontend still uses setSetting/getSetting as primary path (backward-compatible).
+    `CREATE TABLE IF NOT EXISTS lubes_products (
+      id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      name TEXT DEFAULT '',
+      brand TEXT DEFAULT '',
+      category TEXT DEFAULT '',
+      hsn TEXT DEFAULT '',
+      gst_pct REAL DEFAULT 18,
+      unit TEXT DEFAULT 'L',
+      selling_price REAL DEFAULT 0,
+      cost_price REAL DEFAULT 0,
+      stock REAL DEFAULT 0,
+      min_stock REAL DEFAULT 5,
+      expiry_date TEXT DEFAULT '',
+      active INTEGER DEFAULT 1,
+      data_json TEXT DEFAULT '{}',
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY(id, tenant_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS lubes_sales (
+      id SERIAL PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      date TEXT DEFAULT '',
+      time TEXT DEFAULT '',
+      product_id TEXT DEFAULT '',
+      product_name TEXT DEFAULT '',
+      qty REAL DEFAULT 0,
+      unit TEXT DEFAULT '',
+      rate REAL DEFAULT 0,
+      amount REAL DEFAULT 0,
+      customer TEXT DEFAULT '',
+      mode TEXT DEFAULT 'cash',
+      employee TEXT DEFAULT '',
+      data_json TEXT DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_lubes_sales_tenant ON lubes_sales(tenant_id, date DESC)`,
+
     `CREATE TABLE IF NOT EXISTS audit_log (
       id SERIAL PRIMARY KEY,
       tenant_id TEXT DEFAULT '',
@@ -440,9 +484,7 @@ async function initDatabase() {
     `ALTER TABLE tanks ADD COLUMN IF NOT EXISTS last_dip TEXT DEFAULT ''`,
     `ALTER TABLE dip_readings ADD COLUMN IF NOT EXISTS time TEXT DEFAULT ''`,
     `ALTER TABLE dip_readings ADD COLUMN IF NOT EXISTS method TEXT DEFAULT ''`,
-    `ALTER TABLE credit_customers ADD COLUMN IF NOT EXISTS last_payment TEXT DEFAULT ''`,
-    `ALTER TABLE credit_customers ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'individual'`,
-    `ALTER TABLE employees ADD COLUMN IF NOT EXISTS shift TEXT DEFAULT ''`,
+    // BUG-11 FIX: Removed duplicate migrations (last_payment, type, shift already above)
   ];
   for (const migration of MIGRATIONS) {
     try { await pool.query(migration); }

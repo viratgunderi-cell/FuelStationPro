@@ -20,7 +20,7 @@
  */
 const crypto = require('crypto');
 
-function sanitizeString(str, maxLen = 1000) {
+function sanitizeString(str, maxLen = 100000) {
   if (typeof str !== 'string') return '';
   return str.replace(/<[^>]*>/g, '').replace(/\0/g, '').trim().substring(0, maxLen);
 }
@@ -35,7 +35,8 @@ function sanitizeObject(obj, depth = 0) {
   if (typeof obj === 'object') {
     const clean = {};
     for (const [k, v] of Object.entries(obj)) {
-      clean[sanitizeString(k, 100)] = sanitizeObject(v, depth + 1);
+      // Only limit key length (to prevent memory attacks), not value length
+      clean[sanitizeString(k, 200)] = sanitizeObject(v, depth + 1);
     }
     return clean;
   }

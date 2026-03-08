@@ -157,15 +157,32 @@ function authRoutes(db) {
   });
 
   // ── Session Check ──────────────────────────────────────────
-  router.get('/session', (req, res) => {
-    if (!req.session) return res.status(401).json({ error: 'No active session' });
-    res.json({
-      valid: true,
-      userType: req.userType,
-      userName: req.userName,
-      role: req.userRole,
-      tenantId: req.tenantId
-    });
+  // /api/auth is NOT under authMiddleware, so we must inline the token lookup here.
+  // Previously req.session was always undefined → always 401.
+  router.get('/session', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'No active session' });
+    }
+    const token = authHeader.replace('Bearer ', '').trim();
+    if (!token || token.length < 10) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    try {
+      const session = await db.prepare(
+        'SELECT * FROM sessions WHERE token = $1 AND expires_at > NOW()'
+      ).get(token);
+      if (!session) return res.status(401).json({ error: 'Invalid or expired session' });
+      res.json({
+        valid: true,
+        userType: session.user_type,
+        userName: session.user_name,
+        role: session.role,
+        tenantId: session.tenant_id,
+      });
+    } catch (e) {
+      res.status(500).json({ error: 'Session check error' });
+    }
   });
 
   // ── Super Change Password ──────────────────────────────────

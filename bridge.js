@@ -139,7 +139,7 @@
     const adminUser= document.getElementById('tAdminUser')?.value?.trim() || 'admin';
     const adminPass= document.getElementById('tAdminPass')?.value || 'admin123';
 
-    if (!name || name.length < 2) { mt_toast('Enter a station name', 'error'); return; }
+    if (!name || name.length < 2) { if (typeof mt_toast === 'function') mt_toast('Enter a station name', 'error'); return; }
 
     // Ensure token is set — restore from sessionStorage or re-authenticate
     if (!getAuthToken()) {
@@ -147,8 +147,8 @@
       if (saved) {
         setAuthToken(saved);
       } else {
-        mt_toast('Session expired. Please log in again.', 'error');
-        mt_showSelector();
+        if (typeof mt_toast === 'function') mt_toast('Session expired. Please log in again.', 'error');
+        if (typeof mt_showSelector === 'function') mt_showSelector();
         return;
       }
     }
@@ -156,15 +156,15 @@
     try {
       if (isEdit && id) {
         await TenantAPI.update(id, { name, location, ownerName, phone, icon });
-        mt_toast(name + ' updated', 'success');
+        if (typeof mt_toast === 'function') mt_toast(name + ' updated', 'success');
       } else {
         await TenantAPI.create({ name, location, ownerName, phone, icon, adminUser, adminPass });
-        mt_toast(name + ' created!', 'success');
+        if (typeof mt_toast === 'function') mt_toast(name + ' created!', 'success');
       }
       await mt_getTenants_async();
-      mt_showSelector();
+      if (typeof mt_showSelector === 'function') mt_showSelector();
     } catch (e) {
-      mt_toast(e.message || 'Failed to save', 'error');
+      if (typeof mt_toast === 'function') mt_toast(e.message || 'Failed to save', 'error');
     }
   };
 

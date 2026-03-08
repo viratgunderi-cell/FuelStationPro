@@ -20,8 +20,30 @@ async function startServer() {
   app.locals.db = db;
   app.set('trust proxy', 1);
 
-  app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
-  app.use(cors({ origin: process.env.CORS_ORIGIN || true, credentials: true }));
+  // BUG-08 FIX: CSP was fully disabled to allow inline scripts. Instead, enable CSP
+  // with unsafe-inline only for scripts (required for SPA), keeping all other protections.
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc:  ["'self'", "'unsafe-inline'"],  // SPA requires inline scripts
+        styleSrc:   ["'self'", "'unsafe-inline'"],
+        imgSrc:     ["'self'", 'data:', 'blob:'],
+        connectSrc: ["'self'"],
+        fontSrc:    ["'self'", 'data:'],
+        objectSrc:  ["'none'"],
+        frameSrc:   ["'none'"],
+      }
+    },
+    crossOriginEmbedderPolicy: false,  // Allow mixed content loading
+  }));
+  // BUG-07 FIX: CORS wildcard (origin: true) with credentials: true is a security risk.
+  // Use explicit CORS_ORIGIN env var in production; fall back to same-origin only.
+  const corsOrigin = process.env.CORS_ORIGIN || false; // false = same-origin only
+  app.use(cors({
+    origin: corsOrigin || false,
+    credentials: corsOrigin ? true : false,
+  }));
   app.use(rateLimit({ windowMs: 60000, max: 300, standardHeaders: true, legacyHeaders: false }));
   app.use(express.json({ limit: '2mb' }));
   app.use(express.urlencoded({ extended: false }));
@@ -143,58 +165,17 @@ async function startServer() {
     }
   });
 
-  // ── PUBLIC: employee sale submission (no auth — validated by tenantId) ──────
-  app.post('/api/public/sale/:tenantId', async (req, res) => {
-    try {
-      const tenantId = req.params.tenantId;
-      const s = req.body;
-      if (!s || !s.fuelType || !s.liters || !s.amount) {
-        return res.status(400).json({ error: 'Missing required sale fields' });
-      }
-      await pool.query(
-        `INSERT INTO sales
-          (tenant_id, date, time, fuel_type, liters, amount, mode, pump, nozzle,
-           vehicle, customer, shift, employee_id, employee_name)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-        [
-          tenantId,
-          s.date || new Date().toISOString().slice(0,10),
-          s.time || new Date().toTimeString().slice(0,8),
-          s.fuelType, s.liters, s.amount,
-          s.mode || 'cash',
-          String(s.pump || ''), s.nozzle || 'A',
-          s.vehicle || '', s.customer || '',
-          s.shift || 'Employee',
-          s.employeeId || 0, s.employeeName || (s.employee || '')
-        ]
-      );
-      // ── If credit sale, update customer outstanding balance ──
-      if ((s.mode || 'cash') === 'credit' && s.customer) {
-        try {
-          await pool.query(
-            `UPDATE credit_customers
-             SET balance = COALESCE(balance, 0) + $1
-             WHERE tenant_id = $2 AND name = $3 AND active = 1`,
-            [s.amount, tenantId, s.customer]
-          );
-        } catch (credErr) {
-          console.warn('[public/sale] credit update failed:', credErr.message);
-        }
-      }
-      res.json({ success: true });
-    } catch (e) {
-      console.error('[public/sale]', e.message);
-      res.status(500).json({ error: e.message });
-    }
-  });
+  // NOTE: /api/public/sale/:tenantId (singular) was removed — it was a duplicate of
+  // /api/public/sales/:tenantId (plural) below. bridge.js uses the plural form.
+  // The singular endpoint had a credit-balance update the plural lacked — merged below.
 
   // ── PUBLIC: employee pump reading update (no auth) ──────────────────────
   app.post('/api/public/reading/:tenantId', async (req, res) => {
     try {
       const tenantId = req.params.tenantId;
-      const { pumpId, nozzleReadings } = req.body;
+      const { pumpId } = req.body;
+      let nozzleReadings = req.body.nozzleReadings || {};  // BUG-02 FIX: was const then reassigned — TypeError crash
       if (!pumpId) return res.status(400).json({ error: 'Missing pumpId' });
-      if (!nozzleReadings) nozzleReadings = {};
       // Get current pump data_json and merge readings
       const r = await pool.query(
         'SELECT data_json FROM pumps WHERE tenant_id=$1 AND id=$2',
@@ -223,12 +204,15 @@ async function startServer() {
   });
 
   // Public tenant list aliases (supports both legacy and new frontend clients)
+  // BUG-03 FIX: Use pool.query directly — db.prepare() runs convertSql() which
+  // appends "RETURNING id" to any INSERT, but it also runs on SELECT here causing
+  // "SELECT...RETURNING id" which is invalid PostgreSQL syntax.
   const listTenantsPublic = async (req, res) => {
     try {
-      const tenants = await db.prepare(
+      const result = await pool.query(
         'SELECT id, name, location, icon, color, color_light, active, station_code FROM tenants ORDER BY name'
-      ).all();
-      res.json(tenants);
+      );
+      res.json(result.rows);
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
@@ -249,14 +233,29 @@ async function startServer() {
       const tenantCheck = await pool.query('SELECT id FROM tenants WHERE id = $1', [tenantId]);
       if (!tenantCheck.rows.length) return res.status(404).json({ error: 'Tenant not found' });
 
-      // Insert sale into DB
+      // BUG-01 FIX: 'employee' bare column does not exist in sales — use employee_id + employee_name
       const r = await pool.query(
-        `INSERT INTO sales (tenant_id, date, time, fuel_type, liters, amount, mode, pump, nozzle, vehicle, customer, shift, employee, employee_id, employee_name)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+        `INSERT INTO sales (tenant_id, date, time, fuel_type, liters, amount, mode, pump, nozzle, vehicle, customer, shift, employee_id, employee_name)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
         [tenantId, sale.date||'', sale.time||'', sale.fuelType||'', sale.liters||0, sale.amount||0,
          sale.mode||'cash', sale.pump||'', sale.nozzle||'A', sale.vehicle||'',
-         sale.customer||'', sale.shift||'', sale.employee||'', sale.employeeId||0, sale.employeeName||'']
+         sale.customer||'', sale.shift||'', sale.employeeId||0,
+         sale.employeeName||(sale.employee||'')]
       );
+
+      // BUG-04 FIX: Credit balance update was missing from this endpoint (was only in the now-removed singular endpoint)
+      if ((sale.mode||'cash') === 'credit' && sale.customer) {
+        try {
+          await pool.query(
+            `UPDATE credit_customers SET balance = COALESCE(balance, 0) + $1
+             WHERE tenant_id = $2 AND name = $3 AND active = 1`,
+            [sale.amount, tenantId, sale.customer]
+          );
+        } catch (credErr) {
+          console.warn('[public/sales] credit balance update failed:', credErr.message);
+        }
+      }
+
       res.json({ id: r.rows[0].id });
     } catch (e) {
       console.error('[public/sales]', e.message);
@@ -267,41 +266,10 @@ async function startServer() {
   const authLimiter = rateLimit({ windowMs: 300000, max: 30 });
   app.use('/api/auth', authLimiter, authRoutes(db));
 
-  // ── Settings routes (direct pool.query — bypass PgDbWrapper) ────────────
-  // Registered BEFORE app.use('/api/data',...) to guarantee priority.
-  const { pool: pgPool } = require('./schema');
-
-  app.get('/api/data/settings/key/:key', authMiddleware(db), async (req, res) => {
-    try {
-      const r = await pgPool.query(
-        'SELECT value FROM settings WHERE key = $1 AND tenant_id = $2',
-        [req.params.key, req.tenantId || '']
-      );
-      if (!r.rows[0]) return res.json({ value: null });
-      let val = r.rows[0].value;
-      try { val = JSON.parse(val); } catch {}
-      res.json({ value: val });
-    } catch (e) {
-      console.error('[Settings GET]', e.message);
-      res.status(500).json({ error: e.message });
-    }
-  });
-
-  app.put('/api/data/settings/key/:key', authMiddleware(db), async (req, res) => {
-    const { value } = req.body;
-    const serialized = (value !== null && value !== undefined && typeof value === 'object')
-      ? JSON.stringify(value) : String(value ?? '');
-    try {
-      await pgPool.query(
-        'INSERT INTO settings (key, tenant_id, value, updated_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT (key, tenant_id) DO UPDATE SET value = $3, updated_at = NOW()',
-        [req.params.key, req.tenantId || '', serialized]
-      );
-      res.json({ success: true });
-    } catch (e) {
-      console.error('[Settings PUT]', req.params.key, e.message);
-      res.status(500).json({ error: e.message });
-    }
-  });
+  // ── Settings routes ──────────────────────────────────────────────────────
+  // BUG-06 FIX: These routes were duplicated here AND in data.js router.
+  // The data.js router (mounted at /api/data with authMiddleware) handles these correctly.
+  // Keeping them here caused confusion — removed. data.js routes are canonical.
 
   // ── Explicit tenant CRUD routes (authenticated, requireRole super) ───────
   // These are registered BEFORE the generic dataRoutes mounts to avoid

@@ -21,6 +21,8 @@ const STORE_MAP = {
   shifts:             { table: 'shifts',             hasAutoId: false, keyCol: 'id' },
   settings:           { table: 'settings',           hasAutoId: false, keyCol: 'key' },
   auditLog:           { table: 'audit_log',          hasAutoId: true },
+  lubesProducts:      { table: 'lubes_products',     hasAutoId: false, keyCol: 'id' },
+  lubesSales:         { table: 'lubes_sales',        hasAutoId: true },
 };
 
 // ── Frontend → DB column mapping (write) ──────────────────────────────────
@@ -357,6 +359,20 @@ function dataRoutes(db) {
     }
   });
 
+  // ── Bulk PUT — MUST be before PUT /:store (Express matches /:store first otherwise) ──
+  router.put('/:store/bulk', async (req, res) => {
+    const meta = STORE_MAP[req.params.store];
+    if (!meta) return res.status(404).json({ error: 'Unknown store' });
+    if (!Array.isArray(req.body)) return res.status(400).json({ error: 'Expected array' });
+    try {
+      for (const item of req.body) await upsertRow(meta, req.tenantId, item, false);
+      res.json({ success: true, count: req.body.length });
+    } catch (e) {
+      console.error('[BULK PUT]', req.params.store, e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Generic store PUT (upsert) ────────────────────────────────────────────
   router.put('/:store', async (req, res) => {
     const meta = STORE_MAP[req.params.store];
@@ -371,21 +387,17 @@ function dataRoutes(db) {
     }
   });
 
-  // ── Bulk PUT ──────────────────────────────────────────────────────────────
-  router.put('/:store/bulk', async (req, res) => {
+  // ── Generic store DELETE all (clear) ─────────────────────────────────────
+  router.delete('/:store', async (req, res) => {
     const meta = STORE_MAP[req.params.store];
     if (!meta) return res.status(404).json({ error: 'Unknown store' });
-    if (!Array.isArray(req.body)) return res.status(400).json({ error: 'Expected array' });
     try {
-      for (const item of req.body) await upsertRow(meta, req.tenantId, item, false);
-      res.json({ success: true, count: req.body.length });
-    } catch (e) {
-      console.error('[BULK PUT]', req.params.store, e.message);
-      res.status(500).json({ error: e.message });
-    }
+      await pool.query(`DELETE FROM ${meta.table} WHERE tenant_id = $1`, [req.tenantId]);
+      res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // ── Generic store DELETE ──────────────────────────────────────────────────
+  // ── Generic store DELETE by id ────────────────────────────────────────────
   router.delete('/:store/:id', async (req, res) => {
     const meta = STORE_MAP[req.params.store];
     if (!meta) return res.status(404).json({ error: 'Unknown store' });

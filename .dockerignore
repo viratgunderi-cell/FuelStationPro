@@ -1,5 +1,4 @@
-# Exclude lock file to prevent EINTEGRITY errors
-package-lock.json
+# package-lock.json is now INCLUDED so npm ci can use it for reproducible builds
 node_modules/
 .env
 .env.*
