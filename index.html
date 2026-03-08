@@ -9289,27 +9289,68 @@ async function loadData() {
     return;
   }
 
-  // If db connection wasn't established (blocked/timeout), use SEED
   if (!db.db) {
     console.warn('No DB connection, using seed data');
     APP.data = { ...SEED };
     return;
   }
 
-  const seeded = await db.getSetting('seeded').catch(() => null);
-  // Load UPI / payment settings
-  APP.data.razorpayKey = await db.getSetting('razorpayKey').catch(() => '') || '';
+  // ── PARALLEL FETCH: fire all requests simultaneously ─────────────────────
+  // Previously sequential (~18 round-trips × 300ms = 6s). Now one wave.
+  const [
+    seeded,
+    razorpayKey,
+    rawTanks, rawPumps, rawShifts, rawEmployees,
+    rawSales, rawCredit, rawExpenses, rawPurchases, rawDip,
+    prices, purchasePrices,
+    upiVPA, upiName, stationCode, omcName,
+    serverAlloc, savedRoster, savedAtt
+  ] = await Promise.all([
+    db.getSetting('seeded').catch(() => null),
+    db.getSetting('razorpayKey').catch(() => ''),
+    db.getAll('tanks').catch(() => []),
+    db.getAll('pumps').catch(() => []),
+    db.getAll('shifts').catch(() => []),
+    db.getAll('employees').catch(() => []),
+    db.getAll('sales').catch(() => []),
+    db.getAll('creditCustomers').catch(() => []),
+    db.getAll('expenses').catch(() => []),
+    db.getAll('fuelPurchases').catch(() => []),
+    db.getAll('dipReadings').catch(() => []),
+    db.getSetting('prices').catch(() => null),
+    db.getSetting('purchasePrices').catch(() => null),
+    db.getSetting('upiVPA').catch(() => ''),
+    db.getSetting('upiName').catch(() => ''),
+    db.getSetting('stationCode').catch(() => ''),
+    db.getSetting('omcName').catch(() => ''),
+    db.getSetting('allocations').catch(() => null),
+    db.getSetting('shift_roster').catch(() => null),
+    db.getSetting('attendance_data').catch(() => null),
+  ]);
+
+  APP.data.razorpayKey = razorpayKey || '';
   if (!seeded) await seedDatabase().catch(() => {});
 
   try {
-    const _rawTanks = await db.getAll('tanks');
-    // Normalize server response — ensures IDs are ints, all fields camelCase
-    const _normTanks = _rawTanks.map(_normTank);
+    // Derive purchasePrices from fuelPurchases if not saved
+    let resolvedPurchasePrices = purchasePrices;
+    if (!resolvedPurchasePrices || Object.keys(resolvedPurchasePrices).length === 0) {
+      if (rawPurchases.length > 0) {
+        const derived = {};
+        [...rawPurchases].sort((a,b) => (b.id||0)-(a.id||0)).forEach(p => {
+          if (p.fuelType && p.rate && !derived[p.fuelType]) derived[p.fuelType] = p.rate;
+        });
+        if (Object.keys(derived).length > 0) resolvedPurchasePrices = derived;
+      }
+      if (!resolvedPurchasePrices || Object.keys(resolvedPurchasePrices).length === 0)
+        resolvedPurchasePrices = SEED.purchasePrices;
+    }
+
     APP.data = {
-      tanks: _normTanks,
-      pumps: (await db.getAll('pumps')).map(_normPump),
-      shifts: await db.getAll('shifts'),
-      employees: (await db.getAll('employees')).map(function(e) {
+      tanks: rawTanks.map(_normTank),
+      pumps: rawPumps.map(_normPump),
+      shifts: rawShifts,
+      employees: rawEmployees.map(function(e) {
         if (!e.permissions && e.data_json) {
           try { const j = JSON.parse(e.data_json || '{}'); e.permissions = j.permissions || {}; } catch { e.permissions = {}; }
         }
@@ -9320,8 +9361,8 @@ async function loadData() {
         }
         return e;
       }),
-      sales: (await db.getAll('sales')).sort((a, b) => b.id - a.id),
-      creditCustomers: (await db.getAll('creditCustomers')).map(function(c) {
+      sales: rawSales.sort((a, b) => b.id - a.id),
+      creditCustomers: rawCredit.map(function(c) {
         c.outstanding = parseFloat(c.outstanding !== undefined ? c.outstanding : (c.balance || 0));
         c.limit       = parseFloat(c.limit       !== undefined ? c.limit       : (c.credit_limit || 0));
         if (!c.lastPayment) c.lastPayment = c.last_payment || '';
@@ -9329,12 +9370,12 @@ async function loadData() {
         if (!c.type) c.type = 'Individual';
         return c;
       }),
-      expenses: (await db.getAll('expenses')).sort((a, b) => b.id - a.id).map(function(e) {
+      expenses: rawExpenses.sort((a, b) => b.id - a.id).map(function(e) {
         if (e.desc === undefined && e.description) e.desc = e.description;
         if (e.total === undefined) e.total = e.amount || 0;
         return e;
       }),
-      fuelPurchases: (await db.getAll('fuelPurchases')).sort((a, b) => b.id - a.id).map(function(p) {
+      fuelPurchases: rawPurchases.sort((a, b) => b.id - a.id).map(function(p) {
         if (p.total === undefined || p.total === null) p.total = p.amount || 0;
         if (!p.invoice) p.invoice = p.invoice_no || p.invoiceNo || '';
         if (!p.fuelType) p.fuelType = p.fuel_type || '';
@@ -9342,42 +9383,21 @@ async function loadData() {
         if (p.rate === undefined) p.rate = 0;
         return p;
       }),
-      dipReadings: (await db.getAll('dipReadings')).sort((a, b) => b.id - a.id).map(function(d) { if (!d.tankId && d.tank_id) d.tankId = d.tank_id; return d; }),
-      prices: await db.getSetting('prices') || SEED.prices,
-      purchasePrices: await (async () => {
-        // First try saved setting (updated on each fuel purchase)
-        const saved = await db.getSetting('purchasePrices');
-        if (saved && Object.keys(saved).length > 0) return saved;
-        // Fallback: derive from latest fuelPurchases rate per fuelType
-        const allPurchases = await db.getAll('fuelPurchases').catch(() => []);
-        if (allPurchases.length > 0) {
-          const derived = {};
-          // Use most recent purchase rate per fuelType
-          allPurchases.sort((a,b) => (b.id||0)-(a.id||0)).forEach(p => {
-            if (p.fuelType && p.rate && !derived[p.fuelType]) derived[p.fuelType] = p.rate;
-          });
-          if (Object.keys(derived).length > 0) return derived;
-        }
-        return SEED.purchasePrices;
-      })(),
-      weekly: [],  // will be computed in renderDashboard from real sales
-      upiVPA: await db.getSetting('upiVPA') || SEED.upiVPA,
-      upiName: await db.getSetting('upiName') || SEED.upiName,
-      stationCode: await db.getSetting('stationCode') || '',
-      omcName: await db.getSetting('omcName') || '',
+      dipReadings: rawDip.sort((a, b) => b.id - a.id).map(function(d) { if (!d.tankId && d.tank_id) d.tankId = d.tank_id; return d; }),
+      prices: prices || SEED.prices,
+      purchasePrices: resolvedPurchasePrices,
+      weekly: [],
+      upiVPA: upiVPA || SEED.upiVPA,
+      upiName: upiName || SEED.upiName,
+      stationCode: stationCode || '',
+      omcName: omcName || '',
     };
 
-    // Note: empty tanks is valid (fresh install, no tanks added yet)
-    // Do NOT wipe sales/employees/pumps just because tanks is empty
-
-    // ── Load allocations from server (survives logout + cross-device) ──────────
+    // ── Allocations ───────────────────────────────────────────────────────────
     try {
-      const serverAlloc = await db.getSetting('allocations');
       if (serverAlloc && typeof serverAlloc === 'object' && Object.keys(serverAlloc).length > 0) {
-        // Server is the SOLE source of truth — never merge with stale localStorage data
         allocations = serverAlloc;
       }
-      // Auto-select today's shift with most assignments (uses date_shift composite keys)
       try {
         const todayStr = new Date().toISOString().slice(0,10);
         const todayKeys = Object.keys(allocations).filter(k =>
@@ -9393,7 +9413,6 @@ async function loadData() {
           allocShift = todayKeys[0].replace(todayStr + '_', '');
         }
       } catch {}
-      // Prune stale allocation keys (pumps removed from station) + empty date-shift shells
       if (APP.data?.pumps) {
         const validNozzleKeys = new Set();
         APP.data.pumps.forEach(p => {
@@ -9416,17 +9435,9 @@ async function loadData() {
       console.warn('[Alloc] Failed to load from server:', allocErr.message);
     }
 
-    // ── Load Shift Roster from server ──────────────────────────────────────────
-    try {
-      const savedRoster = await db.getSetting('shift_roster');
-      if (savedRoster && typeof savedRoster === 'object') window._rosterData = savedRoster;
-    } catch {}
-
-    // ── Load Attendance data from server ───────────────────────────────────────
-    try {
-      const savedAtt = await db.getSetting('attendance_data');
-      if (savedAtt && typeof savedAtt === 'object') window._attendanceData = savedAtt;
-    } catch {}
+    // ── Roster & Attendance ───────────────────────────────────────────────────
+    if (savedRoster && typeof savedRoster === 'object') window._rosterData = savedRoster;
+    if (savedAtt && typeof savedAtt === 'object') window._attendanceData = savedAtt;
 
     // ── Backfill: ensure every fuel purchase has a matching expense entry ──
     // This handles purchases entered before the auto-expense feature was added
