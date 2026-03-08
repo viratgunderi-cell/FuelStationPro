@@ -3525,14 +3525,20 @@ function renderFinance(D) {
     fuelPurchaseRows = fuelPurchases.map(p => {
       const fi = getFuel(p.fuelType) || { short: p.fuelType, name: p.fuelType, color: '#f97316' };
       const inv = p.invoice ? `<span style="font-size:9px;color:var(--text-3);margin-left:6px;font-family:var(--mono)">${sanitize(p.invoice)}</span>` : '';
-      const detail = `<span style="font-size:10px;color:var(--text-3);margin-left:6px">${fmt(p.liters)}L @ ₹${(p.rate||0).toFixed(2)}/L</span>`;
-      return `<div class="flex-between" style="padding:7px 0 7px 14px;border-bottom:1px solid var(--border-light);background:rgba(249,115,22,0.03)">
-        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:2px">
-          <span style="font-size:10px;font-weight:800;color:${fi.color};background:${fi.color}18;padding:1px 7px;border-radius:3px">${fi.short}</span>
-          ${detail}${inv}
-          <span style="font-size:10px;color:var(--text-3);margin-left:4px">${p.date||''}</span>
+      const taxBreakdown = p.basicRate
+        ? `<span style="font-size:9px;color:var(--text-3);margin-left:6px">Basic ₹${(p.basicRate/1000).toFixed(3)}/L + ${p.taxName||'Tax'} ${p.taxPct||0}% → ₹${(p.rate||0).toFixed(3)}/L</span>`
+        : `<span style="font-size:10px;color:var(--text-3);margin-left:6px">${fmt(p.liters)}L @ ₹${(p.rate||0).toFixed(2)}/L</span>`;
+      return `<div style="padding:8px 0 8px 14px;border-bottom:1px solid var(--border-light);background:rgba(249,115,22,0.03)">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:3px">
+            <span style="font-size:10px;font-weight:800;color:${fi.color};background:${fi.color}18;padding:1px 7px;border-radius:3px">${fi.short}</span>
+            <span style="font-size:10px;color:var(--text-2);font-weight:600">${fmt(p.liters)}L</span>
+            ${inv}
+            <span style="font-size:10px;color:var(--text-3);margin-left:2px">${p.date||''}</span>
+          </div>
+          <span style="color:var(--red);white-space:nowrap;margin-left:8px" class="mono fw-700">-${cur(p.total||0)}</span>
         </div>
-        <span style="color:var(--red)" class="mono fw-700">-${cur(p.total||0)}</span>
+        <div style="margin-top:3px">${taxBreakdown}</div>
       </div>`;
     }).join('');
     fuelPurchaseRows = `
@@ -3823,6 +3829,45 @@ function renderSettings(D) {
           <button class="btn btn-ghost" style="flex:1;border-color:rgba(239,68,68,0.25);color:var(--red)" onclick="confirmResetData()">⚠ Reset Data</button>
         </div>
       </div>
+    </div>
+
+    <!-- Fuel Tax Rates Card -->
+    <div class="card card-pad mt-16">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h4 class="fw-700" style="color:var(--text-0);font-size:13px">🧾 Fuel Tax Rates (ZLST / VAT / GST)</h4>
+        <button class="btn btn-accent btn-sm" onclick="openAddTaxRateModal()">＋ Add Tax</button>
+      </div>
+      ${(D.fuelTaxRates && D.fuelTaxRates.length > 0) ? `
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr style="background:var(--bg-0);border-bottom:2px solid var(--border)">
+              <th style="padding:8px 12px;text-align:left;color:var(--text-3);font-size:11px;font-weight:700;text-transform:uppercase">Fuel Type</th>
+              <th style="padding:8px 12px;text-align:left;color:var(--text-3);font-size:11px;font-weight:700;text-transform:uppercase">Tax Name</th>
+              <th style="padding:8px 12px;text-align:right;color:var(--text-3);font-size:11px;font-weight:700;text-transform:uppercase">Rate %</th>
+              <th style="padding:8px 12px;text-align:center;color:var(--text-3);font-size:11px;font-weight:700;text-transform:uppercase">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${D.fuelTaxRates.map((t, idx) => {
+              const fi = getFuel(t.fuelType) || { name: t.fuelType, color: 'var(--text-2)' };
+              return `<tr style="border-bottom:1px solid var(--border-light)">
+                <td style="padding:10px 12px"><span style="font-weight:700;color:${fi.color}">${fi.name || t.fuelType}</span></td>
+                <td style="padding:10px 12px;color:var(--text-1);font-weight:600">${sanitize(t.taxName)}</td>
+                <td style="padding:10px 12px;text-align:right;font-family:var(--mono);font-weight:800;color:var(--accent-light)">${t.rate.toFixed(2)}%</td>
+                <td style="padding:10px 12px;text-align:center">
+                  <button class="btn btn-ghost btn-sm" onclick="openEditTaxRateModal(${idx})" style="margin-right:4px">✏️ Edit</button>
+                  <button class="btn btn-sm" style="background:rgba(239,68,68,0.08);color:var(--red);border:none" onclick="deleteTaxRate(${idx})">🗑</button>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:10px;padding:8px 12px;background:rgba(212,148,15,0.06);border-radius:6px;font-size:11px;color:var(--text-3)">
+        💡 These rates auto-fill when you record a fuel purchase. You can still edit per invoice.
+      </div>
+      ` : `<div style="padding:20px;text-align:center;color:var(--text-3);font-size:13px">No tax rates configured. Click <strong>＋ Add Tax</strong> to set up ZLST/VAT rates.</div>`}
     </div>
 
     <!-- Tenant Admin Users Management -->
@@ -4335,6 +4380,97 @@ window.deleteShift = deleteShift;
 window.renderFinance = renderFinance;
 window.renderReports = renderReports;
 window.renderSettings = renderSettings;
+
+// ── FUEL TAX RATE MANAGEMENT ─────────────────────────────────────────────────
+function _saveTaxRates() {
+  db.setSetting('fuelTaxRates', APP.data.fuelTaxRates).catch(() => {});
+}
+
+function openAddTaxRateModal(editIdx) {
+  const isEdit = editIdx !== undefined;
+  const existing = isEdit ? (APP.data.fuelTaxRates[editIdx] || {}) : {};
+  const fuelOpts = [
+    { id: 'petrol',         name: 'Petrol (MS)' },
+    { id: 'diesel',         name: 'Diesel (HSD)' },
+    { id: 'premium_petrol', name: 'Premium (XP95)' },
+    { id: 'lube',           name: 'Lube Oil' },
+    { id: 'other',          name: 'Other' },
+  ].map(f => `<option value="${f.id}" ${existing.fuelType === f.id ? 'selected' : ''}>${f.name}</option>`).join('');
+
+  openModal(isEdit ? '✏️ Edit Tax Rate' : '➕ Add Fuel Tax Rate', `
+    <div class="form-group">
+      <label class="form-label">Fuel Type *</label>
+      <select class="form-input" id="trFuelType">${fuelOpts}</select>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Tax Name *
+          <span style="font-size:10px;color:var(--text-3);font-weight:400"> e.g. ZLST, VAT, GST, Cess</span>
+        </label>
+        <input class="form-input" id="trTaxName" placeholder="e.g. ZLST" value="${sanitize(existing.taxName||'')}" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Rate % *</label>
+        <input class="form-input" id="trTaxRate" type="number" min="0" max="100" step="0.001" placeholder="e.g. 29.840" value="${existing.rate !== undefined ? existing.rate : ''}" />
+      </div>
+    </div>
+    <div style="padding:10px 12px;background:rgba(212,148,15,0.06);border-radius:8px;font-size:11px;color:var(--text-3)">
+      💡 This rate will auto-fill when you record a purchase for this fuel type. You can always override per invoice.
+    </div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-accent" onclick="saveTaxRate(${isEdit ? editIdx : 'undefined'})">💾 ${isEdit ? 'Update' : 'Add Tax Rate'}</button>
+  `);
+}
+
+function openEditTaxRateModal(idx) { openAddTaxRateModal(idx); }
+
+function saveTaxRate(editIdx) {
+  const fuelType = document.getElementById('trFuelType').value;
+  const taxName  = (document.getElementById('trTaxName').value || '').trim();
+  const rate     = parseFloat(document.getElementById('trTaxRate').value);
+  if (!fuelType) { toast('Select fuel type', 'error'); return; }
+  if (!taxName)  { toast('Enter tax name', 'error'); return; }
+  if (isNaN(rate) || rate < 0) { toast('Enter valid rate %', 'error'); return; }
+  if (!APP.data.fuelTaxRates) APP.data.fuelTaxRates = [];
+  if (editIdx !== undefined && editIdx >= 0) {
+    APP.data.fuelTaxRates[editIdx] = { fuelType, taxName, rate };
+    toast(`Updated: ${taxName} ${rate}% for ${fuelType}`, 'success');
+  } else {
+    APP.data.fuelTaxRates.push({ fuelType, taxName, rate });
+    toast(`Added: ${taxName} ${rate}% for ${fuelType}`, 'success');
+  }
+  _saveTaxRates();
+  closeModal();
+  renderPage();
+}
+
+function deleteTaxRate(idx) {
+  const t = APP.data.fuelTaxRates[idx];
+  if (!t) return;
+  openModal('🗑 Delete Tax Rate', `
+    <p style="color:var(--text-1);margin-bottom:8px">Delete <strong>${sanitize(t.taxName)}</strong> (${t.rate}%) for <strong>${t.fuelType}</strong>?</p>
+    <p style="font-size:12px;color:var(--text-3)">This won't affect existing purchase records.</p>
+  `, `
+    <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+    <button class="btn" style="background:var(--red);color:#fff" onclick="confirmDeleteTaxRate(${idx})">Delete</button>
+  `);
+}
+
+function confirmDeleteTaxRate(idx) {
+  APP.data.fuelTaxRates.splice(idx, 1);
+  _saveTaxRates();
+  closeModal();
+  toast('Tax rate deleted', 'info');
+  renderPage();
+}
+
+window.openAddTaxRateModal = openAddTaxRateModal;
+window.openEditTaxRateModal = openEditTaxRateModal;
+window.saveTaxRate = saveTaxRate;
+window.deleteTaxRate = deleteTaxRate;
+window.confirmDeleteTaxRate = confirmDeleteTaxRate;
+
 window.openChangeAdminPassModal = openChangeAdminPassModal;
 window.saveAdminPassword = saveAdminPassword;
 window.openAddAdminUserModal = openAddAdminUserModal;
@@ -4374,6 +4510,11 @@ const SEED = {
   dipReadings: [],
   prices: { petrol: 102.86, diesel: 88.62, premium_petrol: 112.50 },
   purchasePrices: { petrol: 96.50, diesel: 82.30, premium_petrol: 105.80 },
+  fuelTaxRates: [
+    { fuelType: 'petrol',         taxName: 'ZLST', rate: 29.84 },
+    { fuelType: 'diesel',         taxName: 'ZLST', rate: 21.17 },
+    { fuelType: 'premium_petrol', taxName: 'ZLST', rate: 18.00 },
+  ],
   weekly: [
     { day: 'Mon', petrol: 0, diesel: 0, premium: 0, revenue: 0 },
     { day: 'Tue', petrol: 0, diesel: 0, premium: 0, revenue: 0 },
@@ -5505,70 +5646,140 @@ async function saveExpense() {
 
 function openPurchaseModal() {
   const fuelOpts = FUEL_TYPES.map(f => `<option value="${f.id}">${f.name}</option>`).join('');
+  // Get default tax for first fuel type
+  const defaultFuel = FUEL_TYPES[0]?.id || 'petrol';
+  const defaultTax = (APP.data.fuelTaxRates || []).find(t => t.fuelType === defaultFuel);
+  const defaultTaxName = defaultTax ? defaultTax.taxName : 'ZLST';
+  const defaultTaxRate = defaultTax ? defaultTax.rate : 0;
+
   openModal('🚛 Record Fuel Purchase', `
     <div class="form-row">
       <div class="form-group">
         <label class="form-label">Fuel Type *</label>
-        <select class="form-input" id="purchFuel" onchange="calcPurchTotal()">${fuelOpts}</select>
+        <select class="form-input" id="purchFuel" onchange="purchFuelChanged()">${fuelOpts}</select>
       </div>
       <div class="form-group">
         <label class="form-label">Quantity (Litres) *</label>
-        <input class="form-input" id="purchQty" type="number" min="1" max="25000" step="1" placeholder="e.g. 5000" oninput="calcPurchTotal()" />
+        <input class="form-input" id="purchQty" type="number" min="1" max="25000" step="1" placeholder="e.g. 10000" oninput="calcPurchTotal()" />
       </div>
     </div>
+
+    <div style="background:var(--bg-0);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px">
+      <div style="font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px">📄 Invoice Pricing (from OMC bill)</div>
+      <div class="form-row">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">Basic Price (per KL) *
+            <span style="font-size:10px;color:var(--text-3);font-weight:500"> — from invoice</span>
+          </label>
+          <input class="form-input" id="purchBasicKL" type="number" min="1" step="0.001" placeholder="e.g. 76732.28" oninput="calcPurchTotal()" />
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">
+            <span id="purchTaxLabel">${defaultTaxName}</span> %
+            <span style="font-size:10px;color:var(--text-3);font-weight:500"> — auto-filled, editable</span>
+          </label>
+          <input class="form-input" id="purchTaxPct" type="number" min="0" max="100" step="0.001" value="${defaultTaxRate}" oninput="calcPurchTotal()" />
+        </div>
+      </div>
+    </div>
+
     <div class="form-row">
       <div class="form-group">
-        <label class="form-label">Rate per Litre (₹) *</label>
-        <input class="form-input" id="purchRate" type="number" min="1" max="300" step="0.01" placeholder="e.g. 94.50" oninput="calcPurchTotal()" />
+        <label class="form-label">Invoice No.</label>
+        <input class="form-input" id="purchInvoice" placeholder="e.g. 20264324B122958" />
       </div>
       <div class="form-group">
-        <label class="form-label">Invoice No.</label>
-        <input class="form-input" id="purchInvoice" placeholder="INV-XXXX (optional)" />
+        <label class="form-label">Supplier Name</label>
+        <input class="form-input" id="purchSupplier" placeholder="e.g. IOCL Bangalore Terminal" />
       </div>
     </div>
-    <div class="form-group">
-      <label class="form-label">Supplier Name (optional)</label>
-      <input class="form-input" id="purchSupplier" placeholder="e.g. IOCL Depot" />
-    </div>
+
     <div id="purchTotalPreview" style="display:none;background:rgba(212,148,15,0.08);border:1px solid rgba(212,148,15,0.3);border-radius:10px;padding:14px 16px;margin-top:4px">
-      <div style="font-size:11px;font-weight:700;color:var(--accent-light);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">💰 Purchase Total</div>
-      <div style="font-size:28px;font-weight:900;color:var(--text-0)" id="purchTotalAmt">—</div>
-      <div style="font-size:11px;color:var(--text-3);margin-top:4px" id="purchTotalFml"></div>
+      <div style="font-size:11px;font-weight:700;color:var(--accent-light);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px">💰 Purchase Breakdown</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+        <div style="background:var(--bg-0);border-radius:8px;padding:10px">
+          <div style="font-size:10px;color:var(--text-3);margin-bottom:3px">Basic Price/L</div>
+          <div class="mono fw-800" style="font-size:15px;color:var(--text-0)" id="purchBasicPerL">—</div>
+        </div>
+        <div style="background:var(--bg-0);border-radius:8px;padding:10px">
+          <div style="font-size:10px;color:var(--text-3);margin-bottom:3px">Tax Amount/L</div>
+          <div class="mono fw-800" style="font-size:15px;color:var(--orange)" id="purchTaxPerL">—</div>
+        </div>
+        <div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:8px;padding:10px">
+          <div style="font-size:10px;color:var(--text-3);margin-bottom:3px">Effective Rate/L</div>
+          <div class="mono fw-800" style="font-size:15px;color:var(--green)" id="purchEffRate">—</div>
+        </div>
+        <div style="background:rgba(212,148,15,0.08);border:1px solid rgba(212,148,15,0.2);border-radius:8px;padding:10px">
+          <div style="font-size:10px;color:var(--text-3);margin-bottom:3px">Total Amount</div>
+          <div class="mono fw-800" style="font-size:15px;color:var(--accent-light)" id="purchTotalAmt">—</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text-3)" id="purchTotalFml"></div>
     </div>
   `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-accent" onclick="savePurchase()">💾 Save Purchase</button>`);
 }
 
+function purchFuelChanged() {
+  const fuelType = document.getElementById('purchFuel')?.value;
+  const taxRates = APP.data.fuelTaxRates || [];
+  const match = taxRates.find(t => t.fuelType === fuelType);
+  const taxPctEl = document.getElementById('purchTaxPct');
+  const taxLabelEl = document.getElementById('purchTaxLabel');
+  if (taxPctEl) taxPctEl.value = match ? match.rate : 0;
+  if (taxLabelEl) taxLabelEl.textContent = match ? match.taxName : 'Tax';
+  calcPurchTotal();
+}
+
 function calcPurchTotal() {
-  const qty  = parseFloat(document.getElementById('purchQty')?.value);
-  const rate = parseFloat(document.getElementById('purchRate')?.value);
-  const prev = document.getElementById('purchTotalPreview');
-  const amt  = document.getElementById('purchTotalAmt');
-  const fml  = document.getElementById('purchTotalFml');
+  const qty      = parseFloat(document.getElementById('purchQty')?.value);
+  const basicKL  = parseFloat(document.getElementById('purchBasicKL')?.value);
+  const taxPct   = parseFloat(document.getElementById('purchTaxPct')?.value) || 0;
+  const prev     = document.getElementById('purchTotalPreview');
   if (!prev) return;
-  if (!isNaN(qty) && qty > 0 && !isNaN(rate) && rate > 0) {
-    const total = qty * rate;
-    if (amt) amt.textContent = '₹' + total.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-    if (fml) fml.textContent = qty.toLocaleString('en-IN') + ' L × ₹' + rate + '/L';
-    if (prev) prev.style.display = '';
+  if (!isNaN(qty) && qty > 0 && !isNaN(basicKL) && basicKL > 0) {
+    const basicPerL  = basicKL / 1000;
+    const taxPerL    = basicPerL * (taxPct / 100);
+    const effRate    = basicPerL + taxPerL;
+    const total      = qty * effRate;
+    const fmt2 = v => '₹' + v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 3 });
+    document.getElementById('purchBasicPerL').textContent  = fmt2(basicPerL);
+    document.getElementById('purchTaxPerL').textContent    = fmt2(taxPerL) + (taxPct ? ' (' + taxPct + '%)' : '');
+    document.getElementById('purchEffRate').textContent    = fmt2(effRate);
+    document.getElementById('purchTotalAmt').textContent   = '₹' + total.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    document.getElementById('purchTotalFml').textContent   = qty.toLocaleString('en-IN') + ' L × ₹' + effRate.toFixed(3) + '/L';
+    prev.style.display = '';
   } else {
-    if (prev) prev.style.display = 'none';
+    prev.style.display = 'none';
   }
 }
 
 async function savePurchase() {
-  const fuelType = document.getElementById('purchFuel').value;
-  const liters = parseFloat(document.getElementById('purchQty').value);
-  const rate = parseFloat(document.getElementById('purchRate').value);
-  const invoice = (document.getElementById('purchInvoice')?.value || '').trim();
-  const supplier = sanitize((document.getElementById('purchSupplier')?.value || '').trim());
+  const fuelType  = document.getElementById('purchFuel').value;
+  const liters    = parseFloat(document.getElementById('purchQty').value);
+  const basicKL   = parseFloat(document.getElementById('purchBasicKL')?.value);
+  const taxPct    = parseFloat(document.getElementById('purchTaxPct')?.value) || 0;
+  const invoice   = (document.getElementById('purchInvoice')?.value || '').trim();
+  const supplier  = sanitize((document.getElementById('purchSupplier')?.value || '').trim());
+  const taxName   = document.getElementById('purchTaxLabel')?.textContent || 'Tax';
   const validFuels = FUEL_TYPES.map(f => f.id);
   if (!fuelType || !validFuels.includes(fuelType)) { toast('Select a valid fuel type', 'error'); return; }
   if (isNaN(liters) || liters <= 0) { toast('Enter quantity in litres', 'error'); return; }
-  if (liters > 25000) { toast('Purchase cannot exceed 25,000 litres', 'error'); return; }
-  if (isNaN(rate) || rate <= 0) { toast('Enter rate per litre', 'error'); return; }
-  if (rate > 300) { toast('Rate exceeds ₹300/L limit', 'error'); return; }
-  const total = Math.round(liters * rate * 100) / 100;
-  const purchase = { id: Date.now(), date: today(), fuelType, liters, rate, total, invoice: sanitize(invoice), supplier };
+  if (liters > 50000) { toast('Purchase cannot exceed 50,000 litres', 'error'); return; }
+  if (isNaN(basicKL) || basicKL <= 0) { toast('Enter basic price per KL from invoice', 'error'); return; }
+  // Calculate effective rate: basicKL/1000 × (1 + taxPct/100)
+  const basicPerL = basicKL / 1000;
+  const taxPerL   = basicPerL * (taxPct / 100);
+  const rate      = Math.round((basicPerL + taxPerL) * 1000) / 1000;
+  const total     = Math.round(liters * rate * 100) / 100;
+  const purchase  = {
+    id: Date.now(), date: today(), fuelType, liters,
+    basicRate: basicKL,   // per KL — from invoice
+    taxName,              // e.g. "ZLST"
+    taxPct,               // e.g. 29.84
+    rate,                 // effective per-litre rate
+    total,
+    invoice: sanitize(invoice), supplier
+  };
   APP.data.fuelPurchases.unshift(purchase);
   const fuelInfo = getFuel(fuelType);
   const expEntry = {
@@ -9400,7 +9611,8 @@ async function loadData() {
     rawSales, rawCredit, rawExpenses, rawPurchases, rawDip,
     prices, purchasePrices,
     upiVPA, upiName, stationCode, omcName,
-    serverAlloc, savedRoster, savedAtt
+    serverAlloc, savedRoster, savedAtt,
+    savedTaxRates
   ] = await Promise.all([
     db.getSetting('seeded').catch(() => null),
     db.getSetting('razorpayKey').catch(() => ''),
@@ -9422,6 +9634,7 @@ async function loadData() {
     db.getSetting('allocations').catch(() => null),
     db.getSetting('shift_roster').catch(() => null),
     db.getSetting('attendance_data').catch(() => null),
+    db.getSetting('fuelTaxRates').catch(() => null),
   ]);
 
   APP.data.razorpayKey = razorpayKey || '';
@@ -9534,6 +9747,15 @@ async function loadData() {
     // ── Roster & Attendance ───────────────────────────────────────────────────
     if (savedRoster && typeof savedRoster === 'object') window._rosterData = savedRoster;
     if (savedAtt && typeof savedAtt === 'object') window._attendanceData = savedAtt;
+
+    // ── Load Fuel Tax Rates ───────────────────────────────────────────────────
+    APP.data.fuelTaxRates = (Array.isArray(savedTaxRates) && savedTaxRates.length > 0)
+      ? savedTaxRates
+      : [
+          { fuelType: 'petrol',         taxName: 'ZLST', rate: 29.84 },
+          { fuelType: 'diesel',         taxName: 'ZLST', rate: 21.17 },
+          { fuelType: 'premium_petrol', taxName: 'ZLST', rate: 18.00 },
+        ];
 
     // ── Backfill: ensure every fuel purchase has a matching expense entry ──
     // This handles purchases entered before the auto-expense feature was added
