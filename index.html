@@ -2788,7 +2788,23 @@ function renderDashboard(D) {
   const dieselLiters  = todaySales.filter(s => s.fuelType === 'diesel').reduce((a, s) => a + s.liters, 0);
   const premiumLiters = todaySales.filter(s => s.fuelType !== 'petrol' && s.fuelType !== 'diesel').reduce((a, s) => a + s.liters, 0);
 
+  // ── Nozzle meter variance alert ──────────────────────────────────────────
+  const nmlToday = (window._nozzleMeterLog || []).filter(e => e.date === todayIso && e.flagged);
+  const nmlAlert = nmlToday.length > 0
+    ? `<div style="grid-column:1/-1;padding:12px 16px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.3);border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:20px">🚨</span>
+          <div>
+            <div class="fw-700" style="color:var(--red);font-size:13px">${nmlToday.length} Nozzle Variance${nmlToday.length>1?'s':''} Flagged Today</div>
+            <div style="font-size:11px;color:var(--text-3)">${nmlToday.map(e=>sanitize(e.pumpName)+' N'+e.nozzle+': '+fmt(Math.abs(e.variance))+'L').join(' · ')}</div>
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="navigate('pumps')" style="color:var(--red);border-color:rgba(239,68,68,0.3)">View Pumps →</button>
+      </div>`
+    : '';
+
   return `
+    ${nmlAlert}
     <div class="g g-auto-sm mb-24 gap-16">
       ${statCard('Today\'s Revenue', cur(totalRevenue), 'all pumps today', '💰')}
       ${statCard('Petrol Sold', fmt(petrolLiters) + ' L', 'today', '🔴')}
@@ -3099,7 +3115,68 @@ function renderPumps(D) {
     <div class="card">
       <div class="card-head"><h4>📋 Pump Reconciliation</h4><button class="btn btn-ghost btn-sm" onclick="exportPumpCSV()">↓ Export</button></div>
       <div class="card-body"><div class="tbl-wrap"><table><thead><tr><th>Pump</th><th>Fuel</th><th class="r">Opening</th><th class="r">Current</th><th class="r">Sold (L)</th><th class="r">Revenue</th></tr></thead><tbody>${reconRows}</tbody></table></div></div>
-    </div>`;
+    </div>
+
+    ${(() => {
+      // ── Nozzle Meter Log ─────────────────────────────────────────────────
+      const log = window._nozzleMeterLog || [];
+      const today = new Date().toISOString().slice(0,10);
+      const logDate = window._nmlDate || today;
+      const logRows = log.filter(e => e.date === logDate);
+
+      const totalVariance = logRows.reduce((a, e) => a + Math.abs(e.variance||0), 0);
+      const flaggedCount  = logRows.filter(e => e.flagged).length;
+
+      const nozzleSelOpts = D.pumps.flatMap(p => {
+        const labels = p.nozzleLabels || (p.nozzles===1?['A']:p.nozzles===2?['A','B']:['A','B','C'].slice(0,p.nozzles));
+        return labels.map(n => `<option value="${n}" data-pump="${p.id}">${p.name} · N${n}</option>`);
+      }).join('');
+
+      const logTableRows = logRows.length > 0
+        ? logRows.map(e => {
+            const fi = getFuel(e.fuelType);
+            const varColor = e.flagged ? 'var(--red)' : Math.abs(e.variance||0) > 0 ? 'var(--orange)' : 'var(--green)';
+            const varBg    = e.flagged ? 'rgba(239,68,68,0.07)' : '';
+            const srcBadge = e.source === 'employee' ? badge('Auto','badge-blue') : badge('Manual','badge-accent');
+            return `<tr style="background:${varBg}">
+              <td class="fw-600">${e.date}</td>
+              <td style="font-size:11px">${sanitize(e.shift||'—')}</td>
+              <td style="font-size:11px">${sanitize(e.employee||'—')}</td>
+              <td class="fw-700">${sanitize(e.pumpName||'')} <span style="font-size:10px;color:${fi.color};font-weight:700">N${e.nozzle} · ${fi.short}</span></td>
+              <td class="r mono">${fmt(e.openReading||0)}</td>
+              <td class="r mono">${fmt(e.closeReading||0)}</td>
+              <td class="r mono fw-700" style="color:var(--accent-light)">${fmt(e.meterSold||0)}</td>
+              <td class="r mono" style="color:var(--text-2)">${fmt(e.systemSold||0)}</td>
+              <td class="r mono fw-800" style="color:${varColor}">${e.variance > 0 ? '+' : ''}${fmt(e.variance||0)} L ${e.flagged ? '🚨' : ''}</td>
+              <td>${srcBadge}</td>
+            </tr>`;
+          }).join('')
+        : `<tr><td colspan="10" style="text-align:center;color:var(--text-3);padding:20px">No meter readings for ${logDate}</td></tr>`;
+
+      return `<div class="card mt-16">
+        <div class="card-head">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <h4>📟 Nozzle Meter Log</h4>
+            ${flaggedCount > 0 ? `<span style="font-size:11px;font-weight:700;color:var(--red);background:rgba(239,68,68,0.1);padding:2px 8px;border-radius:20px">🚨 ${flaggedCount} variance${flaggedCount>1?'s':''} flagged</span>` : ''}
+            <input type="date" value="${logDate}" max="${today}" onchange="window._nmlDate=this.value;renderPage()"
+              style="font-size:12px;background:var(--bg-0);border:1px solid var(--border);border-radius:6px;padding:3px 8px;color:var(--text-1);cursor:pointer" />
+          </div>
+          <button class="btn btn-accent btn-sm" onclick="openNozzleMeterModal(${D.pumps[0]?.id||1},'A')">+ Add Reading</button>
+        </div>
+        ${logRows.length > 0 ? `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;padding:12px 16px;border-bottom:1px solid var(--border-light)">
+          <div class="dbox text-center" style="padding:10px"><div class="mono fw-800" style="color:var(--accent-light)">${logRows.length}</div><div style="font-size:10px;color:var(--text-3)">Nozzle Readings</div></div>
+          <div class="dbox text-center" style="padding:10px"><div class="mono fw-800" style="color:var(--green)">${fmt(logRows.reduce((a,e)=>a+(e.meterSold||0),0))} L</div><div style="font-size:10px;color:var(--text-3)">Meter Total</div></div>
+          <div class="dbox text-center" style="padding:10px"><div class="mono fw-800" style="color:var(--text-2)">${fmt(logRows.reduce((a,e)=>a+(e.systemSold||0),0))} L</div><div style="font-size:10px;color:var(--text-3)">System Total</div></div>
+          <div class="dbox text-center" style="padding:10px"><div class="mono fw-800" style="color:${totalVariance>=0.5?'var(--red)':'var(--green)'}">${totalVariance>=0.5?'🚨 ':'✅ '}${fmt(totalVariance)} L</div><div style="font-size:10px;color:var(--text-3)">Total Variance</div></div>
+          <div class="dbox text-center" style="padding:10px"><div class="mono fw-800" style="color:${flaggedCount>0?'var(--red)':'var(--green)'}">${flaggedCount}</div><div style="font-size:10px;color:var(--text-3)">Flagged</div></div>
+        </div>` : ''}
+        <div class="card-body"><div class="tbl-wrap"><table>
+          <thead><tr><th>Date</th><th>Shift</th><th>Employee</th><th>Pump · Nozzle</th><th class="r">Open</th><th class="r">Close</th><th class="r">Meter L</th><th class="r">System L</th><th class="r">Variance</th><th>Source</th></tr></thead>
+          <tbody>${logTableRows}</tbody>
+        </table></div></div>
+      </div>`;
+    })()}`;
 }
 
 // ── SALES ────────────────────────────────────────────────────
@@ -3929,8 +4006,8 @@ function renderSettings(D) {
       <h4 class="mb-14 fw-700" style="color:var(--text-0);font-size:13px">🗺️ Suggested Build Order — Roadmap</h4>
       <div style="display:flex;flex-direction:column;gap:8px">
         ${[
-          { tier:'✅ Live', color:'var(--green)', items:['Fuel Tax Rates (ZLST/GST)', 'Purchase density + IS-1460 check', 'Payroll Run + bulk calculate', 'Salary Advances + EMI plan', 'Employee Performance leaderboard', 'Vehicle-wise Fuel Report', 'Bank Reconciliation (Cash/UPI/Card)', 'Hourly Sales Pattern chart', 'Analytics page (Vehicle / Density / Bank Recon)'] },
-          { tier:'🔜 Next', color:'var(--accent-light)', items:['📟 Nozzle Meter Readings at Shift Open/Close — captures physical odometer, flags meter vs system variance', '💬 WhatsApp Alerts — low tank, daily summary, credit reminder, meter mismatch', '🧾 GST Module — GSTR-1/3B JSON + Tally XML (after lubes)'] },
+          { tier:'✅ Live', color:'var(--green)', items:['Fuel Tax Rates (ZLST/GST)', 'Purchase density + IS-1460 check', 'Payroll Run + bulk calculate', 'Salary Advances + EMI plan', 'Employee Performance leaderboard', 'Vehicle-wise Fuel Report', 'Bank Reconciliation (Cash/UPI/Card)', 'Hourly Sales Pattern chart', 'Analytics page (Vehicle / Density / Bank Recon)', '📟 Nozzle Meter Log — shift open/close with variance flagging'] },
+          { tier:'🔜 Next', color:'var(--accent-light)', items:['💬 WhatsApp Alerts — low tank, daily summary, credit reminder, meter mismatch', '🧾 GST Module — GSTR-1/3B JSON + Tally XML (after lubes)'] },
           { tier:'🔮 Later', color:'#a855f7', items:['🛢️ Lubes & Products Inventory — product catalogue, HSN, GST%, stock tracking, lube sale modal', '📄 Excel Export — daily report, credit statements, payslip download'] },
         ].map(section => `
           <div style="margin-bottom:4px">
@@ -5179,6 +5256,240 @@ window.saveAdvance = saveAdvance;
 window.clearAdvance = clearAdvance;
 window.prevPayMonth = prevPayMonth;
 window.nextPayMonth = nextPayMonth;
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── NOZZLE METER READINGS — SHIFT OPEN/CLOSE LOG ─────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Data model: window._nozzleMeterLog = [
+//   { id, date, shift, employee, pumpId, pumpName, nozzle, fuelType,
+//     openReading, closeReading, meterSold, systemSold, variance,
+//     source: 'employee' | 'admin', timestamp }
+// ]
+
+function _nozzleLogKey() { return 'nozzle_meter_log'; }
+
+function nozzleLog_load() {
+  if (!window._nozzleMeterLog) window._nozzleMeterLog = [];
+  return window._nozzleMeterLog;
+}
+
+function nozzleLog_save() {
+  db.setSetting(_nozzleLogKey(), window._nozzleMeterLog || []).catch(() => {});
+}
+
+// Called from emp_submit — auto-captures all nozzle readings for the shift
+function nozzleLog_recordFromShift(empName, shiftName, pumps, openReadings, closeReadings, sales) {
+  if (!window._nozzleMeterLog) window._nozzleMeterLog = [];
+  const today = new Date().toISOString().slice(0, 10);
+  const nowTs = Date.now();
+
+  pumps.forEach(pump => {
+    const nozzleFuels = pump.nozzleFuels || {};
+    (pump.nozzles || []).forEach(n => {
+      const k = emp_key(pump.id, n);
+      const openRaw  = openReadings[k];
+      const closeRaw = closeReadings[k];
+      if (openRaw === undefined && closeRaw === undefined) return; // no data for this nozzle
+      const open  = openRaw  !== undefined ? parseFloat(openRaw)  : null;
+      const close = closeRaw !== undefined ? parseFloat(closeRaw) : null;
+      const ft    = nozzleFuels[n] || pump.fuelType;
+      const meterSold = (open !== null && close !== null && close > open) ? +(close - open).toFixed(3) : 0;
+      // System sold = sum of sales for this pump/nozzle this session
+      const nozzleSales = (sales || []).filter(s => String(s.pump) === String(pump.id) && (s.nozzle === n || s.nozzle === String(n)));
+      const systemSold  = +nozzleSales.reduce((a, s) => a + (s.liters || 0), 0).toFixed(3);
+      const variance    = +(meterSold - systemSold).toFixed(3);
+      const flagged     = Math.abs(variance) >= 0.5; // flag if ≥0.5L gap
+
+      // Remove any existing entry for same date+shift+pump+nozzle (deduplication)
+      window._nozzleMeterLog = window._nozzleMeterLog.filter(e =>
+        !(e.date === today && e.shift === shiftName && String(e.pumpId) === String(pump.id) && e.nozzle === n)
+      );
+
+      window._nozzleMeterLog.unshift({
+        id: nowTs + Math.random(),
+        date: today,
+        shift: shiftName || '—',
+        employee: empName || '—',
+        pumpId: pump.id,
+        pumpName: pump.name,
+        nozzle: n,
+        fuelType: ft,
+        openReading: open !== null ? open : 0,
+        closeReading: close !== null ? close : 0,
+        meterSold,
+        systemSold,
+        variance,
+        flagged,
+        source: 'employee',
+        timestamp: nowTs,
+      });
+    });
+  });
+
+  nozzleLog_save();
+}
+window.nozzleLog_recordFromShift = nozzleLog_recordFromShift;
+
+// Admin manual entry modal
+function openNozzleMeterModal(pumpId, nozzleLabel) {
+  const D = APP.data;
+  const pump = D.pumps.find(p => String(p.id) === String(pumpId));
+  if (!pump) return;
+  const nozzleLabels = pump.nozzleLabels || (pump.nozzles === 1 ? ['A'] : pump.nozzles === 2 ? ['A','B'] : ['A','B','C'].slice(0, pump.nozzles));
+  const nozzleFuels  = pump.nozzleFuels || {};
+
+  const nozzleOpts = nozzleLabels.map(n => {
+    const ft = getFuel(nozzleFuels[n] || pump.fuelType);
+    return `<option value="${n}" ${n===nozzleLabel?'selected':''}>${pump.name} · N${n}: ${ft.short}</option>`;
+  }).join('');
+
+  const shifts = (D.shifts && D.shifts.length) ? D.shifts : [{name:'Morning'},{name:'Afternoon'},{name:'Night'}];
+  const shiftOpts = shifts.map(s => `<option value="${sanitize(s.name)}">${sanitize(s.name)}</option>`).join('');
+  const today = new Date().toISOString().slice(0,10);
+
+  openModal('📟 Record Nozzle Meter Reading', `
+    <div class="g g-2 gap-12">
+      <div class="form-group"><label class="form-label">Date</label>
+        <input type="date" class="form-input" id="nm_date" value="${today}" max="${today}" />
+      </div>
+      <div class="form-group"><label class="form-label">Shift</label>
+        <select class="form-input" id="nm_shift">${shiftOpts}</select>
+      </div>
+    </div>
+    <div class="g g-2 gap-12">
+      <div class="form-group"><label class="form-label">Pump · Nozzle</label>
+        <select class="form-input" id="nm_nozzle" onchange="nmUpdatePrev()">${nozzleOpts}</select>
+      </div>
+      <div class="form-group"><label class="form-label">Employee</label>
+        <select class="form-input" id="nm_emp">
+          <option value="">— Select —</option>
+          ${(D.employees||[]).filter(e=>e.status!=='inactive').map(e=>`<option value="${sanitize(e.name)}">${sanitize(e.name)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="g g-2 gap-12">
+      <div class="form-group"><label class="form-label">Opening Reading</label>
+        <input type="number" class="form-input" id="nm_open" step="0.01" placeholder="e.g. 12345.6" oninput="nmCalcVariance()" style="font-family:var(--mono);font-size:16px;font-weight:700" />
+        <div id="nm_prev_reading" style="font-size:11px;color:var(--text-3);margin-top:3px"></div>
+      </div>
+      <div class="form-group"><label class="form-label">Closing Reading</label>
+        <input type="number" class="form-input" id="nm_close" step="0.01" placeholder="e.g. 12567.3" oninput="nmCalcVariance()" style="font-family:var(--mono);font-size:16px;font-weight:700" />
+      </div>
+    </div>
+    <div id="nm_preview" style="padding:12px 14px;background:var(--bg-0);border-radius:8px;font-size:13px;color:var(--text-3)">
+      Enter both readings to see variance preview
+    </div>
+  `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-accent" onclick="saveNozzleMeterEntry(${pumpId})">💾 Save Entry</button>`);
+
+  // Pre-fill opening reading from last close
+  setTimeout(() => nmUpdatePrev(), 50);
+}
+window.openNozzleMeterModal = openNozzleMeterModal;
+
+function nmUpdatePrev() {
+  const sel = document.getElementById('nm_nozzle');
+  if (!sel) return;
+  const [pumpIdStr, nozzle] = sel.value.split ? [sel.value.split('|')[0], sel.value.split('|')[1]] : [null, null];
+  // Find last close reading for this nozzle from log
+  const log = window._nozzleMeterLog || [];
+  const nozzleVal = sel.options[sel.selectedIndex]?.text;
+  const prevEl = document.getElementById('nm_prev_reading');
+  if (prevEl) {
+    const pump = APP.data.pumps.find(p => {
+      const labels = p.nozzleLabels || ['A','B'];
+      return labels.some(n => sel.value === n && (p.name + ' · N' + n) === nozzleVal);
+    });
+    if (pump) {
+      const last = log.find(e => String(e.pumpId) === String(pump.id) && e.nozzle === sel.value);
+      if (last) {
+        prevEl.textContent = 'Last close: ' + last.closeReading + ' (' + last.date + ')';
+        const openEl = document.getElementById('nm_open');
+        if (openEl && !openEl.value) openEl.value = last.closeReading;
+      }
+    }
+  }
+  nmCalcVariance();
+}
+window.nmUpdatePrev = nmUpdatePrev;
+
+function nmCalcVariance() {
+  const open  = parseFloat(document.getElementById('nm_open')?.value);
+  const close = parseFloat(document.getElementById('nm_close')?.value);
+  const prev  = document.getElementById('nm_preview');
+  if (!prev) return;
+  if (isNaN(open) || isNaN(close)) { prev.innerHTML = 'Enter both readings to see variance preview'; prev.style.background = 'var(--bg-0)'; return; }
+  if (close < open) { prev.innerHTML = '<span style="color:var(--red);font-weight:700">⚠️ Closing reading cannot be less than opening reading</span>'; prev.style.background = 'rgba(239,68,68,0.05)'; return; }
+  const meterSold = +(close - open).toFixed(3);
+  const sel = document.getElementById('nm_nozzle');
+  const nozzle = sel?.value;
+  // find pump
+  let systemSold = 0, pumpId = null;
+  APP.data.pumps.forEach(p => {
+    const labels = p.nozzleLabels || (p.nozzles===1?['A']:p.nozzles===2?['A','B']:['A','B','C'].slice(0,p.nozzles));
+    if (labels.includes(nozzle)) {
+      pumpId = p.id;
+      const today = new Date().toISOString().slice(0,10);
+      systemSold = APP.data.sales.filter(s => String(s.pump)===String(p.id) && (s.nozzle===nozzle||s.nozzle===String(nozzle)) && (s.date||'').slice(0,10)===today).reduce((a,s)=>a+(s.liters||0),0);
+    }
+  });
+  const variance = +(meterSold - systemSold).toFixed(3);
+  const flagged  = Math.abs(variance) >= 0.5;
+  const varColor = flagged ? 'var(--red)' : Math.abs(variance) > 0 ? 'var(--orange)' : 'var(--green)';
+  const varIcon  = flagged ? '🚨' : Math.abs(variance) > 0 ? '⚠️' : '✅';
+  prev.style.background = flagged ? 'rgba(239,68,68,0.07)' : 'var(--bg-0)';
+  prev.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;text-align:center">
+      <div><div class="mono fw-800" style="font-size:18px;color:var(--accent-light)">${fmt(meterSold)} L</div><div style="font-size:10px;color:var(--text-3)">Meter Sold</div></div>
+      <div><div class="mono fw-800" style="font-size:18px;color:var(--text-2)">${fmt(systemSold)} L</div><div style="font-size:10px;color:var(--text-3)">System Sales</div></div>
+      <div><div class="mono fw-800" style="font-size:18px;color:${varColor}">${varIcon} ${variance > 0 ? '+' : ''}${fmt(variance)} L</div><div style="font-size:10px;color:var(--text-3)">Variance</div></div>
+    </div>
+    ${flagged ? `<div style="margin-top:8px;font-size:11px;font-weight:700;color:var(--red);text-align:center">🚨 Significant variance — verify readings before saving</div>` : ''}
+  `;
+}
+window.nmCalcVariance = nmCalcVariance;
+
+function saveNozzleMeterEntry(pumpId) {
+  const date     = document.getElementById('nm_date')?.value;
+  const shift    = document.getElementById('nm_shift')?.value;
+  const nozzle   = document.getElementById('nm_nozzle')?.value;
+  const empName  = document.getElementById('nm_emp')?.value || 'Admin';
+  const open     = parseFloat(document.getElementById('nm_open')?.value);
+  const close    = parseFloat(document.getElementById('nm_close')?.value);
+  if (!date || !nozzle || isNaN(open) || isNaN(close)) { toast('Fill all required fields', 'error'); return; }
+  if (close < open) { toast('Closing reading must be ≥ opening reading', 'error'); return; }
+
+  const pump = APP.data.pumps.find(p => String(p.id) === String(pumpId));
+  if (!pump) return;
+  const nozzleFuels = pump.nozzleFuels || {};
+  const ft          = nozzleFuels[nozzle] || pump.fuelType;
+  const meterSold   = +(close - open).toFixed(3);
+  const nozzleSales = APP.data.sales.filter(s => String(s.pump)===String(pumpId) && (s.nozzle===nozzle||s.nozzle===String(nozzle)) && (s.date||'').slice(0,10)===date);
+  const systemSold  = +nozzleSales.reduce((a,s) => a+(s.liters||0), 0).toFixed(3);
+  const variance    = +(meterSold - systemSold).toFixed(3);
+  const flagged     = Math.abs(variance) >= 0.5;
+
+  if (!window._nozzleMeterLog) window._nozzleMeterLog = [];
+  // Deduplicate
+  window._nozzleMeterLog = window._nozzleMeterLog.filter(e =>
+    !(e.date === date && e.shift === shift && String(e.pumpId) === String(pumpId) && e.nozzle === nozzle && e.source !== 'employee')
+  );
+  window._nozzleMeterLog.unshift({
+    id: Date.now() + Math.random(),
+    date, shift, employee: empName,
+    pumpId: pump.id, pumpName: pump.name, nozzle, fuelType: ft,
+    openReading: open, closeReading: close,
+    meterSold, systemSold, variance, flagged,
+    source: 'admin', timestamp: Date.now(),
+  });
+  nozzleLog_save();
+  closeModal();
+  auditLog('nozzle_meter_entry', { pump: pump.name, nozzle, open, close, meterSold, variance, date, shift });
+  toast(flagged ? `⚠️ Saved with ${Math.abs(variance).toFixed(2)}L variance — flag raised` : `✅ Meter reading saved — ${fmt(meterSold)} L`, flagged ? 'warning' : 'success');
+  renderPage();
+}
+window.saveNozzleMeterEntry = saveNozzleMeterEntry;
 
 window.renderSettings = renderSettings;
 
@@ -8869,6 +9180,31 @@ function emp_renderComplete() {
       <div class="card" style="text-align:center;padding:12px"><div class="mono fw-800" style="font-size:18px;color:var(--accent-light)">${cur(tr)}</div><div style="font-size:9px;color:var(--text-3);font-weight:700;text-transform:uppercase;margin-top:3px">Revenue</div></div>
       <div class="card" style="text-align:center;padding:12px"><div class="mono fw-800" style="font-size:18px;color:var(--text-0)">${empState.sales.length}</div><div style="font-size:9px;color:var(--text-3);font-weight:700;text-transform:uppercase;margin-top:3px">Sales</div></div>
     </div>
+    ${(() => {
+      // Show nozzle meter variance summary
+      const today = new Date().toISOString().slice(0,10);
+      const myLog = (window._nozzleMeterLog||[]).filter(e => e.date === today && e.source === 'employee' && e.employee === (empState.user?.name||''));
+      if (myLog.length === 0) return '';
+      const flagged = myLog.filter(e => e.flagged);
+      return `<div class="card" style="margin-bottom:14px;border-color:${flagged.length>0?'rgba(239,68,68,0.3)':'rgba(34,197,94,0.3)'}">
+        <div class="card-head" style="background:${flagged.length>0?'rgba(239,68,68,0.05)':'rgba(34,197,94,0.05)'}">
+          <h4 style="color:${flagged.length>0?'var(--red)':'var(--green)'}">${flagged.length>0?'🚨':'✅'} Meter Variance Summary</h4>
+        </div>
+        <div class="card-body">
+          ${myLog.map(e => {
+            const fi = getFuel(e.fuelType);
+            const vc = e.flagged ? 'var(--red)' : Math.abs(e.variance)>0 ? 'var(--orange)' : 'var(--green)';
+            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border-light)">
+              <div>
+                <div class="fw-700" style="font-size:13px">${sanitize(e.pumpName)} <span style="color:${fi.color}">N${e.nozzle} · ${fi.short}</span></div>
+                <div style="font-size:11px;color:var(--text-3)">Meter: ${fmt(e.meterSold)} L · System: ${fmt(e.systemSold)} L</div>
+              </div>
+              <div class="mono fw-800" style="color:${vc}">${e.variance>0?'+':''}${fmt(e.variance)} L ${e.flagged?'🚨':''}</div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+    })()}
     <div class="card" style="margin-bottom:16px"><div class="card-head"><h4>Pump-wise Report</h4></div><div class="card-body">
       ${emp_myPumps().map(p=>{const s=emp_pumpSold(p.id);return `<div style="margin-bottom:14px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span class="fw-800" style="color:var(--text-0);font-size:15px">${p.name} <span style="font-size:10px;font-weight:700;color:${p.fuelType==='petrol'?'var(--red)':p.fuelType==='diesel'?'var(--orange)':'var(--purple)'}">${EMP_FUEL[p.fuelType].split(' ')[0]}</span></span><span class="mono fw-800" style="color:var(--green);font-size:14px">${fmt(s)} L</span></div>
@@ -9387,6 +9723,18 @@ async function emp_submit() {
   emp_saveHistory();
   // Also save to server so history persists across devices and cache clears
   emp_saveHistoryToServer(histEntry).catch(() => {});
+
+  // ── Save nozzle meter log for this shift ──────────────────────────────────
+  try {
+    nozzleLog_recordFromShift(
+      empUser?.name || '—',
+      empState.shift || '—',
+      emp_myPumps(),
+      empState.openReadings,
+      empState.closeReadings,
+      empState.sales
+    );
+  } catch(nmErr) { console.warn('[NozzleLog] Failed to save:', nmErr); }
   empState.active = false; emp_clearSession();
   auditLog('reading_submit', { employee: empUser?.name, liters: submitLiters, revenue: submitRev, salesCount: empState.sales.length, mismatches: mismatchEntries.length });
   const msg = mismatchEntries.length > 0
@@ -10582,6 +10930,11 @@ async function loadData() {
     if (savedAtt && typeof savedAtt === 'object') window._attendanceData = savedAtt;
     if (Array.isArray(savedAdvances)) window._advancesData = savedAdvances;
     if (savedBankRecon && typeof savedBankRecon === 'object') window._bankReconData = savedBankRecon;
+    // Load nozzle meter log
+    try {
+      const savedNozzleLog = await db.getSetting('nozzle_meter_log').catch(()=>null);
+      if (Array.isArray(savedNozzleLog)) window._nozzleMeterLog = savedNozzleLog;
+    } catch(e) {}
     // Load payroll for current month
     try {
       const now2 = new Date();
