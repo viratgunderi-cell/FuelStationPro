@@ -7649,6 +7649,10 @@ window.emp_refreshNozzles = emp_refreshNozzles;
 window.emp_selPump = emp_selPump;
 window.emp_selNozzle = emp_selNozzle;
 window.emp_selPumpNozzle = emp_selPumpNozzle;
+window.emp_pickVeh = emp_pickVeh;
+window.emp_vehSuggest = emp_vehSuggest;
+window.emp_vehHide = emp_vehHide;
+window.emp_vehKey = emp_vehKey;
 
 // ═══════════════════════════════════════════════════════════
 // FUELBUNK PRO — Main Application
@@ -11083,7 +11087,30 @@ function emp_renderSales() {
       <div class="form-row"><div class="form-group"><label class="form-label">Liters</label><input class="form-input" id="empSaleLiters" type="number" inputmode="decimal" step="0.1" placeholder="0.0" oninput="emp_calcAmt()" style="font-family:var(--mono);font-weight:600" /></div>
       <div class="form-group"><label class="form-label">Amount (₹)</label><input class="form-input" id="empSaleAmt" type="number" inputmode="decimal" step="0.01" placeholder="${emp_hasPerm('prices')?'Auto — price applied':'Enter amount'}" style="font-family:var(--mono);font-weight:600" oninput="emp_calcLiters()" /></div></div>
       ${emp_hasPerm('prices') ? `<div style="font-size:11px;color:var(--text-3);margin-top:-6px;margin-bottom:8px">Current price: <strong style="color:var(--accent-light)">${cur(EMP_PRICES[empSaleFuel] || 0)}/L</strong></div>` : ''}
-      <div class="form-group"><label class="form-label">Vehicle Number</label><input class="form-input" id="empSaleVeh" placeholder="KA00XX0000" oninput="this.value=this.value.toUpperCase()" onpaste="setTimeout(()=>this.value=this.value.toUpperCase(),0)" style="text-transform:uppercase;font-family:var(--mono);font-weight:600" /></div>
+      <div class="form-group"><label class="form-label">Vehicle Number</label>
+        ${(() => {
+          // Collect recent unique vehicles: today's empState.sales first, then APP.data.sales (last 60 days)
+          const seen = new Set();
+          const recent = [];
+          [...(empState.sales || [])].reverse().forEach(s => {
+            if (s.vehicle && s.vehicle.length >= 3 && !seen.has(s.vehicle)) { seen.add(s.vehicle); recent.push(s.vehicle); }
+          });
+          (APP.data?.sales || []).slice().reverse().forEach(s => {
+            if (s.vehicle && s.vehicle.length >= 3 && !seen.has(s.vehicle)) { seen.add(s.vehicle); recent.push(s.vehicle); }
+          });
+          const chips = recent.slice(0, 8);
+          return chips.length ? `<div id="empVehChips" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">${chips.map(v=>`<button class="btn btn-ghost btn-sm" style="font-family:var(--mono);font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px" onclick="emp_pickVeh('${v}')">${v}</button>`).join('')}</div>` : '';
+        })()}
+        <div style="position:relative">
+          <input class="form-input" id="empSaleVeh" placeholder="KA00XX0000" autocomplete="off"
+            oninput="this.value=this.value.toUpperCase();emp_vehSuggest(this.value)"
+            onpaste="setTimeout(()=>{this.value=this.value.toUpperCase();emp_vehSuggest(this.value)},0)"
+            onkeydown="emp_vehKey(event)"
+            onblur="setTimeout(()=>emp_vehHide(),150)"
+            style="text-transform:uppercase;font-family:var(--mono);font-weight:600" />
+          <div id="empVehDrop" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:999;background:var(--bg-2);border:1px solid var(--border);border-radius:0 0 10px 10px;max-height:180px;overflow-y:auto"></div>
+        </div>
+      </div>
       <div class="form-group"><label class="form-label">Payment Mode</label><div style="display:flex;gap:6px;flex-wrap:wrap">${['cash','upi','card','credit']
         .map(m=>`<button class="btn btn-sm ${empPayMode===m?'btn-accent':'btn-ghost'}" data-paybtn="${m}" onclick="emp_selPay('${m}')">${{cash:'💵 Cash',upi:'📱 UPI',card:'💳 Card',credit:'📋 Credit'}[m]}</button>`).join('')}</div></div>
       <div id="empCustWrap" style="display:${empPayMode==='credit'?'':'none'}"><div class="form-group"><label class="form-label">Credit Customer</label><select class="form-input" id="empSaleCustomer"><option value="">— Select Customer —</option>${(APP.data?.creditCustomers||[]).filter(c=>c.active!==false&&c.active!==0).map(c=>`<option value="${sanitize(c.name)}">${sanitize(c.name)}</option>`).join('')}</select></div></div><input type="hidden" id="empSaleCustomerHidden" value="" />
@@ -11494,6 +11521,61 @@ function emp_calcLiters() {
   else amtEl.dataset.manualAmt = '';
 }
 
+function emp_pickVeh(v) {
+  const el = document.getElementById('empSaleVeh');
+  if (el) { el.value = v; el.focus(); }
+  emp_vehHide();
+}
+function emp_vehSuggest(q) {
+  const drop = document.getElementById('empVehDrop');
+  if (!drop) return;
+  q = (q || '').toUpperCase().trim();
+  if (q.length < 2) { emp_vehHide(); return; }
+  // Build full vehicle list: today's sales + APP data
+  const seen = new Set();
+  const all = [];
+  [...(empState.sales || [])].reverse().forEach(s => {
+    if (s.vehicle && !seen.has(s.vehicle)) { seen.add(s.vehicle); all.push(s.vehicle); }
+  });
+  (APP.data?.sales || []).slice().reverse().forEach(s => {
+    if (s.vehicle && !seen.has(s.vehicle)) { seen.add(s.vehicle); all.push(s.vehicle); }
+  });
+  const matches = all.filter(v => v.toUpperCase().includes(q)).slice(0, 8);
+  if (!matches.length) { emp_vehHide(); return; }
+  drop.innerHTML = matches.map((v, i) =>
+    `<div data-vehopt="${i}" onmousedown="emp_pickVeh('${v}')"
+      style="padding:10px 14px;cursor:pointer;font-family:var(--mono);font-weight:700;font-size:13px;
+             border-bottom:1px solid var(--border-light);color:var(--text-0)"
+      onmouseover="this.style.background='var(--bg-3)'" onmouseout="this.style.background=''">${v}</div>`
+  ).join('');
+  drop.style.display = 'block';
+}
+function emp_vehHide() {
+  const d = document.getElementById('empVehDrop');
+  if (d) d.style.display = 'none';
+}
+function emp_vehKey(e) {
+  const drop = document.getElementById('empVehDrop');
+  if (!drop || drop.style.display === 'none') return;
+  const items = drop.querySelectorAll('[data-vehopt]');
+  let cur = [...items].findIndex(i => i.style.background === 'var(--bg-3)');
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (cur >= 0) items[cur].style.background = '';
+    const next = (cur + 1) % items.length;
+    items[next].style.background = 'var(--bg-3)';
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (cur >= 0) items[cur].style.background = '';
+    const prev = (cur - 1 + items.length) % items.length;
+    items[prev].style.background = 'var(--bg-3)';
+  } else if (e.key === 'Enter' && cur >= 0) {
+    e.preventDefault();
+    emp_pickVeh(items[cur].textContent);
+  } else if (e.key === 'Escape') {
+    emp_vehHide();
+  }
+}
 function emp_recordSale() {
   const l = parseFloat(document.getElementById('empSaleLiters')?.value);
   const a = parseFloat(document.getElementById('empSaleAmt')?.value);
