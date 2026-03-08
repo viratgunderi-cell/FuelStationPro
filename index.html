@@ -3158,7 +3158,7 @@ function renderStaff(D) {
   const payroll = D.employees.reduce((a, e) => a + e.salary, 0);
   const totalNozzles = D.pumps.reduce((a, p) => a + (p.nozzleLabels || ['A','B']).length, 0);
   const allocKey = allocShift + '_' + allocDate;
-  const shiftAlloc = allocations[allocKey] || allocations[allocShift] || {};
+  const shiftAlloc = allocations[allocDate + '_' + allocShift] || {};
   const assignedCount = Object.values(shiftAlloc).filter(v => v && D.employees.some(e => parseInt(e.id) === parseInt(v))).length;
 
   // ── Filter employees by Roster for the selected date+shift ──────────────
@@ -6282,28 +6282,33 @@ function enableNotifications() {
 }
 
 // ── ALLOCATION ACTIONS ────────────────────────────────────────
+function _allocKey() { return allocDate + '_' + allocShift; }
+
 function assignNozzle(pumpId, nozzle, empIdStr) {
   const empId = parseInt(empIdStr);
-  if (!allocations[allocShift]) allocations[allocShift] = {};
+  const dk = _allocKey();
+  if (!allocations[dk]) allocations[dk] = {};
   if (empId) {
-    allocations[allocShift][`${String(pumpId)}_${nozzle}`] = empId;
+    allocations[dk][`${String(pumpId)}_${nozzle}`] = empId;
     const emp = APP.data.employees.find(e => parseInt(e.id) === parseInt(empId));
     const pump = APP.data.pumps.find(p => String(p.id) === String(pumpId));
     toast(`${emp?.name} → ${pump?.name} Nozzle ${nozzle}`, 'success');
   } else {
-    delete allocations[allocShift][`${String(pumpId)}_${nozzle}`];
+    delete allocations[dk][`${String(pumpId)}_${nozzle}`];
   }
-  // Prune stale keys — remove entries for pumps/nozzles that no longer exist
+  // Prune stale keys
   const validKeys = new Set();
   (APP.data?.pumps || []).forEach(p => {
     const labels = p.nozzleLabels || (p.nozzles === 1 ? ['A'] : p.nozzles === 2 ? ['A','B'] : ['A','B','C'].slice(0, p.nozzles));
     labels.forEach(n => validKeys.add(`${p.id}_${n}`));
   });
   if (validKeys.size > 0) {
-    Object.keys(allocations).forEach(shift => {
-      Object.keys(allocations[shift]).forEach(key => {
-        if (!validKeys.has(key)) delete allocations[shift][key];
-      });
+    Object.keys(allocations).forEach(k => {
+      if (typeof allocations[k] === 'object') {
+        Object.keys(allocations[k]).forEach(key => {
+          if (!validKeys.has(key)) delete allocations[k][key];
+        });
+      }
     });
   }
   saveAllocations();
@@ -6311,8 +6316,8 @@ function assignNozzle(pumpId, nozzle, empIdStr) {
 }
 
 function removeAlloc(pumpId, nozzle) {
-  const allocKey = `${String(pumpId)}_${nozzle}`;
-  if (allocations[allocShift]) delete allocations[allocShift][allocKey];
+  const dk = _allocKey();
+  if (allocations[dk]) delete allocations[dk][`${String(pumpId)}_${nozzle}`];
   saveAllocations();
   toast('Assignment removed', 'info');
   renderPage();
@@ -6320,10 +6325,10 @@ function removeAlloc(pumpId, nozzle) {
 
 function openChangeAllocModal(pumpId, nozzle) {
   const D = APP.data;
+  const dk = _allocKey();
   const key = `${pumpId}_${nozzle}`;
-  const currentEmpId = allocations[allocShift]?.[key];
+  const currentEmpId = allocations[dk]?.[key];
   const pump = D.pumps.find(p => String(p.id) === String(pumpId));
-  // Respect roster: only show employees rostered for this shift on allocDate
   const rosterKey = allocDate + '_' + allocShift;
   const rosteredIds = (window._rosterData && window._rosterData[rosterKey]) || [];
   const shiftEmps = rosteredIds.length > 0
@@ -6332,24 +6337,23 @@ function openChangeAllocModal(pumpId, nozzle) {
 
   const empItems = shiftEmps.map(e => {
     const isCurrent = e.id === currentEmpId;
-    // Count how many nozzles this employee already has
-    const nozzleCount = Object.values(allocations[allocShift] || {}).filter(id => id === e.id).length;
+    const nozzleCount = Object.values(allocations[dk] || {}).filter(id => id === e.id).length;
     return `<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:${isCurrent ? 'rgba(34,197,94,0.06)' : 'var(--bg-0)'};border:1px solid ${isCurrent ? 'rgba(34,197,94,0.25)' : 'var(--border-light)'};border-radius:var(--radius-sm);cursor:pointer;margin-bottom:6px;transition:border-color 0.15s" onclick="assignNozzle(${pumpId},'${nozzle}','${e.id}');closeModal();" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='${isCurrent ? 'rgba(34,197,94,0.25)' : 'var(--border-light)'}'">
       <span style="width:30px;height:30px;border-radius:8px;background:${empColor(e)};display:grid;place-items:center;color:#fff;font-size:10px;font-weight:800;flex-shrink:0">${empInitials(e.name)}</span>
       <div style="flex:1"><div class="fw-700" style="color:var(--text-0);font-size:13px">${e.name}</div><div style="font-size:10px;color:var(--text-3)">${e.role} · ${nozzleCount} nozzle${nozzleCount !== 1 ? 's' : ''}</div></div>
       ${isCurrent ? '<span class="badge badge-green">Current</span>' : ''}
     </div>`;
-  }).join('');
+  }).join('') || '<p style="color:var(--text-3);font-size:13px">No rostered employees found for this date & shift. Set the roster first.</p>';
 
   openModal(`Assign ${pump?.name} · Nozzle ${nozzle}`, `
-    <p style="font-size:13px;color:var(--text-2);margin-bottom:14px">Select an employee for <strong style="color:var(--text-0)">${pump?.name} — Nozzle ${nozzle}</strong> during <strong style="color:var(--accent-light)">${allocShift}</strong> shift</p>
+    <p style="font-size:13px;color:var(--text-2);margin-bottom:14px">Select an employee for <strong style="color:var(--text-0)">${pump?.name} — Nozzle ${nozzle}</strong> during <strong style="color:var(--accent-light)">${allocShift}</strong> on ${allocDate}</p>
     ${empItems}
   `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>`);
 }
 
 function autoAssignAlloc() {
   const D = APP.data;
-  // Respect roster: use rostered employees for this shift+date, fall back to shift field
+  const dk = _allocKey();
   const rosterKey = allocDate + '_' + allocShift;
   const rosteredIds = (window._rosterData && window._rosterData[rosterKey]) || [];
   const shiftEmps = rosteredIds.length > 0
@@ -6357,12 +6361,12 @@ function autoAssignAlloc() {
     : D.employees.filter(e => (e.shift||'').split(',').map(s=>s.trim()).includes(allocShift));
   if (shiftEmps.length === 0) { toast('No employees rostered for this shift on this date', 'error'); return; }
 
-  if (!allocations[allocShift]) allocations[allocShift] = {};
+  if (!allocations[dk]) allocations[dk] = {};
   let idx = 0;
   D.pumps.forEach(p => {
     const nLabels = p.nozzleLabels || (p.nozzles === 1 ? ['A'] : ['A','B']);
     nLabels.forEach(n => {
-      allocations[allocShift][`${String(p.id)}_${n}`] = shiftEmps[idx % shiftEmps.length].id;
+      allocations[dk][`${String(p.id)}_${n}`] = shiftEmps[idx % shiftEmps.length].id;
       idx++;
     });
   });
@@ -6373,23 +6377,17 @@ function autoAssignAlloc() {
 
 function clearShiftAllocConfirm() {
   openModal('Clear Allocations', `
-    <p style="color:var(--red);font-weight:600;margin-bottom:8px">This will remove all nozzle assignments for the <strong>${allocShift}</strong> shift.</p>
+    <p style="color:var(--red);font-weight:600;margin-bottom:8px">This will remove all nozzle assignments for <strong>${allocShift}</strong> on <strong>${allocDate}</strong>.</p>
     <p style="color:var(--text-2);font-size:13px">Are you sure you want to proceed?</p>
   `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn" style="background:var(--red);color:#fff" onclick="doClearAlloc()">Yes, Clear All</button>`);
 }
 
 function doClearAlloc() {
-  const clearedShift = allocShift; // save name before we switch away
-  delete allocations[allocShift];
+  const dk = _allocKey();
+  delete allocations[dk];
   saveAllocations();
-  // Auto-select next shift with allocations
-  const next = Object.keys(allocations).find(sh =>
-    typeof allocations[sh] === 'object' &&
-    Object.values(allocations[sh]).some(v => v && parseInt(v) > 0)
-  );
-  if (next) allocShift = next;
   closeModal();
-  toast('All allocations cleared for ' + clearedShift, 'info');
+  toast('All allocations cleared for ' + allocShift + ' on ' + allocDate, 'info');
   renderPage();
 }
 
@@ -6403,27 +6401,34 @@ function copyAllocModal() {
     </div>`
   ).join('');
 
-  openModal('Copy Allocation Structure', `
-    <p style="font-size:13px;color:var(--text-2);margin-bottom:14px">Copy the pump/nozzle layout from <strong style="color:var(--accent-light)">${allocShift}</strong> to another shift. Employees will be mapped round-robin to the target shift's staff.</p>
-    ${opts}
+  openModal('Copy Allocation to Another Shift', `
+    <p style="font-size:13px;color:var(--text-2);margin-bottom:14px">Copy the pump/nozzle layout from <strong style="color:var(--accent-light)">${allocShift}</strong> on <strong style="color:var(--text-1)">${allocDate}</strong> to another shift on the same date. Employees will be mapped from that shift's roster.</p>
+    ${opts || '<p style="color:var(--text-3)">No other shifts available.</p>'}
   `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>`);
 }
 
 function doCopyAlloc(targetShiftName) {
   const D = APP.data;
-  const sourceAlloc = allocations[allocShift] || {};
-  const targetEmps = D.employees.filter(e => e.shift === targetShiftName);
+  const sourceDk = _allocKey();
+  const targetDk = allocDate + '_' + targetShiftName;
+  const sourceAlloc = allocations[sourceDk] || {};
+  // Use target shift's roster for that date
+  const targetRosterKey = allocDate + '_' + targetShiftName;
+  const targetRosteredIds = (window._rosterData && window._rosterData[targetRosterKey]) || [];
+  const targetEmps = targetRosteredIds.length > 0
+    ? D.employees.filter(e => targetRosteredIds.includes(String(e.id)))
+    : D.employees.filter(e => (e.shift||'').split(',').map(s=>s.trim()).includes(targetShiftName));
 
-  if (targetEmps.length === 0) { toast('No employees in ' + targetShiftName + ' shift', 'error'); return; }
+  if (targetEmps.length === 0) { toast('No employees rostered for ' + targetShiftName + ' on ' + allocDate, 'error'); return; }
 
-  allocations[targetShiftName] = {};
+  allocations[targetDk] = {};
   let idx = 0;
   Object.keys(sourceAlloc).forEach(key => {
-    allocations[targetShiftName][key] = targetEmps[idx % targetEmps.length].id;
+    allocations[targetDk][key] = targetEmps[idx % targetEmps.length].id;
     idx++;
   });
   saveAllocations();
-  toast(`Copied allocation to ${targetShiftName} shift (${idx} nozzles)`, 'success');
+  toast(`Copied to ${targetShiftName} on ${allocDate} (${idx} nozzles)`, 'success');
 }
 
 // Optional permissions definition
@@ -7032,29 +7037,62 @@ function emp_toast(msg, type) { toast(msg, type === 'ok' ? 'success' : type === 
 function emp_myPumps() {
   if (!empState.user) return [];
   const uid = empState.user.id;
-  // Collect all nozzle keys assigned to this employee across all shifts
+  const todayStr = new Date().toISOString().slice(0,10);
+
+  // Find which shift(s) this employee is rostered for today
+  const myRosteredShifts = [];
+  if (window._rosterData) {
+    Object.keys(window._rosterData).forEach(rk => {
+      if (rk.startsWith(todayStr + '_') && window._rosterData[rk].includes(String(uid))) {
+        myRosteredShifts.push(rk.replace(todayStr + '_', ''));
+      }
+    });
+  }
+  // Also check employee's shift field as fallback
+  const empShiftField = (empState.user.shift || '').split(',').map(s => s.trim()).filter(Boolean);
+  const shiftsToCheck = myRosteredShifts.length > 0 ? myRosteredShifts : empShiftField;
+
+  // Collect nozzle keys assigned to this employee for today's shifts
   const myKeys = new Set();
-  Object.values(allocations).forEach(shiftAlloc => {
+  shiftsToCheck.forEach(shiftName => {
+    const dk = todayStr + '_' + shiftName;
+    const shiftAlloc = allocations[dk] || {};
     Object.entries(shiftAlloc).forEach(([key, empId]) => {
       if (parseInt(empId) === parseInt(uid)) {
-        // Normalize key: ensure pumpId part is always a string number
         const [pid, nozzle] = key.split('_');
         myKeys.add(`${String(parseInt(pid) || pid)}_${nozzle}`);
       }
     });
   });
+
+  // If no date-keyed allocations found, fall back to legacy shift-only keys
+  if (myKeys.size === 0) {
+    Object.entries(allocations).forEach(([dk, shiftAlloc]) => {
+      // Legacy keys are shift names without date prefix
+      if (!dk.match(/^\d{4}-\d{2}-\d{2}_/)) {
+        Object.entries(shiftAlloc).forEach(([key, empId]) => {
+          if (parseInt(empId) === parseInt(uid)) {
+            const [pid, nozzle] = key.split('_');
+            myKeys.add(`${String(parseInt(pid) || pid)}_${nozzle}`);
+          }
+        });
+      }
+    });
+  }
+
   // If no allocations ever configured (fresh install), show all pumps
-  const totalAllocations = Object.values(allocations).reduce((a, sa) => a + Object.values(sa).filter(v => v && parseInt(v) > 0).length, 0);
+  const totalAllocations = Object.values(allocations).reduce((a, sa) => {
+    if (typeof sa !== 'object') return a;
+    return a + Object.values(sa).filter(v => v && parseInt(v) > 0).length;
+  }, 0);
   if (totalAllocations === 0) return EMP_PUMPS;
-  // If this specific employee has no allocations yet, return empty (admin must assign)
   if (myKeys.size === 0) return [];
+
   // Build filtered pump list with only assigned nozzles
   const result = [];
   EMP_PUMPS.forEach(p => {
     const myNozzles = p.nozzles.filter(n => myKeys.has(`${String(p.id)}_${n}`));
-    if (myNozzles.length > 0) {
-      result.push({ ...p, nozzles: myNozzles });
-    }
+    if (myNozzles.length > 0) result.push({ ...p, nozzles: myNozzles });
   });
   return result;
 }
@@ -9307,37 +9345,37 @@ async function loadData() {
         // Server is the SOLE source of truth — never merge with stale localStorage data
         allocations = serverAlloc;
       }
-      // Auto-select the shift that has actual nozzle assignments
-      // (don't rely on localStorage fb_alloc_shift which may point to a stale shift)
+      // Auto-select today's shift with most assignments (uses date_shift composite keys)
       try {
-        const shiftsWithData = Object.keys(allocations).filter(sh =>
-          typeof allocations[sh] === 'object' &&
-          Object.values(allocations[sh]).some(v => v && parseInt(v) > 0)
+        const todayStr = new Date().toISOString().slice(0,10);
+        const todayKeys = Object.keys(allocations).filter(k =>
+          k.startsWith(todayStr + '_') &&
+          typeof allocations[k] === 'object' &&
+          Object.values(allocations[k]).some(v => v && parseInt(v) > 0)
         );
-        if (shiftsWithData.length > 0) {
-          // Pick the shift with the most assignments (most likely the active one)
-          shiftsWithData.sort((a, b) =>
+        if (todayKeys.length > 0) {
+          todayKeys.sort((a, b) =>
             Object.values(allocations[b]).filter(v => v && parseInt(v) > 0).length -
             Object.values(allocations[a]).filter(v => v && parseInt(v) > 0).length
           );
-          allocShift = shiftsWithData[0];
+          allocShift = todayKeys[0].replace(todayStr + '_', '');
         }
       } catch {}
-      // Prune stale allocation keys (pumps removed from station) + empty shift shells
+      // Prune stale allocation keys (pumps removed from station) + empty date-shift shells
       if (APP.data?.pumps) {
-        const validKeys = new Set();
+        const validNozzleKeys = new Set();
         APP.data.pumps.forEach(p => {
           const labels = p.nozzleLabels || (p.nozzles === 1 ? ['A'] : p.nozzles === 2 ? ['A','B'] : ['A','B','C'].slice(0, p.nozzles));
-          labels.forEach(n => validKeys.add(`${String(p.id)}_${n}`));
+          labels.forEach(n => validNozzleKeys.add(`${String(p.id)}_${n}`));
         });
-        if (validKeys.size > 0) {
+        if (validNozzleKeys.size > 0) {
           let pruned = false;
-          Object.keys(allocations).forEach(shift => {
-            if (typeof allocations[shift] !== 'object') { delete allocations[shift]; pruned = true; return; }
-            Object.keys(allocations[shift]).forEach(key => {
-              if (!validKeys.has(key)) { delete allocations[shift][key]; pruned = true; }
+          Object.keys(allocations).forEach(dk => {
+            if (typeof allocations[dk] !== 'object') { delete allocations[dk]; pruned = true; return; }
+            Object.keys(allocations[dk]).forEach(key => {
+              if (!validNozzleKeys.has(key)) { delete allocations[dk][key]; pruned = true; }
             });
-            if (Object.keys(allocations[shift]).length === 0) { delete allocations[shift]; pruned = true; }
+            if (Object.keys(allocations[dk]).length === 0) { delete allocations[dk]; pruned = true; }
           });
           if (pruned) saveAllocations();
         }
