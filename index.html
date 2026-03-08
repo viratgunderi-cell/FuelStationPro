@@ -3266,22 +3266,25 @@ function renderStaff(D) {
         const dayEmps = getRosteredEmps(date);
         const opts = dayEmps.map(e => `<option value="${e.id}" ${emp && parseInt(e.id)===parseInt(emp.id)?'selected':''}>${e.name}</option>`).join('');
 
-        return `<td style="padding:6px;text-align:center;background:${isSelected?'rgba(212,148,15,0.04)':isToday?'rgba(34,197,94,0.03)':'transparent'};border-right:1px solid var(--border-light)">
-          ${emp ? `
-            <div style="display:flex;align-items:center;gap:5px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:6px;padding:5px 7px;cursor:pointer"
-              onclick="allocDate='${date}';openWeekAllocCell(${p.id},'${n}','${date}')">
-              <span style="width:22px;height:22px;border-radius:6px;background:${empColor(emp)};display:grid;place-items:center;color:#fff;font-size:9px;font-weight:800;flex-shrink:0">${empInitials(emp.name)}</span>
-              <span style="font-size:11px;font-weight:700;color:var(--text-0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:68px">${sanitize(emp.name)}</span>
-              <button style="margin-left:auto;background:none;border:none;color:var(--text-3);cursor:pointer;font-size:11px;padding:0 2px;line-height:1" 
-                onclick="event.stopPropagation();allocDate='${date}';removeAllocForDate(${p.id},'${n}','${date}')" title="Remove">✕</button>
-            </div>
-          ` : `
-            <div style="border:1px dashed var(--border);border-radius:6px;padding:4px 2px;cursor:pointer;transition:border-color 0.15s"
-              onclick="allocDate='${date}';openWeekAllocCell(${p.id},'${n}','${date}')"
-              onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-              <span style="font-size:11px;color:var(--text-3)">+ Assign</span>
-            </div>
-          `}
+        const dayEmpButtons = dayEmps.map(e => {
+          const isCurrent = emp && parseInt(e.id) === parseInt(emp.id);
+          return `<button title="${isCurrent ? 'Currently assigned — click to remove' : 'Assign ' + sanitize(e.name)}"
+            onclick="${isCurrent
+              ? `event.stopPropagation();allocDate='${date}';removeAllocForDate(${p.id},'${n}','${date}')`
+              : `allocDate='${date}';assignNozzleForDate(${p.id},'${n}','${date}',${e.id})`}"
+            style="display:flex;align-items:center;gap:4px;width:100%;background:${isCurrent?'rgba(34,197,94,0.1)':'var(--bg-1)'};border:1px ${isCurrent?'solid rgba(34,197,94,0.35)':'dashed var(--border)'};border-radius:6px;padding:4px 6px;cursor:pointer;transition:all 0.15s;margin-bottom:2px"
+            onmouseover="this.style.background='${isCurrent?'rgba(239,68,68,0.08)':'var(--bg-2)'}';this.style.borderColor='${isCurrent?'var(--red)':'var(--accent)'}'"
+            onmouseout="this.style.background='${isCurrent?'rgba(34,197,94,0.1)':'var(--bg-1)'}';this.style.borderColor='${isCurrent?'rgba(34,197,94,0.35)':'var(--border)'}'">
+            <span style="width:20px;height:20px;border-radius:5px;background:${empColor(e)};display:grid;place-items:center;color:#fff;font-size:8px;font-weight:800;flex-shrink:0">${empInitials(e.name)}</span>
+            <span style="font-size:10px;font-weight:${isCurrent?'800':'600'};color:${isCurrent?'var(--green)':'var(--text-2)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:62px">${sanitize(e.name.split(' ')[0])}</span>
+            ${isCurrent ? '<span style="margin-left:auto;font-size:9px;color:var(--red);font-weight:700">✕</span>' : '<span style="margin-left:auto;font-size:9px;color:var(--text-3)">+</span>'}
+          </button>`;
+        }).join('');
+
+        return `<td style="padding:5px;background:${isSelected?'rgba(212,148,15,0.04)':isToday?'rgba(34,197,94,0.03)':'transparent'};border-right:1px solid var(--border-light);vertical-align:top;min-width:100px">
+          ${dayEmps.length === 0
+            ? `<div style="padding:4px;font-size:10px;color:var(--text-3);text-align:center">No roster</div>`
+            : dayEmpButtons}
         </td>`;
       }).join('');
 
@@ -4049,18 +4052,28 @@ function renderRoster(D) {
       const isToday = dateStr === todayStr;
       const assignedEmps = assigned.map(id => emps.find(e => String(e.id) === String(id))).filter(Boolean);
       const empChips = assignedEmps.map(e =>
-        `<div style="display:flex;align-items:center;gap:5px;background:var(--bg-2);border-radius:5px;padding:3px 6px;margin-bottom:3px;font-size:10px;font-weight:600;color:var(--text-0)">
-          <span style="width:6px;height:6px;border-radius:50%;background:${e.color||'var(--accent)'};flex-shrink:0"></span>
-          ${sanitize(e.name)}
-          <button onclick="rosterUnassign('${dateStr}','${shift.name}',${e.id})" style="margin-left:auto;background:none;border:none;color:var(--text-3);cursor:pointer;font-size:10px;padding:0 2px" title="Remove">✕</button>
+        `<div style="display:flex;align-items:center;gap:5px;background:var(--bg-2);border:1px solid var(--border-light);border-radius:6px;padding:4px 7px;margin-bottom:3px;cursor:pointer"
+          title="Click to remove ${sanitize(e.name)}"
+          onclick="rosterUnassign('${dateStr}','${shift.name}',${e.id})">
+          <span style="width:20px;height:20px;border-radius:5px;background:${empColor(e)};display:grid;place-items:center;color:#fff;font-size:8px;font-weight:800;flex-shrink:0">${empInitials(e.name)}</span>
+          <span style="font-size:10px;font-weight:700;color:var(--text-0)">${sanitize(e.name)}</span>
+          <span style="margin-left:auto;color:var(--red);font-size:10px;line-height:1;opacity:0.7">✕</span>
         </div>`
       ).join('');
-      const empSelect = `<select onchange="rosterAssign('${dateStr}','${shift.name}',this.value);this.value=''" style="width:100%;font-size:10px;padding:3px 4px;border-radius:5px;background:var(--bg-1);border:1px solid var(--border);color:var(--text-2);margin-top:${assignedEmps.length?'4px':'0'}">
-        <option value="">+ Assign</option>
-        ${emps.filter(e => !assigned.includes(String(e.id))).map(e => `<option value="${e.id}">${sanitize(e.name)}</option>`).join('')}
-      </select>`;
+      // Unassigned employees shown as small avatar buttons
+      const unassigned = emps.filter(e => !assigned.includes(String(e.id)));
+      const addBtns = unassigned.length === 0 ? '' : `<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:${assignedEmps.length?'5px':'0'}">
+        ${unassigned.map(e => `<button title="Assign ${sanitize(e.name)}"
+          onclick="rosterAssign('${dateStr}','${shift.name}',${e.id})"
+          style="display:flex;align-items:center;gap:4px;background:var(--bg-1);border:1px dashed var(--border);border-radius:6px;padding:3px 6px;cursor:pointer;transition:all 0.15s;color:var(--text-2);font-size:10px;font-weight:600"
+          onmouseover="this.style.background='var(--bg-2)';this.style.borderColor='var(--accent)';this.style.color='var(--text-0)'"
+          onmouseout="this.style.background='var(--bg-1)';this.style.borderColor='var(--border)';this.style.color='var(--text-2)'">
+          <span style="width:18px;height:18px;border-radius:4px;background:${empColor(e)};display:grid;place-items:center;color:#fff;font-size:8px;font-weight:800">${empInitials(e.name)}</span>
+          ${sanitize(e.name.split(' ')[0])}
+        </button>`).join('')}
+      </div>`;
       return `<td style="vertical-align:top;padding:6px;background:${isToday?'rgba(212,148,15,0.04)':'transparent'};border-left:1px solid var(--border-light)">
-        ${empChips}${empSelect}
+        ${empChips}${addBtns}
       </td>`;
     }).join('');
 
@@ -4088,7 +4101,7 @@ function renderRoster(D) {
 
     <div style="font-size:12px;color:var(--text-3);margin-bottom:16px">
       Week of <strong style="color:var(--text-1)">${weekStart.toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</strong>
-      — Click <em>+ Assign</em> in any cell to assign an employee to that shift on that day.
+      — Click an employee button to assign · Click an assigned employee to remove.
     </div>
 
     <div class="card mb-24" style="overflow-x:auto">
@@ -6336,6 +6349,19 @@ function removeAllocForDate(pumpId, nozzle, date) {
   if (allocations[dk]) delete allocations[dk][`${String(pumpId)}_${nozzle}`];
   saveAllocations();
   toast('Assignment removed', 'info');
+  renderPage();
+}
+
+// Direct single-click assign for week grid (no modal needed)
+function assignNozzleForDate(pumpId, nozzle, date, empId) {
+  const dk = date + '_' + allocShift;
+  if (!allocations[dk]) allocations[dk] = {};
+  allocations[dk][`${String(pumpId)}_${nozzle}`] = empId;
+  const emp = APP.data.employees.find(e => parseInt(e.id) === parseInt(empId));
+  const pump = APP.data.pumps.find(p => String(p.id) === String(pumpId));
+  const d = new Date(date).toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short'});
+  saveAllocations();
+  toast(`${emp?.name} → ${pump?.name} N${nozzle} on ${d}`, 'success');
   renderPage();
 }
 
