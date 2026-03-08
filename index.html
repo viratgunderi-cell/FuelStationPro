@@ -7646,6 +7646,8 @@ window.mt_doSwitchStation = mt_doSwitchStation;
 window.emp_nozzleRecon = emp_nozzleRecon;
 window.emp_nozzleSalesLiters = emp_nozzleSalesLiters;
 window.emp_refreshNozzles = emp_refreshNozzles;
+window.emp_selPump = emp_selPump;
+window.emp_selNozzle = emp_selNozzle;
 
 // ═══════════════════════════════════════════════════════════
 // FUELBUNK PRO — Main Application
@@ -11054,28 +11056,35 @@ function emp_renderSales() {
     </div>
     <div class="card" style="margin-bottom:16px"><div class="card-body">
       <div class="form-group"><label class="form-label">Fuel Type</label><div style="display:flex;gap:6px;flex-wrap:wrap">${fuels.map(f=>`<button class="btn btn-sm ${empSaleFuel===f?'btn-accent':'btn-ghost'}" data-fuelbtn="${f}" onclick="emp_selFuel('${f}')">${EMP_FUEL[f]?.split(' ')[0]||f}</button>`).join('')}</div></div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Pump</label>
-          <select class="form-input" id="empSalePump" onchange="emp_refreshNozzles()">
-            ${emp_myPumps().filter(p => {
+      <div class="form-group"><label class="form-label">Pump</label>
+        <div id="empPumpBtns" style="display:flex;gap:6px;flex-wrap:wrap">
+          ${(() => {
+            const pumps = emp_myPumps().filter(p => {
               const nf = p.nozzleFuels || {};
               return p.fuelType === empSaleFuel || Object.values(nf).includes(empSaleFuel);
-            }).map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}
-          </select>
+            });
+            if (!pumps.length) return '<span style="font-size:12px;color:var(--text-3)">No pump for this fuel</span>';
+            const firstId = pumps[0].id;
+            return pumps.map(p => `<button class="btn btn-sm ${String(p.id)===String(firstId)?'btn-accent':'btn-ghost'}" data-pumpbtn="${p.id}" onclick="emp_selPump('${p.id}')">${p.name}</button>`).join('');
+          })()}
         </div>
-        <div class="form-group"><label class="form-label">Nozzle</label>
-          <select class="form-input" id="empSaleNozzle">
-            ${(() => {
-              const p = emp_myPumps().find(p => {
-                const nf = p.nozzleFuels || {};
-                return p.fuelType === empSaleFuel || Object.values(nf).includes(empSaleFuel);
-              });
-              if (!p) return '';
+      </div>
+      <div class="form-group"><label class="form-label">Nozzle</label>
+        <div id="empNozzleBtns" style="display:flex;gap:6px;flex-wrap:wrap">
+          ${(() => {
+            const pumps = emp_myPumps().filter(p => {
               const nf = p.nozzleFuels || {};
-              return (p.nozzles || []).filter(n => (nf[n] || p.fuelType) === empSaleFuel)
-                .map(n => { const fuel = getFuel(nf[n]||p.fuelType); return `<option value="${n}">Nozzle ${n} <span style="color:${fuel?.color}">${fuel?.short||''}</span></option>`; }).join('');
-            })()}
-          </select>
+              return p.fuelType === empSaleFuel || Object.values(nf).includes(empSaleFuel);
+            });
+            const p = pumps[0];
+            if (!p) return '<span style="font-size:12px;color:var(--text-3)">—</span>';
+            const nf = p.nozzleFuels || {};
+            const nozzles = (p.nozzles || []).filter(n => (nf[n] || p.fuelType) === empSaleFuel);
+            return nozzles.map((n, i) => {
+              const fuel = getFuel(nf[n] || p.fuelType);
+              return `<button class="btn btn-sm ${i===0?'btn-accent':'btn-ghost'}" data-nozzlebtn="${n}" onclick="emp_selNozzle('${n}')">${p.name} · ${n}<span style="font-size:9px;margin-left:3px;opacity:0.7">${fuel?.short||''}</span></button>`;
+            }).join('');
+          })()}
         </div>
       </div>
       <div class="form-row"><div class="form-group"><label class="form-label">Liters</label><input class="form-input" id="empSaleLiters" type="number" inputmode="decimal" step="0.1" placeholder="0.0" oninput="emp_calcAmt()" style="font-family:var(--mono);font-weight:600" /></div>
@@ -11409,17 +11418,21 @@ function emp_switchMode(mode) {
 }
 
 function emp_refreshNozzles() {
-  const pumpId = parseInt(document.getElementById('empSalePump')?.value);
-  const nozzleSel = document.getElementById('empSaleNozzle');
-  if (!nozzleSel) return;
-  const p = emp_myPumps().find(px => px.id === pumpId);
+  // Get active pump from button selection
+  const activePumpBtn = document.querySelector('[data-pumpbtn].btn-accent');
+  const pumpId = activePumpBtn ? activePumpBtn.dataset.pumpbtn : null;
+  const nozzleWrap = document.getElementById('empNozzleBtns');
+  if (!nozzleWrap || !pumpId) return;
+  const p = emp_myPumps().find(px => String(px.id) === String(pumpId));
   if (!p) return;
   const nf = p.nozzleFuels || {};
   const matchingNozzles = (p.nozzles || []).filter(n => (nf[n] || p.fuelType) === empSaleFuel);
-  nozzleSel.innerHTML = matchingNozzles.map(n => {
-    const fuel = getFuel(nf[n] || p.fuelType);
-    return `<option value="${n}">Nozzle ${n} — ${fuel?.short || ''}</option>`;
-  }).join('');
+  nozzleWrap.innerHTML = matchingNozzles.length
+    ? matchingNozzles.map((n, i) => {
+        const fuel = getFuel(nf[n] || p.fuelType);
+        return `<button class="btn btn-sm ${i===0?'btn-accent':'btn-ghost'}" data-nozzlebtn="${n}" onclick="emp_selNozzle('${n}')">${p.name} · ${n}<span style="font-size:9px;margin-left:3px;opacity:0.7">${fuel?.short||''}</span></button>`;
+      }).join('')
+    : '<span style="font-size:12px;color:var(--text-3)">No nozzle for this fuel</span>';
 }
 
 function emp_selFuel(f) {
@@ -11429,19 +11442,21 @@ function emp_selFuel(f) {
     btn.classList.toggle('btn-accent', btn.dataset.fuelbtn === f);
     btn.classList.toggle('btn-ghost', btn.dataset.fuelbtn !== f);
   });
-  // Rebuild pump dropdown to only show pumps that have a nozzle for this fuel
-  const pumpSel = document.getElementById('empSalePump');
-  if (pumpSel) {
+  // Rebuild pump buttons for this fuel
+  const pumpWrap = document.getElementById('empPumpBtns');
+  if (pumpWrap) {
     const filtered = emp_myPumps().filter(p => {
       const nf = p.nozzleFuels || {};
       return p.fuelType === f || Object.values(nf).includes(f);
     });
-    pumpSel.innerHTML = filtered.length 
-      ? filtered.map(p => `<option value="${p.id}">${p.name}</option>`).join('')
-      : '<option value="">No pump assigned for this fuel</option>';
-    if (!filtered.length) {
-      const ns = document.getElementById('empSaleNozzle');
-      if (ns) ns.innerHTML = '<option value="">—</option>';
+    if (filtered.length) {
+      pumpWrap.innerHTML = filtered.map((p, i) =>
+        `<button class="btn btn-sm ${i===0?'btn-accent':'btn-ghost'}" data-pumpbtn="${p.id}" onclick="emp_selPump('${p.id}')">${p.name}</button>`
+      ).join('');
+    } else {
+      pumpWrap.innerHTML = '<span style="font-size:12px;color:var(--text-3)">No pump for this fuel</span>';
+      const nw = document.getElementById('empNozzleBtns');
+      if (nw) nw.innerHTML = '<span style="font-size:12px;color:var(--text-3)">—</span>';
     }
   }
   emp_refreshNozzles();
@@ -11449,6 +11464,19 @@ function emp_selFuel(f) {
   // Update price display if visible
   const priceEl = document.getElementById('empFuelPrice');
   if (priceEl) priceEl.textContent = cur(EMP_PRICES[f] || 0) + '/L';
+}
+function emp_selPump(pumpId) {
+  document.querySelectorAll('[data-pumpbtn]').forEach(btn => {
+    btn.classList.toggle('btn-accent', String(btn.dataset.pumpbtn) === String(pumpId));
+    btn.classList.toggle('btn-ghost',  String(btn.dataset.pumpbtn) !== String(pumpId));
+  });
+  emp_refreshNozzles();
+}
+function emp_selNozzle(n) {
+  document.querySelectorAll('[data-nozzlebtn]').forEach(btn => {
+    btn.classList.toggle('btn-accent', btn.dataset.nozzlebtn === n);
+    btn.classList.toggle('btn-ghost',  btn.dataset.nozzlebtn !== n);
+  });
 }
 function emp_selPay(m) {
   empPayMode = m;
@@ -11486,7 +11514,7 @@ function emp_recordSale() {
   const l = parseFloat(document.getElementById('empSaleLiters')?.value);
   const a = parseFloat(document.getElementById('empSaleAmt')?.value);
   const v = (document.getElementById('empSaleVeh')?.value || '').toUpperCase().trim();
-  const p = String(document.getElementById('empSalePump')?.value || '');  // pump.id is TEXT
+  const p = String(document.querySelector('[data-pumpbtn].btn-accent')?.dataset?.pumpbtn || '');  // pump.id from active button
   if (isNaN(l)||l<=0) { toast('Enter valid liters','error'); return; }
   // No upper liter limit
   if (!v || v.length < 2) { toast('Enter valid vehicle number','error'); return; }
@@ -11494,7 +11522,7 @@ function emp_recordSale() {
   const amt = isNaN(a) || a <= 0 ? l * (EMP_PRICES[empSaleFuel] || 0) : a;
   if (isNaN(amt) || amt <= 0) { toast('Invalid amount','error'); return; }
 
-  const nozzle = document.getElementById('empSaleNozzle')?.value || 'A';
+  const nozzle = document.querySelector('[data-nozzlebtn].btn-accent')?.dataset?.nozzlebtn || 'A';
 
   const customerEl = document.getElementById('empSaleCustomer');
   const customer = customerEl ? customerEl.value.trim() : '';
