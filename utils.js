@@ -140,7 +140,7 @@ function validateEmpSessionShape(data) {
 }
 
 // Input validators
-function validateSaleInput(fuelType, liters, amount, vehicle, prices) {
+function validateSaleInput(fuelType, liters, amount, vehicle, prices, mode) {
   const errors = [];
   if (!fuelType || !['petrol','diesel','premium','premium_petrol'].includes(fuelType))
     errors.push('Invalid fuel type');
@@ -158,9 +158,12 @@ function validateSaleInput(fuelType, liters, amount, vehicle, prices) {
     if (Math.abs(amount - expected) > tolerance)
       errors.push('Amount mismatch with rate. Expected ≈₹' + expected.toFixed(2));
   }
-  if (!vehicle || vehicle.length < 2)
-    errors.push('Enter valid vehicle number');
-  if (vehicle && !/^[A-Z0-9\s\-\.]+$/i.test(vehicle))
+  // Vehicle number required for credit/UPI/card; optional for cash walk-ins
+  if (mode !== 'cash') {
+    if (!vehicle || vehicle.length < 2)
+      errors.push('Enter valid vehicle number');
+  }
+  if (vehicle && vehicle.length > 0 && !/^[A-Z0-9\s\-\.]+$/i.test(vehicle))
     errors.push('Vehicle number has invalid characters');
   return errors;
 }

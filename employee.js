@@ -638,7 +638,7 @@ function emp_renderOverview() {
         </div>`;
       }).join('')}
     </div></div>
-    ${cc>=tn&&oc>=tn?`<button class="btn btn-block" style="background:var(--green);color:#fff;padding:16px;font-size:15px;border-radius:var(--radius);margin-top:8px" onclick="emp_submit()">✅ Submit & Done</button>`
+    ${cc>=tn&&oc>=tn?`<button class="btn btn-block" style="background:var(--green);color:#fff;padding:16px;font-size:15px;border-radius:var(--radius);margin-top:8px" onclick="emp_showCashHandover(emp_submit)">✅ Submit &amp; Done</button>`
     :`<button class="btn btn-block" style="background:transparent;color:var(--red);border:1px solid rgba(239,68,68,0.25);padding:14px;font-size:13px;border-radius:var(--radius);margin-top:8px" onclick="emp_confirmEnd()">⏹ Submit ${cc<tn?'(closing readings pending)':''}</button>`}
   `;
 }
@@ -857,7 +857,7 @@ function emp_renderSales() {
       <div class="form-group"><label class="form-label">Amount (₹)</label><input class="form-input" id="empSaleAmt" type="number" inputmode="decimal" step="0.01" placeholder="${emp_hasPerm('prices')?'Auto — price applied':'Enter amount'}" style="font-family:var(--mono);font-weight:600" oninput="emp_calcLiters()" /></div></div>
       ${emp_hasPerm('prices') ? `<div style="font-size:11px;color:var(--text-3);margin-top:-6px;margin-bottom:8px">Current price: <strong style="color:var(--accent-light)">${cur(EMP_PRICES[empSaleFuel] || 0)}/L</strong></div>` : ''}
       <div class="form-group">
-        <label class="form-label" style="margin-bottom:8px">Vehicle Number</label>
+        <label class="form-label" style="margin-bottom:8px">Vehicle Number <span id="vehOptHint" style="font-size:10px;font-weight:500;color:var(--text-3)">${empPayMode==='cash'?'(optional for cash)':''}</span></label>
         <div style="display:flex;align-items:stretch;gap:6px">
           <div id="vehSegWrap" style="display:flex;gap:3px;flex:1;min-width:0">
             <input id="veh_state" class="veh-seg" maxlength="2" placeholder="KA"
@@ -1111,6 +1111,23 @@ function emp_renderComplete() {
       </div>`;}).join('')}
     </div></div>
     ${emp_hasPerm('print') ? `<div style="display:flex;gap:10px"><button class="btn btn-ghost" style="flex:1" onclick="emp_share()">📤 Share</button><button class="btn btn-accent" style="flex:1" onclick="emp_print()">🖨 Print</button></div>` : ''}
+    ${empState.cashHandover ? (() => {
+      const h = empState.cashHandover;
+      const vc = Math.abs(h.variance) < 1 ? 'var(--green)' : Math.abs(h.variance) <= 50 ? 'var(--orange)' : 'var(--red)';
+      const denoms = Object.entries(h.breakdown).sort((a,b) => b[0]-a[0]);
+      return `<div class="card" style="margin-top:14px;border-color:rgba(212,148,15,0.25)">
+        <div class="card-head" style="background:rgba(212,148,15,0.05)"><h4 style="color:var(--accent-light)">💵 Cash Handover</h4></div>
+        <div class="card-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">
+            <div style="text-align:center"><div style="font-size:9px;color:var(--text-3);font-weight:700;text-transform:uppercase;margin-bottom:2px">Expected</div><div class="mono fw-700" style="color:var(--text-1)">${cur(h.expectedCash)}</div></div>
+            <div style="text-align:center"><div style="font-size:9px;color:var(--text-3);font-weight:700;text-transform:uppercase;margin-bottom:2px">Counted</div><div class="mono fw-700" style="color:var(--green)">${cur(h.total)}</div></div>
+            <div style="text-align:center"><div style="font-size:9px;color:var(--text-3);font-weight:700;text-transform:uppercase;margin-bottom:2px">Variance</div><div class="mono fw-700" style="color:${vc}">${h.variance > 0 ? '+' : ''}${cur(h.variance)}</div></div>
+          </div>
+          ${denoms.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${denoms.map(([d,c])=>`<span style="background:rgba(212,148,15,0.1);border:1px solid rgba(212,148,15,0.2);border-radius:6px;padding:3px 8px;font-size:11px;font-weight:700;color:var(--text-1)">₹${d} × ${c}</span>`).join('')}</div>` : ''}
+          ${h.remarks ? `<div style="font-size:12px;color:var(--text-2);background:var(--bg-2);border-radius:6px;padding:8px 10px">📝 ${sanitize(h.remarks)}</div>` : ''}
+        </div>
+      </div>`;
+    })() : ''}
     <button class="btn btn-ghost btn-block" style="margin-top:12px;color:var(--red);border-color:rgba(239,68,68,0.2)" onclick="emp_logout()">🚪 Logout</button>
   `;
 }
@@ -1798,8 +1815,11 @@ function emp_recordSale() {
   const p = String(_activeBtn?.dataset?.pumpbtn || '');  // pump.id from active combined button
   if (isNaN(l)||l<=0) { toast('Enter valid liters','error'); return; }
   // No upper liter limit
-  if (!v || v.length < 2) { toast('Enter valid vehicle number','error'); return; }
-  if (!/^[A-Z0-9\s\-\.]+$/i.test(v)) { toast('Vehicle number has invalid characters','error'); return; }
+  // Vehicle required for non-cash payments; optional for cash walk-ins
+  if (empPayMode !== 'cash') {
+    if (!v || v.length < 2) { toast('Enter valid vehicle number','error'); return; }
+  }
+  if (v && v.length > 0 && !/^[A-Z0-9\s\-\.]+$/i.test(v)) { toast('Vehicle number has invalid characters','error'); return; }
   const amt = isNaN(a) || a <= 0 ? l * (EMP_PRICES[empSaleFuel] || 0) : a;
   if (isNaN(amt) || amt <= 0) { toast('Invalid amount','error'); return; }
 
@@ -1947,6 +1967,106 @@ function emp_recordDip() {
   emp_go('overview');
 }
 
+// ── CASH DENOMINATION HANDOVER ─────────────────────────────────────────────
+// Shows a denomination entry form before shift submit.
+// Employee fills in notes/coin counts; total is verified vs cash sales.
+// empState.cashHandover is set when confirmed, then emp_submit() proceeds.
+const EMP_DENOMS = [2000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
+
+function emp_showCashHandover(onConfirm) {
+  const expectedCash = emp_totalCash();
+  // Build denomination rows
+  const rows = EMP_DENOMS.map(d => `
+    <div style="display:grid;grid-template-columns:60px 1fr 90px;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-light)">
+      <span class="mono fw-700" style="color:var(--accent-light);font-size:14px">₹${d}</span>
+      <input id="denom_${d}" class="form-input" type="number" inputmode="numeric" min="0" placeholder="0"
+        style="padding:6px 10px;font-family:var(--mono);font-size:14px;text-align:center"
+        oninput="emp_calcDenomTotal()" />
+      <span class="mono" style="color:var(--text-2);font-size:12px;text-align:right" id="denom_sub_${d}">= ₹0</span>
+    </div>`).join('');
+
+  const overlay = document.createElement('div');
+  overlay.id = 'cashHandoverOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.82);backdrop-filter:blur(6px);z-index:10010;display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto';
+  overlay.innerHTML = `
+    <div style="background:var(--bg-1);border-radius:16px;border:1px solid rgba(212,148,15,0.3);width:100%;max-width:420px">
+      <div style="padding:16px 20px;border-bottom:1px solid var(--border)">
+        <div style="font-size:15px;font-weight:800;color:var(--text-0)">💵 Cash Handover</div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:2px">Count notes & coins before submitting shift</div>
+      </div>
+      <div style="padding:16px 20px">
+        <div style="background:rgba(212,148,15,0.07);border:1px solid rgba(212,148,15,0.2);border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <span style="font-size:12px;font-weight:700;color:var(--text-2)">Expected Cash (from sales)</span>
+          <span class="mono fw-800" style="font-size:16px;color:var(--accent-light)">${cur(expectedCash)}</span>
+        </div>
+        <div style="font-size:10px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;display:grid;grid-template-columns:60px 1fr 90px;gap:8px">
+          <span>Denom</span><span>Count</span><span style="text-align:right">Subtotal</span>
+        </div>
+        ${rows}
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px">
+          <div style="background:var(--bg-2);border-radius:8px;padding:10px 12px;text-align:center">
+            <div style="font-size:9px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:3px">Counted Total</div>
+            <div class="mono fw-800" id="denomTotalDisplay" style="font-size:18px;color:var(--green)">₹0</div>
+          </div>
+          <div style="background:var(--bg-2);border-radius:8px;padding:10px 12px;text-align:center">
+            <div style="font-size:9px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:3px">Variance</div>
+            <div class="mono fw-800" id="denomVarianceDisplay" style="font-size:18px;color:var(--text-3)">₹0</div>
+          </div>
+        </div>
+        <div style="margin-top:12px">
+          <label style="font-size:11px;font-weight:700;color:var(--text-3);display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.5px">Remarks (optional)</label>
+          <input id="handoverRemarks" class="form-input" placeholder="e.g. ₹50 short, manager informed" style="font-size:13px" />
+        </div>
+      </div>
+      <div style="padding:12px 20px;display:flex;gap:8px;border-top:1px solid var(--border)">
+        <button class="btn btn-ghost" style="flex:1" onclick="document.getElementById('cashHandoverOverlay').remove()">← Back</button>
+        <button class="btn btn-accent" style="flex:1;padding:12px" onclick="emp_confirmCashHandover(${expectedCash})">✅ Confirm &amp; Submit</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  // Focus first denom input
+  setTimeout(() => document.getElementById('denom_2000')?.focus(), 100);
+  // Store callback for confirm
+  window._empHandoverCallback = onConfirm;
+}
+
+function emp_calcDenomTotal() {
+  let total = 0;
+  EMP_DENOMS.forEach(d => {
+    const count = parseInt(document.getElementById('denom_' + d)?.value || '0') || 0;
+    const sub = count * d;
+    total += sub;
+    const subEl = document.getElementById('denom_sub_' + d);
+    if (subEl) subEl.textContent = '= ₹' + sub.toLocaleString('en-IN');
+  });
+  const totalEl = document.getElementById('denomTotalDisplay');
+  const varEl   = document.getElementById('denomVarianceDisplay');
+  const expEl   = document.querySelector('#cashHandoverOverlay .mono.fw-800[style*="accent-light"]');
+  if (totalEl) totalEl.textContent = cur(total);
+  // compute variance vs expected
+  const expectedCash = emp_totalCash();
+  const variance = total - expectedCash;
+  if (varEl) {
+    varEl.textContent = (variance > 0 ? '+' : '') + cur(variance);
+    varEl.style.color = Math.abs(variance) < 1 ? 'var(--green)' : Math.abs(variance) <= 50 ? 'var(--orange)' : 'var(--red)';
+  }
+}
+
+function emp_confirmCashHandover(expectedCash) {
+  let total = 0;
+  const breakdown = {};
+  EMP_DENOMS.forEach(d => {
+    const count = parseInt(document.getElementById('denom_' + d)?.value || '0') || 0;
+    if (count > 0) { breakdown[d] = count; total += count * d; }
+  });
+  const remarks = document.getElementById('handoverRemarks')?.value?.trim() || '';
+  const variance = total - expectedCash;
+  // Store in empState for shift summary and server sync
+  empState.cashHandover = { breakdown, total, expectedCash, variance, remarks, recordedAt: new Date().toISOString() };
+  document.getElementById('cashHandoverOverlay').remove();
+  if (typeof window._empHandoverCallback === 'function') window._empHandoverCallback();
+}
+
 function emp_confirmEnd() {
   const cc = Object.keys(empState.closeReadings).length, tn = emp_totalNozzles();
 
@@ -1975,15 +2095,15 @@ function emp_confirmEnd() {
        ${rows}
        <p style="font-size:11px;color:var(--text-3);margin-top:12px">You can go back to Sales tab to add missing entries, or submit with this difference (manager will be notified).</p>`,
       `<button class="btn btn-ghost" onclick="closeModal()">← Fix Sales</button>
-       <button class="btn btn-accent" onclick="closeModal();emp_submit()">Submit With Difference</button>`);
+       <button class="btn btn-accent" onclick="closeModal();emp_showCashHandover(emp_submit)">Submit With Difference</button>`);
     return;
   }
 
   if (cc < tn) {
     openModal('⚠️ Closing Readings Pending',
       `<p style="color:var(--accent-light);font-weight:600;margin-bottom:12px">${tn-cc} nozzle closing readings are still pending.</p><p style="color:var(--text-2);font-size:13px;margin-bottom:16px">Are you sure you want to submit?</p>`,
-      `<button class="btn btn-ghost" onclick="closeModal()">Go Back</button><button class="btn btn-accent" onclick="closeModal();emp_submit()">Submit Anyway</button>`);
-  } else emp_submit();
+      `<button class="btn btn-ghost" onclick="closeModal()">Go Back</button><button class="btn btn-accent" onclick="closeModal();emp_showCashHandover(emp_submit)">Submit Anyway</button>`);
+  } else emp_showCashHandover(emp_submit);
 }
 
 async function emp_submit() {

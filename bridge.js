@@ -86,14 +86,11 @@
     try {
       const result = await AuthAPI.superLogin(username, password);
       if (result.success) {
-        // Save token so it survives page navigation
+        // Token lives in sessionStorage only — clears when browser tab closes
         sessionStorage.setItem('fb_super_token', result.token);
-        localStorage.setItem('fb_super_token', result.token);
+        sessionStorage.setItem('fb_super_session', JSON.stringify({ loggedIn: true, at: Date.now() }));
         setAuthToken(result.token);
-        localStorage.setItem('fb_super_session', JSON.stringify({ loggedIn: true, at: Date.now() }));
         if (typeof mt_toast === 'function') mt_toast('Super Admin logged in', 'success');
-
-        // Refresh tenant list from server
         await mt_getTenants_async();
         if (typeof mt_showSelector === 'function') mt_showSelector();
       }
@@ -106,19 +103,24 @@
   const _origSuperLogout = window.mt_superLogout;
   window.mt_superLogout = async function() {
     await AuthAPI.logout();
-    localStorage.removeItem('fb_super_session');
+    sessionStorage.removeItem('fb_super_token');
+    sessionStorage.removeItem('fb_super_session');
+    clearAuth();
     if (typeof mt_showSelector === 'function') mt_showSelector();
   };
 
-  // Override mt_isSuperLoggedIn — check both localStorage marker AND valid token
+  // Override mt_isSuperLoggedIn — check sessionStorage only (clears on tab close)
   const _origIsSuperLoggedIn = window.mt_isSuperLoggedIn;
   window.mt_isSuperLoggedIn = function() {
+    const token = sessionStorage.getItem('fb_super_token');
+    if (!token) return false;
     const s = (() => {
-      try { return JSON.parse(localStorage.getItem('fb_super_session') || 'null'); } catch { return null; }
+      try { return JSON.parse(sessionStorage.getItem('fb_super_session') || 'null'); } catch { return null; }
     })();
     if (!s || !s.loggedIn) return false;
     if (Date.now() - s.at > 4 * 60 * 60 * 1000) {
-      localStorage.removeItem('fb_super_session');
+      sessionStorage.removeItem('fb_super_session');
+      sessionStorage.removeItem('fb_super_token');
       return false;
     }
     return true;
@@ -141,9 +143,9 @@
 
     if (!name || name.length < 2) { if (typeof mt_toast === 'function') mt_toast('Enter a station name', 'error'); return; }
 
-    // Ensure token is set — restore from sessionStorage or re-authenticate
+    // Ensure token is set — restore from sessionStorage or prompt re-login
     if (!getAuthToken()) {
-      const saved = sessionStorage.getItem('fb_super_token') || localStorage.getItem('fb_super_token');
+      const saved = sessionStorage.getItem('fb_super_token');
       if (saved) {
         setAuthToken(saved);
       } else {
@@ -171,7 +173,7 @@
   const _origDeleteTenant = window.mt_deleteTenant;
   window.mt_deleteTenant = async function(id) {
     // MUST use super admin token — admin token doesn't have permission to delete stations
-    const superToken = sessionStorage.getItem('fb_super_token') || localStorage.getItem('fb_super_token');
+    const superToken = sessionStorage.getItem('fb_super_token');
     if (!superToken) { mt_toast('Super admin session expired. Please log in again.', 'error'); mt_showSelector(); return; }
     const prevToken = getAuthToken();
     setAuthToken(superToken);
@@ -225,7 +227,7 @@
     if (!t) return;
     const newActive = t.active === false ? true : false;
     // Restore super token for this privileged operation
-    const superToken = sessionStorage.getItem('fb_super_token') || localStorage.getItem('fb_super_token');
+    const superToken = sessionStorage.getItem('fb_super_token');
     const prevToken = getAuthToken();
     if (superToken) setAuthToken(superToken);
     try {
@@ -234,13 +236,6 @@
       console.warn('[Bridge] Failed to update station active status on server:', e.message);
     } finally {
       if (prevToken) setAuthToken(prevToken);
-    }
-    // Also update localStorage immediately for UI
-    if (_origToggleStation) _origToggleStation(id);
-    else {
-      tenants.find(x => x.id === id).active = newActive;
-      localStorage.setItem('fb_tenants', JSON.stringify(tenants));
-      mt_showSelector();
     }
     // Refresh from server
     mt_getTenants_async().then(() => mt_showSelector()).catch(()=>{});
@@ -378,8 +373,8 @@
   // AUTO-REFRESH TENANTS ON PAGE LOAD
   // ═══════════════════════════════════════════
   document.addEventListener('DOMContentLoaded', function() {
-    // ── 1. Restore super token from storage ───────────────────────────────
-    const savedToken = sessionStorage.getItem('fb_super_token') || localStorage.getItem('fb_super_token');
+    // ── 1. Restore super token from sessionStorage only ───────────────────
+    const savedToken = sessionStorage.getItem('fb_super_token');
     if (savedToken) setAuthToken(savedToken);
 
     // ── 2. Fetch tenants from server; show selector if no active tenant ───
@@ -412,10 +407,10 @@
       try {
         const result = await AuthAPI.superLogin(username, password);
         if (result.success) {
+          // Token in sessionStorage only — never written to localStorage
           sessionStorage.setItem('fb_super_token', result.token);
-          localStorage.setItem('fb_super_token', result.token);
+          sessionStorage.setItem('fb_super_session', JSON.stringify({ loggedIn: true, at: Date.now() }));
           setAuthToken(result.token);
-          localStorage.setItem('fb_super_session', JSON.stringify({ loggedIn: true, at: Date.now() }));
           if (typeof mt_toast === 'function') mt_toast('Super Admin logged in', 'success');
           await mt_getTenants_async();
           if (typeof mt_showSelector === 'function') mt_showSelector();
@@ -429,15 +424,14 @@
     window.mt_superLogout = async function() {
       try { await AuthAPI.logout(); } catch {}
       sessionStorage.removeItem('fb_super_token');
-      localStorage.removeItem('fb_super_token');
-      localStorage.removeItem('fb_super_session');
+      sessionStorage.removeItem('fb_super_session');
       clearAuth();
       if (typeof mt_showSelector === 'function') mt_showSelector();
     };
 
     // ── Delete station (requires super token) ─────────────────────────────
     window.mt_deleteTenant = async function(id) {
-      const superToken = sessionStorage.getItem('fb_super_token') || localStorage.getItem('fb_super_token');
+      const superToken = sessionStorage.getItem('fb_super_token');
       if (!superToken) {
         if (typeof mt_toast === 'function') mt_toast('Super admin session expired. Please log in again.', 'error');
         if (typeof mt_showSelector === 'function') mt_showSelector();
@@ -486,7 +480,7 @@
       const t = tenants.find(x => x.id === id);
       if (!t) return;
       const newActive = t.active === false ? true : false;
-      const superToken = sessionStorage.getItem('fb_super_token') || localStorage.getItem('fb_super_token');
+      const superToken = sessionStorage.getItem('fb_super_token');
       const prevToken = getAuthToken();
       if (superToken) setAuthToken(superToken);
       try {
@@ -512,7 +506,7 @@
       const adminPass = document.getElementById('tAdminPass')?.value || 'admin123';
       if (!name || name.length < 2) { if (typeof mt_toast === 'function') mt_toast('Enter a station name', 'error'); return; }
       if (!getAuthToken()) {
-        const saved = sessionStorage.getItem('fb_super_token') || localStorage.getItem('fb_super_token');
+        const saved = sessionStorage.getItem('fb_super_token');
         if (saved) setAuthToken(saved);
         else { if (typeof mt_toast === 'function') mt_toast('Session expired. Please log in again.', 'error'); if (typeof mt_showSelector === 'function') mt_showSelector(); return; }
       }
@@ -534,7 +528,7 @@
     // ── Delete station admin user (requires super token) ──────────────────
     window.mt_deleteStationAdmin = async function(tenantId, userIdx) {
       if (!confirm('Remove this admin user?')) return;
-      const superToken = sessionStorage.getItem('fb_super_token') || localStorage.getItem('fb_super_token');
+      const superToken = sessionStorage.getItem('fb_super_token');
       const prevToken = getAuthToken();
       if (superToken) setAuthToken(superToken);
       try {
@@ -645,7 +639,7 @@
       if (newPass.length < 6) { mt_toast('Password must be at least 6 characters', 'error'); return; }
       if (newPass !== confPass) { mt_toast('Passwords do not match', 'error'); return; }
       try {
-        const superToken = sessionStorage.getItem('fb_super_token') || localStorage.getItem('fb_super_token');
+        const superToken = sessionStorage.getItem('fb_super_token');
         if (superToken) setAuthToken(superToken);
         await AuthAPI.changeSuperPassword(newUser, newPass, confPass);
         document.getElementById('superCredsOverlay')?.remove();

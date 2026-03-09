@@ -5404,7 +5404,7 @@ function openSaleModal() {
       <div class="form-group"><label class="form-label">Amount (₹)</label><input class="form-input" id="saleAmount" type="number" step="0.01" placeholder="Auto-calculated" /></div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label class="form-label">Vehicle No.</label><input class="form-input" id="saleVehicle" placeholder="KA00XX0000" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()" onpaste="setTimeout(()=>this.value=this.value.toUpperCase(),0)" /></div>
+      <div class="form-group"><label class="form-label">Vehicle No. <span style="font-size:10px;color:var(--text-3);font-weight:500">(optional for cash)</span></label><input class="form-input" id="saleVehicle" placeholder="KA00XX0000" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()" onpaste="setTimeout(()=>this.value=this.value.toUpperCase(),0)" /></div>
       <div class="form-group"><label class="form-label">Payment Mode</label><select class="form-input" id="saleMode">
         <option value="cash">Cash</option><option value="upi">UPI</option><option value="card">Card</option><option value="credit">Credit</option>
       </select></div>
@@ -5428,7 +5428,7 @@ async function saveSale() {
   const pump = String(document.getElementById('salePump').value);   // pump.id is TEXT in DB — keep as string
   const customer = (document.getElementById('saleCustomer')?.value || '').trim();
 
-  const errors = validateSaleInput(fuelType, liters, amount, vehicle, APP.data.prices);
+  const errors = validateSaleInput(fuelType, liters, amount, vehicle, APP.data.prices, mode);
   if (errors.length > 0) { toast(errors[0], 'error'); return; }
 
   const sale = {
