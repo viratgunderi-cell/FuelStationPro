@@ -111,7 +111,8 @@ function getEmpList() {
     })).filter(e => e.pinHash);
   }
   // APP.data not loaded (employee login screen after cache clear)
-  // Use cache written by fetchPublicEmployees() which now includes pinHash from server
+  // Use cache written by fetchPublicEmployees() which comes from server
+  // Server already filters to employees with pin_hash set — trust that filter
   try {
     const cached = JSON.parse(localStorage.getItem('fb_emp_cache') || '[]');
     if (cached.length > 0) {
@@ -121,10 +122,12 @@ function getEmpList() {
         role: e.role,
         shift: e.shift || '',
         permissions: e.permissions || {},
-        // Use pinHash from server cache first (survives cache clears via DB),
-        // then fall back to localStorage pins
+        // pinHash may be null when sourced from server (intentionally stripped for security)
+        // local fb_emp_pins may have it if admin cached it during authenticated session
         pinHash: e.pinHash || getEmpPinHash(e.id),
-      })).filter(e => e.pinHash);
+      }));
+      // NOTE: do NOT filter by pinHash here — server-sourced cache means PIN exists on server
+      // even if pinHash is null locally. doEmpLogin() handles online verification via /verify-pin
     }
   } catch {}
   return [];
@@ -2427,10 +2430,11 @@ async function fetchPublicEmployees() {
     if (!resp.ok) return;
     const emps = await resp.json();
     if (Array.isArray(emps) && emps.length > 0) {
-      // Update cache
+      // Update cache — server already filters to employees with pin_hash set
+      // so every employee in this list has a PIN; no client-side pinHash filter needed
       try { localStorage.setItem('fb_emp_cache', JSON.stringify(emps)); } catch {}
-      // Fix (h): Only show employees who have a PIN set
-      const empsWithPin = emps.filter(e => e.pinHash && e.pinHash.length > 0);
+      // All returned employees have PINs (server WHERE pin_hash IS NOT NULL)
+      const empsWithPin = emps;
       // Refresh the employee dropdown if it's currently visible
       const sel = document.getElementById('empLoginName2') || document.getElementById('empLoginName');
       if (sel) {
@@ -2584,7 +2588,30 @@ async function doEmpLogin() {
   if (!emp) { toast('Select employee', 'error'); return; }
   if (!checkRateLimit('emp_' + id)) return;
   var pinHash = await hashPassword(pin);
-  if (pinHash !== emp.pinHash) { recordFailedLogin('emp_' + id); toast('Incorrect PIN.', 'error'); return; }
+
+  // ── PIN verification: prefer local hash, fall back to server verify-pin ──
+  // emp.pinHash may be null when employee list was sourced from server (IR-01 security fix
+  // strips pinHash from public response). In that case verify against server instead.
+  if (emp.pinHash) {
+    // Local hash available (admin session cached it or fb_emp_pins has it)
+    if (pinHash !== emp.pinHash) { recordFailedLogin('emp_' + id); toast('Incorrect PIN.', 'error'); return; }
+  } else {
+    // No local hash — verify online via server
+    try {
+      const tenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
+      if (!tenant || !tenant.id) { toast('No station selected', 'error'); return; }
+      const vResp = await fetch('/api/public/verify-pin/' + encodeURIComponent(tenant.id), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employeeId: id, pinHash })
+      });
+      const vResult = await vResp.json().catch(() => ({ valid: false }));
+      if (!vResult.valid) { recordFailedLogin('emp_' + id); toast('Incorrect PIN.', 'error'); return; }
+    } catch(e) {
+      toast('Cannot verify PIN — check your connection and try again.', 'error');
+      return;
+    }
+  }
   recordSuccessLogin('emp_' + id);
   APP.loggedIn = true; APP.role = 'employee'; saveSession();
 
