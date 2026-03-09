@@ -146,14 +146,15 @@
       .catch(function(e) { console.warn('[PWA] SW register failed:', e.message); });
   }
 
-  // Show reload button after 8 seconds if app still hasn't loaded
+  // Show reload button after 20s (mobile needs time to parse 700KB JS)
+  var _splashTimeout = /Mobi|Android/i.test(navigator.userAgent) ? 20000 : 10000;
   setTimeout(function() {
     var splash = document.getElementById('splash');
     if (splash && splash.style.display !== 'none' && !document.body.classList.contains('app-ready')) {
       document.getElementById('splash-msg').textContent = 'Taking too long. Try reloading.';
       document.getElementById('splash-reload').style.display = 'inline-block';
     }
-  }, 8000);
+  }, _splashTimeout);
 })();
 </script>
 
@@ -10238,6 +10239,10 @@ function openSetPINModal(empId) {
   const emp = APP.data.employees.find(e => parseInt(e.id) === parseInt(empId));
   if (!emp) { toast('Employee not found', 'error'); return; }
   const hasPIN = !!getEmpPinHash(empId);
+  const bioAlreadyReg = emp_bioIsRegistered(empId);
+  const bioSection = window.PublicKeyCredential
+    ? '<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)"><div style="font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:8px;text-transform:uppercase">Biometric Login (Optional)</div><button class="btn btn-ghost btn-block" id="bioRegBtn" onclick="emp_bioRegisterFromModal()" style="border:1px dashed var(--border);font-size:13px;padding:10px">' + (bioAlreadyReg ? '✅ Registered — tap to re-register' : '🔒 Register fingerprint / Face ID') + '</button><div style="font-size:10px;color:var(--text-3);margin-top:5px">Employee must be present on their device. Set PIN first.</div></div>'
+    : '';
   openModal(`🔑 Set PIN — ${sanitize(emp.name)}`,
     `<div style="margin-bottom:12px;padding:12px;background:var(--bg-0);border-radius:var(--radius-sm);border:1px solid var(--border-light);font-size:12px;color:var(--text-2)">
       ${hasPIN ? '🔄 <strong style="color:var(--accent-light)">A PIN is already set.</strong> Enter a new PIN below to change it.' : '⚠️ <strong style="color:var(--orange)">No PIN set yet.</strong> This employee cannot log in until a PIN is assigned.'}
@@ -10249,14 +10254,7 @@ function openSetPINModal(empId) {
       <input class="form-input mono" id="confirmPIN" type="password" inputmode="numeric" maxlength="4" placeholder="••••" style="font-size:24px;letter-spacing:8px;text-align:center" />
     </div>
     <input type="hidden" id="setPINEmpId" value="${empId}" />
-    ${window.PublicKeyCredential ? `<div style='margin-top:14px;padding-top:14px;border-top:1px solid var(--border)'>
-      <div style='font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:8px;text-transform:uppercase'>Biometric Login (Optional)</div>
-      <button class='btn btn-ghost btn-block' id='bioRegBtn' onclick='emp_bioRegisterFromModal()'
-        style='border:1px dashed var(--border);font-size:13px;padding:10px'>
-        ${emp_bioIsRegistered(${empId}) ? '✅ Registered — tap to re-register' : '🔒 Register fingerprint / Face ID'}
-      </button>
-      <div style='font-size:10px;color:var(--text-3);margin-top:5px'>Employee must be present on their device. Set PIN first.</div>
-    </div>` : ''}`,
+    ${bioSection}`,
     `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-accent" onclick="saveEmployeePIN()">🔑 Set PIN</button>`
   );
   // Fix (e): auto-focus the new PIN input
@@ -13952,6 +13950,7 @@ async function initApp() {
     document.addEventListener(evt, resetIdleTimer, { passive: true })
   );
 
+  _splashProgress(85, 'Checking session...');
   // Check session
   var sessionOk = loadSession();
 
