@@ -69,6 +69,17 @@ async function startServer() {
     res.setHeader('Service-Worker-Allowed', '/');
     res.sendFile(path.join(publicDir, 'sw.js'));
   });
+
+  // ── Split JS bundle (Option A refactor) ─────────────────────────────────
+  // Each file is versioned via query string (?v=) in index.html for cache busting
+  const JS_BUNDLE_FILES = ['multitenant.js', 'utils.js', 'admin.js', 'employee.js', 'app.js'];
+  JS_BUNDLE_FILES.forEach(fname => {
+    app.get('/' + fname, (req, res) => {
+      res.setHeader('Content-Type', 'application/javascript');
+      res.setHeader('Cache-Control', 'public, max-age=3600'); // 1hr; SW handles offline
+      res.sendFile(path.join(publicDir, fname));
+    });
+  });
   app.get('/icon-:size.png', (req, res) => {
     const f = path.join(publicDir, `icon-${req.params.size}.png`);
     if (require('fs').existsSync(f)) {

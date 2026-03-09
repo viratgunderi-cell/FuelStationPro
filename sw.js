@@ -7,13 +7,18 @@
  *   - Static assets (manifest, icons): Cache-first, long TTL
  */
 
-const CACHE_NAME    = 'fuelbunk-v6';
-const SHELL_CACHE   = 'fuelbunk-shell-v6';
-const API_CACHE     = 'fuelbunk-api-v6';
+const CACHE_NAME    = 'fuelbunk-v7';
+const SHELL_CACHE   = 'fuelbunk-shell-v7';
+const API_CACHE     = 'fuelbunk-api-v7';
 
-// App shell — cache on install
+// App shell — cache on install (split bundle: v7)
 const SHELL_ASSETS = [
   '/',
+  '/multitenant.js',
+  '/utils.js',
+  '/admin.js',
+  '/employee.js',
+  '/app.js',
   '/api-client.js',
   '/bridge.js',
   '/manifest.json',
