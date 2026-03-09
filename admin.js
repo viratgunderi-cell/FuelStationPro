@@ -1948,7 +1948,6 @@ window.mt_resetStationAdminPass = mt_resetStationAdminPass;
 window.mt_deleteStationAdmin = mt_deleteStationAdmin;
 window.mt_changeSupercreds = mt_changeSupercreds;
 window.mt_saveSupercreds = mt_saveSupercreds;
-window.mt_switchStation = mt_switchStation;
 window.mt_doSuperLogin = mt_doSuperLogin;
 window.mt_superLogout = mt_superLogout;
 window.mt_openAddTenant = mt_openAddTenant;
@@ -4787,7 +4786,6 @@ function openAddAdminUserModal() {
   `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-accent" onclick="saveAddAdminUser()">Add User</button>`);
 }
-window.openAddAdminUserModal = openAddAdminUserModal;
 
 async function saveAddAdminUser() {
   const name = (document.getElementById('au_name')?.value||'').trim();
@@ -4951,64 +4949,7 @@ window.saveTaxRate = saveTaxRate;
 window.deleteTaxRate = deleteTaxRate;
 window.confirmDeleteTaxRate = confirmDeleteTaxRate;
 
-window.openChangeAdminPassModal = openChangeAdminPassModal;
-window.saveAdminPassword = saveAdminPassword;
-window.openAddAdminUserModal = openAddAdminUserModal;
-window.saveNewAdminUser = saveNewAdminUser;
-window.mt_doSwitchStation = mt_doSwitchStation;
 
-// ═══════════════════════════════════════════════════════════
-// FUELBUNK PRO — Main Application
-// ═══════════════════════════════════════════════════════════
-
-const APP = {
-  page: 'dashboard',
-  salesFilter: 'all',
-  sidebarOpen: true,
-  data: null,
-  deferredPrompt: null,
-  loggedIn: false,
-  role: null, // 'admin' or 'employee'
-  adminUser: null,
-  auditLog: [],
-  salesAllTime: false,
-};
-
-// ── SEED DATA ────────────────────────────────────────────────
-const SEED = {
-  tanks: [],
-  pumps: [],
-  shifts: [],
-  employees: [],
-  sales: [],
-  creditCustomers: [],
-  expenses: [],
-  fuelPurchases: [],
-  dipReadings: [],
-  prices: { petrol: 102.86, diesel: 88.62, premium_petrol: 112.50 },
-  purchasePrices: { petrol: 96.50, diesel: 82.30, premium_petrol: 105.80 },
-  fuelTaxRates: [
-    { fuelType: 'petrol',         taxName: 'ZLST', rate: 29.84 },
-    { fuelType: 'diesel',         taxName: 'ZLST', rate: 21.17 },
-    { fuelType: 'premium_petrol', taxName: 'ZLST', rate: 18.00 },
-  ],
-  weekly: [
-    { day: 'Mon', petrol: 0, diesel: 0, premium: 0, revenue: 0 },
-    { day: 'Tue', petrol: 0, diesel: 0, premium: 0, revenue: 0 },
-    { day: 'Wed', petrol: 0, diesel: 0, premium: 0, revenue: 0 },
-    { day: 'Thu', petrol: 0, diesel: 0, premium: 0, revenue: 0 },
-    { day: 'Fri', petrol: 0, diesel: 0, premium: 0, revenue: 0 },
-    { day: 'Sat', petrol: 0, diesel: 0, premium: 0, revenue: 0 },
-    { day: 'Sun', petrol: 0, diesel: 0, premium: 0, revenue: 0 },
-  ],
-  upiVPA: '',
-  upiName: '',
-};
-
-// ── ALLOCATION SYSTEM ────────────────────────────────────────
-const EMP_COLORS = ['#22c55e','#3b82f6','#a855f7','#f97316','#06b6d4','#eab308','#ec4899','#14b8a6','#f43f5e','#8b5cf6'];
-function empInitials(name) { return (name||'').split(' ').map(w=>w[0]).join('').toUpperCase(); }
-function empColor(emp) { return emp.color || EMP_COLORS[(emp.id || 0) % EMP_COLORS.length]; }
 
 let allocShift = 'Morning'; // default — loadData() auto-selects shift with assignments from server
 window.staffTab = 'shifts'; // internal tab: 'shifts' | 'allocation' | 'roster' | 'attendance' | 'directory'
@@ -7007,7 +6948,7 @@ function savePrices() {
     APP.data.prices[f.id] = newSell;
   });
   if (!valid) return;
-  db.setSetting('prices', APP.data.prices);
+  db.setSetting('prices', APP.data.prices).catch(()=>{});
   if (changes.length > 0) auditLog('price_change', { changes });
   closeModal();
   toast('Fuel prices updated', 'success');
@@ -7032,7 +6973,7 @@ function savePurchasePrices() {
     const val = parseFloat(el.value);
     if (!isNaN(val) && val > 0 && val <= 300) APP.data.purchasePrices[f.id] = val;
   });
-  db.setSetting('purchasePrices', APP.data.purchasePrices);
+  db.setSetting('purchasePrices', APP.data.purchasePrices).catch(()=>{});
   closeModal();
   toast('Purchase prices updated', 'success');
   renderPage();
@@ -7053,13 +6994,13 @@ function saveUPISettings() {
   APP.data.razorpayKey = rzpKey;
   APP.data.waPhone = waPhone;
   APP.data.waApiKey = waApiKey;
-  db.setSetting('upiVPA', APP.data.upiVPA);
-  db.setSetting('upiName', APP.data.upiName);
-  db.setSetting('stationCode', APP.data.stationCode);
-  db.setSetting('omcName', APP.data.omcName);
-  db.setSetting('razorpayKey', rzpKey);
-  db.setSetting('waPhone', waPhone);
-  db.setSetting('waApiKey', waApiKey);
+  db.setSetting('upiVPA', APP.data.upiVPA).catch(()=>{});
+  db.setSetting('upiName', APP.data.upiName).catch(()=>{});
+  db.setSetting('stationCode', APP.data.stationCode).catch(()=>{});
+  db.setSetting('omcName', APP.data.omcName).catch(()=>{});
+  db.setSetting('razorpayKey', rzpKey).catch(()=>{});
+  db.setSetting('waPhone', waPhone).catch(()=>{});
+  db.setSetting('waApiKey', waApiKey).catch(()=>{});
   const preview = document.getElementById('upiQRPreview');
   if (preview && vpa) generateUPIQR(preview, { vpa: APP.data.upiVPA, name: APP.data.upiName });
   auditLog('settings_change', { upiVPA: vpa ? '***' : 'cleared', upiName: name, razorpay: rzpKey ? 'set' : 'cleared' });
@@ -7673,3 +7614,12 @@ function deleteShift() {
   renderPage();
 }
 
+// ── UPI exports (functions defined in admin.js) ──
+window.openUPIPaymentModal = openUPIPaymentModal;
+window.openUPIIntent = openUPIIntent;
+window.payViaRazorpay = payViaRazorpay;
+window.copyUPILink2 = copyUPILink2;
+window.shareUPILink2 = shareUPILink2;
+window.confirmUPIPayment = confirmUPIPayment;
+window.recordSaleWithUPI = recordSaleWithUPI;
+window.openAddAdminUserModal = openAddAdminUserModal;

@@ -2706,7 +2706,7 @@ function exportDSRCSV() {
     todaySales.map(s => [s.time||'', s.vehicle||'', getFuel(s.fuelType).short, s.liters, s.amount, s.employee||'', s.mode]));
 }
 
-function exportCreditCSV() {
+function exportCreditSummaryCSV() {
   exportCSV('credit-outstanding-' + today() + '.csv',
     ['Customer', 'Phone', 'Vehicle/Company', 'Outstanding', 'Credit Limit'],
     APP.data.creditCustomers.filter(c => (c.outstanding||c.balance||0) > 0).map(c => [
@@ -3375,3 +3375,7 @@ window.emp_bioIsRegistered = emp_bioIsRegistered;
 window.emp_showPinFallback = emp_showPinFallback;
 window.emp_loginNameChanged = emp_loginNameChanged;
 window.emp_completeLogin = emp_completeLogin;
+
+// ── mt_switchStation exports (functions defined in employee.js) ──
+window.mt_switchStation = mt_switchStation;
+window.mt_doSwitchStation = mt_doSwitchStation;

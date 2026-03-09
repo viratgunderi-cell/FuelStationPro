@@ -308,58 +308,6 @@ async function saveAdminPassword() {
   toast('Password updated', 'success');
 }
 
-function openAddAdminUserModal() {
-  openModal('➕ Add Admin User',
-    `<div class="form-group"><label class="form-label">Full Name *</label>
-       <input class="form-input" id="newAdminName" placeholder="e.g. Suresh Kumar" />
-     </div>
-     <div class="form-row">
-       <div class="form-group"><label class="form-label">Username *</label>
-         <input class="form-input" id="newAdminUsername" placeholder="e.g. manager" />
-       </div>
-       <div class="form-group"><label class="form-label">Role</label>
-         <select class="form-input" id="newAdminRole">
-           <option>Manager</option>
-           <option>Owner</option>
-           <option>Accountant</option>
-         </select>
-       </div>
-     </div>
-     <div class="form-group"><label class="form-label">Password *</label>
-       <input class="form-input" id="newAdminPass2" type="password" placeholder="Min 6 characters" autocomplete="new-password" />
-     </div>`,
-    `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-     <button class="btn btn-accent" onclick="saveNewAdminUser()">💾 Add User</button>`
-  );
-}
-
-async function saveNewAdminUser() {
-  const name = document.getElementById('newAdminName')?.value?.trim();
-  const username = document.getElementById('newAdminUsername')?.value?.trim()?.toLowerCase();
-  const role = document.getElementById('newAdminRole')?.value;
-  const pass = document.getElementById('newAdminPass2')?.value;
-  if (!name || name.length < 2) { toast('Enter a name', 'error'); return; }
-  if (!username || username.length < 2) { toast('Enter a username', 'error'); return; }
-  if (!pass || pass.length < 6) { toast('Password must be at least 6 characters', 'error'); return; }
-  const tenants = mt_getTenants();
-  const tIdx = tenants.findIndex(t => t.id === APP.tenant?.id);
-  if (tIdx === -1) { toast('Tenant not found', 'error'); return; }
-  if ((tenants[tIdx].adminUsers||[]).find(u => u.username === username)) {
-    toast('Username already exists', 'error'); return;
-  }
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pass));
-  const hash = Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
-  const newUser = { id: Date.now(), name, username, passHash: hash, role };
-  tenants[tIdx].adminUsers = [...(tenants[tIdx].adminUsers||[]), newUser];
-  mt_saveTenants(tenants);
-  mt_setActiveTenant(tenants[tIdx]);
-  ADMIN_USERS.push(newUser);
-  APP.tenant = tenants[tIdx];
-  closeModal();
-  toast(`${name} added as admin`, 'success');
-  renderPage();
-}
-
 // Hash change
 window.addEventListener('hashchange', () => {
   if (!APP.loggedIn) return;
@@ -383,3 +331,5 @@ document.addEventListener('DOMContentLoaded', function() {
     if (app) app.innerHTML = '<div style="position:fixed;inset:0;background:#0a0c10;display:flex;align-items:center;justify-content:center;color:#f4f5f7;font-family:sans-serif;text-align:center;padding:24px"><div><div style="font-size:48px;margin-bottom:16px">⚠️</div><h2 style="margin-bottom:8px">App Error</h2><p style="color:#9498a5;font-size:13px;margin-bottom:20px">' + (e && e.message ? e.message : 'Unknown error') + '</p><button onclick="location.reload()" style="background:#d4940f;color:#000;border:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">Reload App</button></div></div>';
   }
 });
+window.openChangeAdminPassModal = openChangeAdminPassModal;
+window.saveAdminPassword = saveAdminPassword;

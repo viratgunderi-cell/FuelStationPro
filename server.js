@@ -26,12 +26,12 @@ async function startServer() {
     contentSecurityPolicy: {
       directives: {
         defaultSrc:    ["'self'"],
-        scriptSrc:     ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],
+        scriptSrc:     ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net', 'https://checkout.razorpay.com'],
         scriptSrcAttr: ["'unsafe-inline'"],
         styleSrc:      ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         fontSrc:       ["'self'", 'data:', 'https://fonts.gstatic.com'],
         imgSrc:        ["'self'", 'data:', 'blob:'],
-        connectSrc:    ["'self'", 'https://cdn.jsdelivr.net'],
+        connectSrc:    ["'self'", 'https://cdn.jsdelivr.net', 'https://api.callmebot.com', 'https://api.razorpay.com'],
         workerSrc:     ["'self'", 'blob:'],
         manifestSrc:   ["'self'"],
         objectSrc:     ["'none'"],

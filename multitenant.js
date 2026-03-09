@@ -897,3 +897,56 @@ try { window.db = new FuelDB_IDB(_tenantDbName); } catch(e) { console.warn('Fuel
 // FUELBUNK PRO — Utilities
 // ═══════════════════════════════════════════════════════════
 
+// ── APP state + SEED (moved here so it loads first, before admin.js) ──
+// ═══════════════════════════════════════════════════════════
+// FUELBUNK PRO — Main Application
+// ═══════════════════════════════════════════════════════════
+
+const APP = {
+  page: 'dashboard',
+  salesFilter: 'all',
+  sidebarOpen: true,
+  data: null,
+  deferredPrompt: null,
+  loggedIn: false,
+  role: null, // 'admin' or 'employee'
+  adminUser: null,
+  auditLog: [],
+  salesAllTime: false,
+};
+
+// ── SEED DATA ────────────────────────────────────────────────
+const SEED = {
+  tanks: [],
+  pumps: [],
+  shifts: [],
+  employees: [],
+  sales: [],
+  creditCustomers: [],
+  expenses: [],
+  fuelPurchases: [],
+  dipReadings: [],
+  prices: { petrol: 102.86, diesel: 88.62, premium_petrol: 112.50 },
+  purchasePrices: { petrol: 96.50, diesel: 82.30, premium_petrol: 105.80 },
+  fuelTaxRates: [
+    { fuelType: 'petrol',         taxName: 'ZLST', rate: 29.84 },
+    { fuelType: 'diesel',         taxName: 'ZLST', rate: 21.17 },
+    { fuelType: 'premium_petrol', taxName: 'ZLST', rate: 18.00 },
+  ],
+  weekly: [
+    { day: 'Mon', petrol: 0, diesel: 0, premium: 0, revenue: 0 },
+    { day: 'Tue', petrol: 0, diesel: 0, premium: 0, revenue: 0 },
+    { day: 'Wed', petrol: 0, diesel: 0, premium: 0, revenue: 0 },
+    { day: 'Thu', petrol: 0, diesel: 0, premium: 0, revenue: 0 },
+    { day: 'Fri', petrol: 0, diesel: 0, premium: 0, revenue: 0 },
+    { day: 'Sat', petrol: 0, diesel: 0, premium: 0, revenue: 0 },
+    { day: 'Sun', petrol: 0, diesel: 0, premium: 0, revenue: 0 },
+  ],
+  upiVPA: '',
+  upiName: '',
+};
+
+// ── ALLOCATION SYSTEM ────────────────────────────────────────
+const EMP_COLORS = ['#22c55e','#3b82f6','#a855f7','#f97316','#06b6d4','#eab308','#ec4899','#14b8a6','#f43f5e','#8b5cf6'];
+function empInitials(name) { return (name||'').split(' ').map(w=>w[0]).join('').toUpperCase(); }
+function empColor(emp) { return emp.color || EMP_COLORS[(emp.id || 0) % EMP_COLORS.length]; }
