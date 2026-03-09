@@ -672,11 +672,22 @@ function emp_renderCards(mode) {
         <!-- Reading input -->
         <div style="display:flex;gap:8px;align-items:center">
           ${mode === 'open'
-            ? `<div style="flex:1;font-family:var(--mono);font-size:20px;font-weight:700;padding:12px 14px;text-align:center;background:var(--bg-0);border:2px solid var(--border);border-radius:8px;color:${v !== undefined && v > 0 ? 'var(--accent-light)' : 'var(--text-3)'}">
-                ${v !== undefined && v > 0 ? fmt(v) : '—'}
-                ${v !== undefined && v > 0 ? '<div style="font-size:10px;font-weight:500;color:var(--text-3);margin-top:2px">Opening (carried from previous shift)</div>' : '<div style="font-size:10px;color:var(--text-3)">No previous reading — enter 0 to start</div>'}
-              </div>
-              <span style="color:${v !== undefined && v > 0 ? 'var(--green)' : 'var(--text-3)'};font-size:20px;flex-shrink:0">${v !== undefined && v > 0 ? '✓' : '—'}</span>`
+            ? (v !== undefined && v > 0
+                // Carried reading from previous shift — read-only display
+                ? `<div style="flex:1;font-family:var(--mono);font-size:20px;font-weight:700;padding:12px 14px;text-align:center;background:var(--bg-0);border:2px solid rgba(34,197,94,0.3);border-radius:8px;color:var(--accent-light)">
+                    ${fmt(v)}
+                    <div style="font-size:10px;font-weight:500;color:var(--text-3);margin-top:2px">Opening (carried from previous shift)</div>
+                  </div>
+                  <span style="color:var(--green);font-size:20px;flex-shrink:0">✓</span>`
+                // No previous reading — show editable input
+                : `<input class="form-input" type="number" inputmode="decimal" step="0.1"
+                    placeholder="Enter opening meter reading"
+                    value="${v !== undefined ? v : ''}"
+                    onchange="emp_saveReading('open','${k}',this.value)"
+                    onfocus="this.select()"
+                    style="flex:1;font-family:var(--mono);font-size:20px;font-weight:700;padding:12px 14px;text-align:center;border-color:var(--accent)" />
+                  ${v !== undefined ? '<span style="color:var(--green);font-size:20px;flex-shrink:0">✓</span>' : '<span style="color:var(--accent);font-size:12px;flex-shrink:0">Required</span>'}`
+              )
             : `<input class="form-input" type="number" inputmode="decimal" step="0.1"
                 placeholder="Closing reading"
                 value="${v !== undefined ? v : ''}"
