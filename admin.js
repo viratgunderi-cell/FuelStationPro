@@ -324,7 +324,7 @@ function renderPumps(D) {
     const _nCur  = (p.currentReading || 0);
     const meterSoldAgg = Math.max(0, _nCur - _nOpen);
     // Use today's sales-based revenue when opening reading is 0 (no shift data yet)
-    const todayIso_card = new Date().toISOString().slice(0,10);
+    const todayIso_card = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
     const pumpTodaySales = _nOpen === 0 && _nCur === 0 ? D.sales.filter(s => String(s.pump) === String(p.id) && (s.date||'').slice(0,10) === todayIso_card) : [];
     const salesRevAgg = pumpTodaySales.reduce((a,s) => a + (s.amount||0), 0);
     const salesSoldAgg = pumpTodaySales.reduce((a,s) => a + (s.liters||0), 0);
@@ -341,7 +341,7 @@ function renderPumps(D) {
 
     // Per-nozzle breakdown for mixed-fuel pumps
     const allSameFuel = nozzleLabels.every(n => (nozzleFuels[n]||p.fuelType) === (nozzleFuels[nozzleLabels[0]]||p.fuelType));
-    const todayIso_pumps = new Date().toISOString().slice(0,10);
+    const todayIso_pumps = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
     const nozzleBreakdown = nozzleLabels.length <= 1 ? '' : nozzleLabels.map(n => {
       const nft  = getFuel(nozzleFuels[n] || p.fuelType);
       const nOpen  = (p.nozzleOpen || {})[n] ?? 0;
@@ -400,7 +400,7 @@ function renderPumps(D) {
       const close = nr[n] !== undefined ? nr[n] : (p.currentReading || 0);
       // Use sales data as source for per-nozzle sold when nozzleReadings available
       const nozzleSales = D.sales.filter(s => String(s.pump) === String(p.id) && (s.nozzle === n || s.nozzle === String(n)));
-      const todayIso = new Date().toISOString().slice(0,10);
+      const todayIso = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
       const todayNozzleSales = nozzleSales.filter(s => (s.date||'').slice(0,10) === todayIso);
       const soldL = todayNozzleSales.reduce((a,s) => a + (s.liters||0), 0);
       const soldR = todayNozzleSales.reduce((a,s) => a + (s.amount||0), 0);
@@ -437,7 +437,7 @@ function renderPumps(D) {
     ${(() => {
       // ── Nozzle Meter Log ─────────────────────────────────────────────────
       const log = window._nozzleMeterLog || [];
-      const today = new Date().toISOString().slice(0,10);
+      const today = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
       const logDate = window._nmlDate || today;
       const logRows = log.filter(e => e.date === logDate);
 
@@ -692,6 +692,17 @@ function renderCredit(D) {
         <button class="btn btn-ghost btn-sm" onclick="openEditCreditModal(${c.id})">✏️ Edit</button>
         <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="confirmDeleteCredit(${c.id})">🗑</button>
       </div>
+      ${(() => {
+        const txns = (APP.data.creditTransactions || []).filter(t => String(t.customerId) === String(c.id)).slice(0, 4);
+        if (!txns.length) return '';
+        return `<div style="margin-top:10px;border-top:1px solid var(--border-light);padding-top:8px">
+          <div style="font-size:10px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px">Recent Payments</div>
+          ${txns.map(t => `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border-light);font-size:11px">
+            <span style="color:var(--text-2)">${t.date} · <span style="color:var(--text-3)">${sanitize((t.mode||'').toUpperCase())}</span></span>
+            <span style="color:var(--green);font-weight:700">+${cur(t.amount)}</span>
+          </div>`).join('')}
+        </div>`;
+      })()}
     </div>`;
   }).join('');
 
@@ -732,7 +743,7 @@ function renderStaff(D) {
     `<button class="shift-tab ${allocShift === s.name ? 'active' : ''}" onclick="allocShift='${s.name}'; renderPage()">${s.name} <span style="font-size:10px;opacity:0.6;margin-left:3px">${s.start}–${s.end}</span></button>`
   ).join('');
   // Date navigation for allocation
-  const todayIsoAlloc = new Date().toISOString().slice(0,10);
+  const todayIsoAlloc = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
 
   // ── Week range for week view ──────────────────────────────────────────────
   // anchorDate drives the week — default to current week's Monday
@@ -961,7 +972,7 @@ function renderStaff(D) {
     : window.staffTab === 'allocation'
     ? `<button class="btn btn-ghost btn-sm" onclick="autoAssignAlloc()">⚡ Auto Assign</button><button class="btn btn-ghost btn-sm" onclick="clearShiftAllocConfirm()">🗑 Clear All</button>`
     : window.staffTab === 'attendance'
-    ? `<input type="date" class="form-input" style="padding:6px 12px;font-size:13px;width:160px" value="${window._attDate||new Date().toISOString().slice(0,10)}" onchange="window._attDate=this.value;renderPage()" /><button class="btn btn-accent btn-sm" onclick="attSave()">💾 Save</button><button class="btn btn-ghost btn-sm" onclick="attMarkAllPresent('${window._attDate||new Date().toISOString().slice(0,10)}')">✅ All Present</button>`
+    ? `<input type="date" class="form-input" style="padding:6px 12px;font-size:13px;width:160px" value="${window._attDate||(()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})()}" onchange="window._attDate=this.value;renderPage()" /><button class="btn btn-accent btn-sm" onclick="attSave()">💾 Save</button><button class="btn btn-ghost btn-sm" onclick="attMarkAllPresent('${window._attDate||(()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})()}')">✅ All Present</button>`
     : window.staffTab === 'roster'
     ? `<button class="btn btn-ghost btn-sm" onclick="rosterNavWeek(-1)">◀ Prev</button><button class="btn btn-ghost btn-sm" onclick="rosterNavWeek(1)">Next ▶</button>${(()=>{const _o=window._rosterWeekOffset||0;const _t=new Date();const _d=_t.getDay()===0?6:_t.getDay()-1;const _w=new Date(_t);_w.setDate(_t.getDate()-_d+_o*7);_w.setHours(0,0,0,0);const _m=new Date(_t);_m.setDate(_t.getDate()-_d);_m.setHours(0,0,0,0);return _w<_m?'':'<button class="btn btn-accent btn-sm" onclick="rosterSave()">💾 Save</button>';})()}`
     : `<button class="btn btn-accent" onclick="openEmployeeModal()">+ Add Employee</button>`;
@@ -1217,7 +1228,7 @@ function renderReports(D) {
   const totalLiters = D.sales.reduce((a, s) => a + s.liters, 0);
   const totalStock = D.tanks.reduce((a, t) => a + (t.current || 0), 0);
 
-  const todayIso2 = new Date().toISOString().slice(0,10);
+  const todayIso2 = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
   const dsrFilterDate = reportDate || todayIso2;
   const todaySalesOnly = D.sales.filter(s => (s.date||'').slice(0,10) === dsrFilterDate);
   const totalSoldToday = todaySalesOnly.reduce((a,s) => a + (s.liters||0), 0);
@@ -1339,6 +1350,20 @@ function renderSettings(D) {
         ${priceCards}
         <button class="btn btn-accent btn-block mt-12" onclick="openPriceModal()">&#9881;&#65039; Update Selling Prices</button>
         <!-- Purchase price button removed - admin manages COGS separately -->
+        ${(() => {
+          const hist = (D.priceHistory || []).slice(0, 8);
+          if (!hist.length) return '';
+          return `<div style="margin-top:14px;border-top:1px solid var(--border-light);padding-top:10px">
+            <div style="font-size:10px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">📋 Price Revision History</div>
+            ${hist.map(h => `<div style="padding:5px 0;border-bottom:1px solid var(--border-light);font-size:11px">
+              <div style="display:flex;justify-content:space-between">
+                <span style="color:var(--text-2)">${h.date} ${h.time}</span>
+                <span style="color:var(--text-3);font-size:10px">${sanitize(h.changedBy||'')}</span>
+              </div>
+              <div style="margin-top:2px">${(h.changes||[]).map(c => `<span style="color:var(--text-1);font-size:11px">${sanitize(getFuel(c.fuel).short||c.fuel)}: <span style="color:var(--red)">₹${c.oldPrice}</span> → <span style="color:var(--green)">₹${c.newPrice}</span></span>`).join(' · ')}</div>
+            </div>`).join('')}
+          </div>`;
+        })()}
       </div>
       <div class="card card-pad">
         <h4 class="mb-16 fw-700" style="color:var(--text-0);font-size:13px">🏢 Station Information</h4>
@@ -1894,7 +1919,12 @@ function renderRoster(D) {
       <div class="card-body">
         <div class="g" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px">
           ${(D.employees||[]).map(e => {
-            const totalAssigned = Object.entries(roster).filter(([k,v]) => v.includes(String(e.id))).length;
+            // Only count shifts within the currently viewed week
+            const weekDateStrs = new Set(weekDays.map(fmtDate));
+            const totalAssigned = Object.entries(roster).filter(([k,v]) => {
+              const datePart = k.split('_')[0];
+              return weekDateStrs.has(datePart) && Array.isArray(v) && v.includes(String(e.id));
+            }).length;
             return `<div style="padding:12px;background:var(--bg-1);border-radius:var(--radius);border:1px solid var(--border-light)">
               <div style="font-size:13px;font-weight:700;color:var(--text-0);margin-bottom:4px">${sanitize(e.name)}</div>
               <div style="font-size:11px;color:var(--text-3)">${sanitize(e.role||'')} · <span style="color:var(--accent-light);font-weight:700">${totalAssigned} shift${totalAssigned!==1?'s':''} this week</span></div>
@@ -1942,7 +1972,7 @@ window.rosterSave = rosterSave;
 
 // ── ATTENDANCE ────────────────────────────────────────────────
 function renderAttendance(D) {
-  const today = new Date().toISOString().slice(0,10);
+  const today = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
   if (!window._attendanceData) window._attendanceData = {};
   const att = window._attendanceData;
   const emps = (D.employees || []).filter(e => e.status !== 'inactive');
@@ -2138,7 +2168,7 @@ function renderAnalytics(D) {
   if (_analyticsTab === 'vehicle') {
     // ── Vehicle Report ──────────────────────────────────────────────────────
     const vFrom = window._vFrom || new Date(Date.now()-30*86400000).toISOString().slice(0,10);
-    const vTo   = window._vTo   || new Date().toISOString().slice(0,10);
+    const vTo   = window._vTo   || (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
     const vFuel = window._vFuel || '';
     const vNum  = (window._vNum || '').trim().toUpperCase();
 
@@ -2185,7 +2215,7 @@ function renderAnalytics(D) {
           </div>
           <div class="form-group" style="margin:0;flex:1;min-width:130px">
             <label class="form-label">To</label>
-            <input type="date" class="form-input" value="${vTo}" max="${new Date().toISOString().slice(0,10)}" onchange="window._vTo=this.value;renderPage()" />
+            <input type="date" class="form-input" value="${vTo}" max="${(()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})()}" onchange="window._vTo=this.value;renderPage()" />
           </div>
           <div class="form-group" style="margin:0;flex:1;min-width:120px">
             <label class="form-label">Fuel</label>
@@ -2296,7 +2326,7 @@ function renderAnalytics(D) {
     if (!window._bankReconData) window._bankReconData = {};
     const recon = window._bankReconData;
 
-    const today = new Date().toISOString().slice(0,10);
+    const today = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
     const selDate = window._brSelDate || today;
     const D2 = APP.data;
 
@@ -2811,7 +2841,7 @@ function openAddAdvanceModal() {
       </div>
     </div>
     <div class="form-group"><label class="form-label">Reason</label><input class="form-input" id="advReason" placeholder="Medical / Personal / Other" /></div>
-    <div class="form-group"><label class="form-label">Date</label><input class="form-input" type="date" id="advDate" value="${new Date().toISOString().slice(0,10)}" /></div>
+    <div class="form-group"><label class="form-label">Date</label><input class="form-input" type="date" id="advDate" value="${(()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})()}" /></div>
     <div id="advPreview" style="padding:10px 14px;background:var(--bg-0);border-radius:8px;font-size:13px;color:var(--text-3)">Monthly EMI: —</div>
   `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-accent" onclick="saveAdvance()">Record Advance</button>`);
 }
@@ -2832,7 +2862,7 @@ function saveAdvance() {
   const amount = parseFloat(document.getElementById('advAmt')?.value);
   const reason = (document.getElementById('advReason')?.value||'').trim();
   const repayMonths = parseInt(document.getElementById('advMonths')?.value||1);
-  const date = document.getElementById('advDate')?.value || new Date().toISOString().slice(0,10);
+  const date = document.getElementById('advDate')?.value || (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
   if (!empId || isNaN(amount) || amount <= 0) { toast('Enter valid amount', 'error'); return; }
   const monthlyEmi = Math.ceil(amount / repayMonths);
   const emp = APP.data.employees.find(e => e.id === empId);
@@ -2954,7 +2984,7 @@ function openNozzleMeterModal(pumpId, nozzleLabel) {
 
   const shifts = (D.shifts && D.shifts.length) ? D.shifts : [{name:'Morning'},{name:'Afternoon'},{name:'Night'}];
   const shiftOpts = shifts.map(s => `<option value="${sanitize(s.name)}">${sanitize(s.name)}</option>`).join('');
-  const today = new Date().toISOString().slice(0,10);
+  const today = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
 
   openModal('📟 Record Nozzle Meter Reading', `
     <div class="g g-2 gap-12">
@@ -3038,7 +3068,7 @@ function nmCalcVariance() {
     const labels = p.nozzleLabels || (p.nozzles===1?['A']:p.nozzles===2?['A','B']:['A','B','C'].slice(0,p.nozzles));
     if (labels.includes(nozzle)) {
       pumpId = p.id;
-      const today = new Date().toISOString().slice(0,10);
+      const today = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
       systemSold = APP.data.sales.filter(s => String(s.pump)===String(p.id) && (s.nozzle===nozzle||s.nozzle===String(nozzle)) && (s.date||'').slice(0,10)===today).reduce((a,s)=>a+(s.liters||0),0);
     }
   });
@@ -3214,7 +3244,7 @@ window.wa_alertLowTank = wa_alertLowTank;
 // 2. Daily summary — called manually from Reports or automatically
 async function wa_sendDailySummary(dateStr) {
   const D = APP.data;
-  const date = dateStr || new Date().toISOString().slice(0,10);
+  const date = dateStr || (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
   const daySales = D.sales.filter(s => (s.date||'').slice(0,10) === date);
   const stats = {
     revenue: daySales.reduce((a,s)=>a+s.amount,0),
@@ -3302,7 +3332,7 @@ function renderLubes(D) {
   const tab = window._lubesTab || 'catalogue';
   const prods = window._lubesProducts;
   const sales = window._lubesSales;
-  const today = new Date().toISOString().slice(0,10);
+  const today = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
 
   const tabs = [
     { id:'catalogue', icon:'📦', label:'Catalogue' },
@@ -3679,7 +3709,7 @@ window.renderLubes = renderLubes;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function renderExports(D) {
-  const today = new Date().toISOString().slice(0,10);
+  const today = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
   const tab = window._exportTab || 'daily';
 
   const tabs = [
@@ -3854,7 +3884,7 @@ window.renderExports = renderExports;
 
 // ── DAILY CSV EXPORT ─────────────────────────────────────────────────────────
 function exportDailyCSV() {
-  const from = document.getElementById('exp_dfrom')?.value || new Date().toISOString().slice(0,10);
+  const from = document.getElementById('exp_dfrom')?.value || (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
   const to   = document.getElementById('exp_dto')?.value   || from;
   const D = APP.data;
   const sales = D.sales.filter(s => {
@@ -3869,9 +3899,51 @@ function exportDailyCSV() {
 }
 window.exportDailyCSV = exportDailyCSV;
 
+// ── SHARED PRINT HELPER — TC-017 FIX: handles browser pop-up blocker ────────
+// Usage: _openPrint(htmlString, 'report-filename')
+// If window.open() is blocked (returns null), falls back to an in-page
+// fullscreen iframe overlay so the user can still print or download.
+function _openPrint(html, filename) {
+  filename = filename || 'fuelbunk-report';
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const blobUrl = URL.createObjectURL(blob);
+  const w = window.open(blobUrl, '_blank');
+  if (w && !w.closed) {
+    // Pop-up opened normally — auto-print after paint
+    setTimeout(() => { try { w.focus(); w.print(); } catch(e){} URL.revokeObjectURL(blobUrl); }, 600);
+  } else {
+    // Pop-up blocked — show in-page overlay with print + download buttons
+    URL.revokeObjectURL(blobUrl); // blob URL won't work cross-origin in iframe — use data URI
+    const overlay = document.createElement('div');
+    overlay.id = 'fbPrintOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#fff;display:flex;flex-direction:column;font-family:sans-serif';
+    const dlUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
+    const toolbar = `
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 16px;background:#1a1a2e;border-bottom:3px solid #f59e0b;flex-shrink:0">
+        <button onclick="document.getElementById('fbPrintOverlay').remove()"
+          style="background:#ef4444;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-weight:700;cursor:pointer;font-size:13px">✕ Close</button>
+        <span style="color:#fff;font-size:13px;font-weight:600;flex:1">⚠️ Pop-up blocked — printing in-page</span>
+        <button onclick="document.getElementById('fbPrintFrame').contentWindow.print()"
+          style="background:#22c55e;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-weight:700;cursor:pointer;font-size:13px">🖨️ Print / Save PDF</button>
+        <a href="${dlUrl}" download="${filename}.html"
+          style="background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-weight:700;cursor:pointer;font-size:13px;text-decoration:none">⬇ Download</a>
+      </div>
+    `;
+    // Use a fresh Blob URL for the iframe (safe for large reports)
+    const iframeBlob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const iframeUrl = URL.createObjectURL(iframeBlob);
+    overlay.innerHTML = toolbar + `<iframe id="fbPrintFrame" src="${iframeUrl}" style="flex:1;border:none;width:100%;height:100%"></iframe>`;
+    setTimeout(() => URL.revokeObjectURL(iframeUrl), 60000); // clean up after 60s
+    const existing = document.getElementById('fbPrintOverlay');
+    if (existing) existing.remove();
+    document.body.appendChild(overlay);
+    toast('⚠️ Pop-ups are blocked — report opened in-page. Use the Print button above.', 'warning');
+  }
+}
+
 // ── PRINT DAILY REPORT ───────────────────────────────────────────────────────
 function printDailyReport() {
-  const from = document.getElementById('exp_dfrom')?.value || new Date().toISOString().slice(0,10);
+  const from = document.getElementById('exp_dfrom')?.value || (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
   const to   = document.getElementById('exp_dto')?.value   || from;
   const D = APP.data;
   const sales = D.sales.filter(s=>{ const d=(s.date||'').slice(0,10); return d>=from&&d<=to; });
@@ -3896,11 +3968,7 @@ function printDailyReport() {
     <table><thead><tr><th>Date</th><th>Time</th><th>Vehicle</th><th>Fuel</th><th style="text-align:right">Litres</th><th style="text-align:right">Amount</th><th>Mode</th><th>Employee</th></tr></thead><tbody>${rows}</tbody></table>
     <div style="margin-top:16px;color:#999;font-size:11px">— FuelBunk Pro · ${stationName}</div>
   </body></html>`;
-  const w = window.open('','_blank');
-  w.document.write(html);
-  w.document.close();
-  w.focus();
-  setTimeout(()=>w.print(), 500);
+  _openPrint(html, 'daily-report');
 }
 window.printDailyReport = printDailyReport;
 
@@ -3945,10 +4013,7 @@ function printPayslip(empId, empName, month, year, earned, advDeduct, net, prese
     </div>
     <div class="footer">Generated by FuelBunk Pro · ${new Date().toLocaleString('en-IN')}</div>
   </body></html>`;
-  const w = window.open('','_blank');
-  w.document.write(html);
-  w.document.close();
-  setTimeout(()=>w.print(), 500);
+  _openPrint(html, 'payslip');
 }
 window.printPayslip = printPayslip;
 
@@ -4019,9 +4084,7 @@ function printCreditStatement(custId) {
     <table><thead><tr><th>Date</th><th>Time</th><th>Vehicle</th><th>Fuel</th><th style="text-align:right">Litres</th><th style="text-align:right">Amount</th></tr></thead><tbody>${rows}</tbody></table>
     <div style="margin-top:16px;font-size:11px;color:#aaa">— FuelBunk Pro · ${sanitize(stationName)}</div>
   </body></html>`;
-  const w = window.open('','_blank');
-  w.document.write(html); w.document.close();
-  setTimeout(()=>w.print(), 500);
+  _openPrint(html, 'credit-statement');
 }
 window.printCreditStatement = printCreditStatement;
 
@@ -4038,7 +4101,7 @@ window.exportCreditCSV = exportCreditCSV;
 
 // ── LUBES CSV EXPORTS ────────────────────────────────────────────────────────
 function exportLubesCSV() {
-  const from = document.getElementById('exp_lfrom')?.value || new Date().toISOString().slice(0,10);
+  const from = document.getElementById('exp_lfrom')?.value || (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
   const to   = document.getElementById('exp_lto')?.value   || from;
   const sales = (window._lubesSales||[]).filter(s=>s.date>=from&&s.date<=to);
   exportCSV(`lubes-sales-${from}-${to}.csv`,
@@ -4055,7 +4118,7 @@ function exportLubesStockCSV() {
 window.exportLubesStockCSV = exportLubesStockCSV;
 
 function printLubesReport() {
-  const from = document.getElementById('exp_lfrom')?.value || new Date().toISOString().slice(0,10);
+  const from = document.getElementById('exp_lfrom')?.value || (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
   const to   = document.getElementById('exp_lto')?.value   || from;
   const D = APP.data;
   const sales = (window._lubesSales||[]).filter(s=>s.date>=from&&s.date<=to);
@@ -4072,8 +4135,7 @@ function printLubesReport() {
     <div style="color:#555;margin-bottom:8px">${stationName} · ${sales.length} transactions · Revenue: ₹${total.toFixed(2)}</div>
     <table><thead><tr><th>Date</th><th>Product</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th><th>Customer</th><th>Mode</th></tr></thead><tbody>${rows}</tbody></table>
   </body></html>`;
-  const w = window.open('','_blank'); w.document.write(html); w.document.close();
-  setTimeout(()=>w.print(), 500);
+  _openPrint(html, 'lubes-report');
 }
 window.printLubesReport = printLubesReport;
 
@@ -4096,57 +4158,62 @@ function renderGSTTab(D) {
   const lubeSales = (window._lubesSales||[]).filter(s => s.date>=startDate&&s.date<=endDate);
 
   // Build GSTR-1 B2C summary by HSN+GST rate
+  // isInterState flag: sale.interState = true → IGST instead of CGST+SGST
   const gstSummary = {};
   const taxRates   = D.fuelTaxRates || [];
 
   fuelSales.forEach(s => {
     const tr = taxRates.find(t => t.fuelType === s.fuelType) || {};
     const gstPct = tr.rate ? parseFloat(tr.rate) : 0;
-    const key = `${s.fuelType}-${gstPct}`;
-    if (!gstSummary[key]) gstSummary[key] = { desc: getFuel(s.fuelType).name, hsn: '27101900', gstPct, taxable:0, cgst:0, sgst:0, total:0, txns:0 };
-    // GST-exclusive taxable = amount / (1 + gstPct/100)
+    const isIGST = !!s.interState;
+    const key = `${s.fuelType}-${gstPct}-${isIGST?'I':'L'}`;
+    if (!gstSummary[key]) gstSummary[key] = { desc: getFuel(s.fuelType).name, hsn: '27101900', gstPct, isIGST, taxable:0, cgst:0, sgst:0, igst:0, total:0, txns:0 };
     const taxable = gstPct > 0 ? s.amount / (1 + gstPct/100) : s.amount;
     const gstAmt  = s.amount - taxable;
     gstSummary[key].taxable += taxable;
-    gstSummary[key].cgst    += gstAmt/2;
-    gstSummary[key].sgst    += gstAmt/2;
-    gstSummary[key].total   += s.amount;
-    gstSummary[key].txns    += 1;
+    if (isIGST) { gstSummary[key].igst += gstAmt; }
+    else { gstSummary[key].cgst += gstAmt/2; gstSummary[key].sgst += gstAmt/2; }
+    gstSummary[key].total += s.amount;
+    gstSummary[key].txns  += 1;
   });
 
   lubeSales.forEach(s => {
     const prod = (window._lubesProducts||[]).find(p=>p.id===s.productId);
     const gstPct = prod?.gstPct || 18;
     const hsn    = prod?.hsn || '27101940';
-    const key    = `lube-${s.productId}-${gstPct}`;
-    if (!gstSummary[key]) gstSummary[key] = { desc: s.productName||'Lube', hsn, gstPct, taxable:0, cgst:0, sgst:0, total:0, txns:0 };
+    const isIGST = !!s.interState;
+    const key    = `lube-${s.productId}-${gstPct}-${isIGST?'I':'L'}`;
+    if (!gstSummary[key]) gstSummary[key] = { desc: s.productName||'Lube', hsn, gstPct, isIGST, taxable:0, cgst:0, sgst:0, igst:0, total:0, txns:0 };
     const taxable = gstPct > 0 ? s.amount / (1 + gstPct/100) : s.amount;
     const gstAmt  = s.amount - taxable;
     gstSummary[key].taxable += taxable;
-    gstSummary[key].cgst    += gstAmt/2;
-    gstSummary[key].sgst    += gstAmt/2;
-    gstSummary[key].total   += s.amount;
-    gstSummary[key].txns    += 1;
+    if (isIGST) { gstSummary[key].igst += gstAmt; }
+    else { gstSummary[key].cgst += gstAmt/2; gstSummary[key].sgst += gstAmt/2; }
+    gstSummary[key].total += s.amount;
+    gstSummary[key].txns  += 1;
   });
 
   const summaryItems = Object.values(gstSummary);
   const totalTaxable = summaryItems.reduce((a,x)=>a+x.taxable,0);
   const totalCGST    = summaryItems.reduce((a,x)=>a+x.cgst,0);
   const totalSGST    = summaryItems.reduce((a,x)=>a+x.sgst,0);
-  const totalGST     = totalCGST + totalSGST;
+  const totalIGST    = summaryItems.reduce((a,x)=>a+x.igst,0);
+  const totalGST     = totalCGST + totalSGST + totalIGST;
   const grandTotal   = summaryItems.reduce((a,x)=>a+x.total,0);
+  const hasIGST      = summaryItems.some(x => x.isIGST);
 
   const gstRows = summaryItems.map(x => `<tr>
-    <td>${sanitize(x.desc)}</td>
+    <td>${sanitize(x.desc)}${x.isIGST ? ' <span style="font-size:9px;background:rgba(59,130,246,0.15);color:#60a5fa;border-radius:3px;padding:1px 4px">IGST</span>' : ''}</td>
     <td class="r mono" style="font-size:11px">${sanitize(x.hsn)}</td>
     <td class="r">${x.gstPct}%</td>
     <td class="r mono">${cur(x.taxable)}</td>
-    <td class="r mono">${cur(x.cgst)}</td>
-    <td class="r mono">${cur(x.sgst)}</td>
-    <td class="r mono fw-700" style="color:var(--accent-light)">${cur(x.cgst+x.sgst)}</td>
+    <td class="r mono">${x.isIGST ? '—' : cur(x.cgst)}</td>
+    <td class="r mono">${x.isIGST ? '—' : cur(x.sgst)}</td>
+    ${hasIGST ? `<td class="r mono">${x.isIGST ? cur(x.igst) : '—'}</td>` : ''}
+    <td class="r mono fw-700" style="color:var(--accent-light)">${cur(x.isIGST ? x.igst : x.cgst+x.sgst)}</td>
     <td class="r mono">${cur(x.total)}</td>
     <td class="r" style="font-size:11px;color:var(--text-3)">${x.txns}</td>
-  </tr>`).join('') || `<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text-3)">No taxable sales for this period</td></tr>`;
+  </tr>`).join('') || `<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-3)">No taxable sales for this period</td></tr>`;
 
   return `
     <div class="card card-pad mb-14" style="padding:12px 16px">
@@ -4167,15 +4234,16 @@ function renderGSTTab(D) {
       ${statCard('Taxable Value', cur(totalTaxable), 'excl. GST', '📋')}
       ${statCard('CGST', cur(totalCGST), 'central GST', '🏛️')}
       ${statCard('SGST', cur(totalSGST), 'state GST', '🏛️')}
-      ${statCard('Total Tax', cur(totalGST), 'CGST + SGST', '🧾')}
+      ${totalIGST > 0 ? statCard('IGST', cur(totalIGST), 'inter-state', '🔀') : ''}
+      ${statCard('Total Tax', cur(totalGST), 'CGST + SGST' + (totalIGST>0?' + IGST':''), '🧾')}
     </div>
 
     <div class="card mb-14">
       <div class="card-head"><h4>HSN-wise Summary</h4></div>
       <div class="card-body"><div class="tbl-wrap"><table>
-        <thead><tr><th>Supply</th><th class="r">HSN</th><th class="r">GST%</th><th class="r">Taxable</th><th class="r">CGST</th><th class="r">SGST</th><th class="r">Total Tax</th><th class="r">Gross</th><th class="r">Txns</th></tr></thead>
+        <thead><tr><th>Supply</th><th class="r">HSN</th><th class="r">GST%</th><th class="r">Taxable</th><th class="r">CGST</th><th class="r">SGST</th>${hasIGST ? '<th class="r">IGST</th>' : ''}<th class="r">Total Tax</th><th class="r">Gross</th><th class="r">Txns</th></tr></thead>
         <tbody>${gstRows}</tbody>
-        ${summaryItems.length > 0 ? `<tfoot><tr style="font-weight:700;border-top:2px solid var(--border)"><td colspan="3">TOTAL</td><td class="r mono">${cur(totalTaxable)}</td><td class="r mono">${cur(totalCGST)}</td><td class="r mono">${cur(totalSGST)}</td><td class="r mono" style="color:var(--accent-light)">${cur(totalGST)}</td><td class="r mono">${cur(grandTotal)}</td><td></td></tr></tfoot>` : ''}
+        ${summaryItems.length > 0 ? `<tfoot><tr style="font-weight:700;border-top:2px solid var(--border)"><td colspan="3">TOTAL</td><td class="r mono">${cur(totalTaxable)}</td><td class="r mono">${cur(totalCGST)}</td><td class="r mono">${cur(totalSGST)}</td>${hasIGST ? `<td class="r mono">${cur(totalIGST)}</td>` : ''}<td class="r mono" style="color:var(--accent-light)">${cur(totalGST)}</td><td class="r mono">${cur(grandTotal)}</td><td></td></tr></tfoot>` : ''}
       </table></div></div>
     </div>
 
@@ -4341,8 +4409,7 @@ function printGSTSummary(month, year) {
     </table>
     <div style="margin-top:16px;font-size:11px;color:#aaa">— FuelBunk Pro · Generated ${new Date().toLocaleString('en-IN')}</div>
   </body></html>`;
-  const w = window.open('','_blank'); w.document.write(html); w.document.close();
-  setTimeout(()=>w.print(), 500);
+  _openPrint(html, 'gst-summary');
 }
 window.printGSTSummary = printGSTSummary;
 
@@ -4598,7 +4665,7 @@ function renderAnalyticsMonthly(D) {
           <span><span style="display:inline-block;width:10px;height:10px;background:var(--green);border-radius:2px;margin-right:4px"></span>Profit</span>
         </div>
       </div>
-      <div style="display:flex;gap:2px;align-items:flex-end">${barCols}</div>
+      <canvas id="analyticsMonthlyChart" style="width:100%;max-height:220px"></canvas>
     </div>
     <div class="card mb-16">
       <div class="card-head"><h4>Monthly Breakdown</h4></div>
@@ -4606,12 +4673,49 @@ function renderAnalyticsMonthly(D) {
         <thead><tr><th>Month</th><th class="r">Revenue</th><th class="r">Fuel Cost</th><th class="r">Op.Ex</th><th class="r">Net Profit</th><th class="r">Txns</th><th class="r">Litres</th></tr></thead>
         <tbody>${tableRows}</tbody>
       </table></div></div>
-    </div>`;
+    </div>
+    <script>
+    (function() {
+      const _mLabels = ${JSON.stringify(mData.map(m => m.label))};
+      const _mRevenue = ${JSON.stringify(mData.map(m => +m.revenue.toFixed(2)))};
+      const _mProfit  = ${JSON.stringify(mData.map(m => +m.netProfit.toFixed(2)))};
+      function _initMonthlyChart() {
+        const canvas = document.getElementById('analyticsMonthlyChart');
+        if (!canvas || !window.Chart) { setTimeout(_initMonthlyChart, 150); return; }
+        if (canvas._chartInst) canvas._chartInst.destroy();
+        const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+        const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+        const textColor = isDark ? '#888' : '#666';
+        canvas._chartInst = new Chart(canvas, {
+          type: 'bar',
+          data: {
+            labels: _mLabels,
+            datasets: [
+              { label: 'Revenue', data: _mRevenue, backgroundColor: 'rgba(212,148,15,0.7)', borderRadius: 4, order: 2 },
+              { label: 'Net Profit', data: _mProfit, type: 'line', borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.1)', borderWidth: 2, pointRadius: 3, fill: true, tension: 0.35, order: 1 }
+            ]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: true,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { display: false }, tooltip: { callbacks: {
+              label: ctx => ' ' + ctx.dataset.label + ': \u20B9' + Math.abs(ctx.raw).toLocaleString('en-IN', {maximumFractionDigits:0})
+            }}},
+            scales: {
+              x: { grid: { color: gridColor }, ticks: { color: textColor, font: { size: 10 } } },
+              y: { grid: { color: gridColor }, ticks: { color: textColor, font: { size: 10 }, callback: v => '\u20B9' + (v>=1000?Math.round(v/1000)+'k':v) } }
+            }
+          }
+        });
+      }
+      setTimeout(_initMonthlyChart, 80);
+    })();
+    </script>`;
 }
 
 function renderAnalyticsFuelPL(D) {
   const vFrom = window._plFrom || new Date(Date.now()-30*86400000).toISOString().slice(0,10);
-  const vTo   = window._plTo   || new Date().toISOString().slice(0,10);
+  const vTo   = window._plTo   || (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
 
   const rows = FUEL_TYPES.map(f => {
     const sales = D.sales.filter(s => s.fuelType===f.id && (s.date||'').slice(0,10)>=vFrom && (s.date||'').slice(0,10)<=vTo);
@@ -4672,7 +4776,7 @@ function renderAnalyticsFuelPL(D) {
 
 function renderAnalyticsTopCustomers(D) {
   const vFrom = window._tcFrom || new Date(Date.now()-30*86400000).toISOString().slice(0,10);
-  const vTo   = window._tcTo   || new Date().toISOString().slice(0,10);
+  const vTo   = window._tcTo   || (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
 
   // Aggregate by vehicle/customer across all sales
   const byVehicle = {};
@@ -4786,7 +4890,7 @@ function loyalty_addPoints(customerId, amountPaid, saleRef) {
   if (pts <= 0) return 0;
   c.loyaltyPoints = (c.loyaltyPoints||0) + pts;
   if (!c.loyaltyHistory) c.loyaltyHistory = [];
-  c.loyaltyHistory.unshift({ type:'earn', pts, balance: c.loyaltyPoints, ref: saleRef||'', date: new Date().toISOString().slice(0,10) });
+  c.loyaltyHistory.unshift({ type:'earn', pts, balance: c.loyaltyPoints, ref: saleRef||'', date: (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})() });
   db.put('creditCustomers', c).catch(()=>{});
   return pts;
 }
@@ -4850,7 +4954,7 @@ async function saveLoyaltyRedeem(customerId) {
   const rupeeVal = Math.floor(ptsToRedeem/100) * settings.redeemRate;
   c.loyaltyPoints = (c.loyaltyPoints||0) - ptsToRedeem;
   if (!c.loyaltyHistory) c.loyaltyHistory = [];
-  c.loyaltyHistory.unshift({ type:'redeem', pts:-ptsToRedeem, balance: c.loyaltyPoints, rupeeVal, mode: applyMode, date: new Date().toISOString().slice(0,10) });
+  c.loyaltyHistory.unshift({ type:'redeem', pts:-ptsToRedeem, balance: c.loyaltyPoints, rupeeVal, mode: applyMode, date: (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})() });
   if (applyMode === 'balance' && c.outstanding >= rupeeVal) {
     c.outstanding = +(c.outstanding - rupeeVal).toFixed(2);
   }
@@ -5090,8 +5194,8 @@ window.confirmDeleteTaxRate = confirmDeleteTaxRate;
 
 let allocShift = 'Morning'; // default — loadData() auto-selects shift with assignments from server
 window.staffTab = 'shifts'; // internal tab: 'shifts' | 'allocation' | 'roster' | 'attendance' | 'directory'
-let allocDate = new Date().toISOString().slice(0,10);
-let reportDate = new Date().toISOString().slice(0,10); // date filter for Reports DSR // current date for allocation
+let allocDate = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
+let reportDate = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})(); // date filter for Reports DSR // current date for allocation
 
 function loadAllocations() {
   // localStorage allocations are no longer used — server DB is source of truth
@@ -5140,7 +5244,6 @@ function navigate(pageId) {
   APP.salesFilter = 'all';
   APP.salesDate = new Date().toISOString().slice(0, 10);
   APP.salesEmpFilter = 'all';
-  APP.salesAllTime = false;
   window.location.hash = pageId;
   document.getElementById('pageTitle').textContent = PAGES.find(p => p.id === pageId)?.label || 'Dashboard';
   const _tb = APP.tenant;
@@ -5218,7 +5321,13 @@ function renderPage() {
       ]).then(function(results) {
         var freshSales = results[0], freshTanks = results[1];
         var changed = false;
-        if (freshSales.length !== (APP.data.sales || []).length) { APP.data.sales = freshSales.sort((a,b)=>b.id-a.id); changed = true; }
+        if (freshSales.length !== (APP.data.sales || []).length) {
+          APP.data.sales = freshSales.sort((a,b)=>b.id-a.id).map(function(s) {
+            if (!s.employee) s.employee = s.employeeName || s.employee_name || '';
+            return s;
+          });
+          changed = true;
+        }
         if (freshTanks.length) { APP.data.tanks = freshTanks.map(_normTank); changed = true; }
         if (changed) {
           var el2 = document.getElementById('content');
@@ -5325,7 +5434,10 @@ async function saveSale() {
   const sale = {
     id: Date.now(), date: today(), time: now(), fuelType, liters, amount,
     mode, pump, vehicle: sanitize(vehicle),
-    customer: customer ? sanitize(customer) : undefined, shift: 'Current'
+    customer: customer ? sanitize(customer) : undefined, shift: 'Current',
+    employee: APP.adminUser?.name || 'Admin',
+    employeeName: APP.adminUser?.name || 'Admin',
+    employeeId: APP.adminUser?.id || 0,
   };
 
   if (mode === 'upi') {
@@ -5483,7 +5595,7 @@ async function saveNewTank() {
       fuelType,
       capacity,
       current,
-      lastDip: new Date().toISOString().split('T')[0]
+      lastDip: (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})()
     };
     await db.put('tanks', _tankForPut(newTank));
     const freshNew = await db.getAll('tanks');
@@ -5495,7 +5607,7 @@ async function saveNewTank() {
     // Fallback: update in-memory only
     const tanks = APP.data.tanks;
     const newId = tanks.length > 0 ? Math.max(...tanks.map(t => t.id)) + 1 : 1;
-    APP.data.tanks.push({ id: newId, fuelType, capacity, current, lastDip: new Date().toISOString().split('T')[0] });
+    APP.data.tanks.push({ id: newId, fuelType, capacity, current, lastDip: (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})() });
     closeModal();
     toast(`Tank ${newId} added`, 'success');
     renderPage();
@@ -5661,14 +5773,15 @@ function _normTank(t) {
 // overwriting the correctly aliased camelCase value in upsertRow
 function _tankForPut(t) {
   return {
-    id:       t.id,
-    fuelType: t.fuelType,
-    capacity: t.capacity,
-    current:  t.current,
-    lowAlert: t.lowAlert,
-    lastDip:  t.lastDip,
-    name:     t.name || '',
-    unit:     t.unit || 'L',
+    id:          t.id,
+    fuelType:    t.fuelType,
+    capacity:    t.capacity,
+    current:     t.current,
+    lowAlert:    t.lowAlert,
+    lastDip:     t.lastDip,
+    lastDipSource: t.lastDipSource || 'shift_close', // FA-04: 'admin_dip' | 'shift_close'
+    name:        t.name || '',
+    unit:        t.unit || 'L',
   };
 }
 
@@ -5940,6 +6053,7 @@ async function saveDip() {
   if (tank) {
     tank.current = reading;
     tank.lastDip = today() + ' ' + now();
+    tank.lastDipSource = 'admin_dip'; // FA-04: marks that a physical dip was done — takes precedence over shift-close deductions
     try {
       await db.put('tanks', _tankForPut(tank));
       // Reload tanks from server to confirm persistence
@@ -6785,6 +6899,26 @@ async function savePayment(customerId) {
   c.outstanding = Math.max(0, c.outstanding - amount);
   c.lastPayment = today();
   try { await db.put('creditCustomers', c); } catch(e) { console.warn('[Payment]', e.message); }
+
+  // Record transaction for payment history
+  const txn = {
+    id: Date.now(),
+    customerId: c.id,
+    customerName: c.name,
+    type: 'payment',
+    amount,
+    mode,
+    date: today(),
+    time: now(),
+    note: `Payment received — ${mode.toUpperCase()}`,
+    balanceBefore: oldOutstanding,
+    balanceAfter: c.outstanding,
+    recordedBy: APP.adminUser?.name || 'Admin',
+  };
+  if (!APP.data.creditTransactions) APP.data.creditTransactions = [];
+  APP.data.creditTransactions.unshift(txn);
+  try { await db.add('creditTransactions', txn); } catch(e) { console.warn('[CreditTxn]', e.message); }
+
   auditLog('credit_payment', { customer: c.name, amount, mode, oldOutstanding, newOutstanding: c.outstanding });
   closeModal();
   toast(`Payment of ${cur(amount)} recorded for ${sanitize(c.name)}`, 'success');
@@ -7082,13 +7216,27 @@ function savePrices() {
     const newSell = parseFloat(el.value);
     if (isNaN(newSell) || newSell <= 0 || newSell > 500) { toast('Invalid price for ' + f.short + ': must be ₹0.01–500', 'error'); valid = false; return; }
     if (newSell !== APP.data.prices[f.id]) {
-      changes.push({ fuel: f.short, oldSell: APP.data.prices[f.id], newSell });
+      changes.push({ fuel: f.id, fuelShort: f.short, oldPrice: APP.data.prices[f.id], newPrice: newSell });
     }
     APP.data.prices[f.id] = newSell;
   });
   if (!valid) return;
   db.setSetting('prices', APP.data.prices).catch(()=>{});
-  if (changes.length > 0) auditLog('price_change', { changes });
+  if (changes.length > 0) {
+    // ── Price History Log (Gap G6) ──
+    // Append to persistent price_history so revisions are never lost
+    const entry = {
+      date: today(), time: now(),
+      changedBy: APP.adminUser?.name || 'Admin',
+      changes,
+    };
+    if (!APP.data.priceHistory) APP.data.priceHistory = [];
+    APP.data.priceHistory.unshift(entry);
+    // Keep last 200 revisions only
+    if (APP.data.priceHistory.length > 200) APP.data.priceHistory.length = 200;
+    db.setSetting('price_history', APP.data.priceHistory).catch(()=>{});
+    auditLog('price_change', { changes });
+  }
   closeModal();
   toast('Fuel prices updated', 'success');
   renderPage();
@@ -7255,7 +7403,7 @@ function openChangeAllocModal(pumpId, nozzle) {
 function autoAssignAlloc() {
   const D = APP.data;
   // Fill entire visible week
-  const weekStart = new Date(window.allocWeekAnchor || new Date().toISOString().slice(0,10));
+  const weekStart = new Date(window.allocWeekAnchor || (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})());
   const weekDays = Array.from({length:7}, (_,i) => {
     const d = new Date(weekStart); d.setDate(d.getDate() + i);
     return d.toISOString().slice(0,10);
@@ -7284,7 +7432,7 @@ function autoAssignAlloc() {
 }
 
 function clearShiftAllocConfirm() {
-  const weekStart = new Date(window.allocWeekAnchor || new Date().toISOString().slice(0,10));
+  const weekStart = new Date(window.allocWeekAnchor || (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})());
   const d1 = weekStart.toLocaleDateString('en-IN',{day:'numeric',month:'short'});
   const d7 = new Date(weekStart.getTime() + 6*86400000).toLocaleDateString('en-IN',{day:'numeric',month:'short'});
   openModal('Clear Week Allocations', `
@@ -7294,7 +7442,7 @@ function clearShiftAllocConfirm() {
 }
 
 function doClearAlloc() {
-  const weekStart = new Date(window.allocWeekAnchor || new Date().toISOString().slice(0,10));
+  const weekStart = new Date(window.allocWeekAnchor || (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})());
   Array.from({length:7}, (_,i) => {
     const d = new Date(weekStart); d.setDate(d.getDate() + i);
     return d.toISOString().slice(0,10);
@@ -7488,7 +7636,9 @@ async function saveEditEmployee() {
   // FIX 4: propagate name change everywhere
   if (oldName !== name) {
     // Update sales records
-    if (D.sales) D.sales.forEach(s => { if (s.employee === oldName) s.employee = name; });
+    if (D.sales) D.sales.forEach(s => {
+      if (s.employee === oldName) { s.employee = name; s.employeeName = name; s.employee_name = name; }
+    });
     // Update audit log
     if (APP.auditLog) APP.auditLog.forEach(a => { if (a.user === oldName) a.user = name; if (a.details?.employee === oldName) a.details.employee = name; });
     // Update shift manager names

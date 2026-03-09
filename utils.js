@@ -4,7 +4,13 @@
 // ── FORMATTERS ───────────────────────────────────────────────
 const fmt = n => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(n);
 const cur = n => '₹' + fmt(n);
-const today = () => new Date().toISOString().split('T')[0];
+const today = () => {
+  const d = new Date();
+  const yr = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const dy = String(d.getDate()).padStart(2, '0');
+  return yr + '-' + mo + '-' + dy;
+};
 const now = () => new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
 
 // ── SECURITY UTILITIES ──────────────────────────────────────

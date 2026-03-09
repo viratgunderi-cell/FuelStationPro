@@ -12,6 +12,13 @@ const { authMiddleware, inputSanitizerMiddleware } = require('./security');
 const authRoutes = require('./auth');
 const dataRoutes = require('./data');
 
+// ── IST date helper — always use this instead of toISOString() for business dates ──
+function istDate() {
+  const d = new Date();
+  const ist = new Date(d.getTime() + 5.5 * 3600 * 1000);
+  return ist.toISOString().slice(0, 10);
+}
+
 async function startServer() {
   const db = await initDatabase();
   const app = express();
@@ -113,8 +120,11 @@ async function startServer() {
   // ── PUBLIC: employee names for login screen (no auth required, no PINs) ─
   app.get('/api/public/employees/:tenantId', async (req, res) => {
     try {
+      // IR-01 FIX: pinHash REMOVED from public response — 4-digit PINs are trivially reversible
+      // Use POST /api/public/verify-pin/:tenantId for online verification
+      // Offline fallback uses hash stored in IndexedDB during authenticated admin session
       const r = await pool.query(
-        'SELECT id, name, role, shift, pin_hash, data_json FROM employees WHERE tenant_id = $1 AND active = 1 AND pin_hash IS NOT NULL AND pin_hash != \'\' ORDER BY name',
+        'SELECT id, name, role, shift, data_json FROM employees WHERE tenant_id = $1 AND active = 1 AND pin_hash IS NOT NULL AND pin_hash != \'\' ORDER BY name',
         [req.params.tenantId]
       );
       res.json(r.rows.map(e => {
@@ -122,12 +132,30 @@ async function startServer() {
         try { const d = JSON.parse(e.data_json || '{}'); permissions = d.permissions || {}; } catch {}
         return {
           id: e.id, name: e.name, role: e.role, shift: e.shift || '',
-          pinHash: e.pin_hash,   // SHA-256 hash — needed for employee login after cache clear
-          permissions             // portal permissions (dip, credit, etc.)
+          // pinHash intentionally omitted — use /api/public/verify-pin for auth
+          permissions
         };
       }));
     } catch (e) {
-      res.json([]); // fail silently — login screen falls back to cache
+      res.json([]); // fail silently — login screen falls back to cached hash
+    }
+  });
+
+  // ── IR-01 FIX: Server-side PIN verification — hash never leaves DB ───────────
+  app.post('/api/public/verify-pin/:tenantId', async (req, res) => {
+    try {
+      const { employeeId, pinHash } = req.body;
+      if (!employeeId || !pinHash) return res.status(400).json({ valid: false, error: 'Missing fields' });
+      const r = await pool.query(
+        'SELECT pin_hash FROM employees WHERE id = $1 AND tenant_id = $2 AND active = 1',
+        [String(employeeId), req.params.tenantId]
+      );
+      if (!r.rows[0]) return res.json({ valid: false });
+      const match = r.rows[0].pin_hash === pinHash;
+      res.json({ valid: match });
+    } catch (e) {
+      console.error('[verify-pin]', e.message);
+      res.status(500).json({ valid: false, error: 'Server error' });
     }
   });
 
@@ -213,33 +241,50 @@ async function startServer() {
 
   // ── PUBLIC: employee pump reading update (no auth) ──────────────────────
   app.post('/api/public/reading/:tenantId', async (req, res) => {
+    // IR-02 FIX: Use SELECT FOR UPDATE inside a transaction to prevent TOCTOU race condition
+    // when two employees submit readings for different nozzles of the same pump concurrently.
+    const client = await pool.connect();
     try {
       const tenantId = req.params.tenantId;
       const { pumpId } = req.body;
-      let nozzleReadings = req.body.nozzleReadings || {};  // BUG-02 FIX: was const then reassigned — TypeError crash
-      if (!pumpId) return res.status(400).json({ error: 'Missing pumpId' });
-      // Get current pump data_json and merge readings
-      const r = await pool.query(
-        'SELECT data_json FROM pumps WHERE tenant_id=$1 AND id=$2',
+      const nozzleReadings = req.body.nozzleReadings || {};
+      if (!pumpId) { client.release(); return res.status(400).json({ error: 'Missing pumpId' }); }
+
+      await client.query('BEGIN');
+      // Row-level lock prevents concurrent writers from clobbering each other
+      const r = await client.query(
+        'SELECT data_json FROM pumps WHERE tenant_id=$1 AND id=$2 FOR UPDATE',
         [tenantId, String(pumpId)]
       );
-      if (!r.rows[0]) return res.status(404).json({ error: 'Pump not found' });
+      if (!r.rows[0]) {
+        await client.query('ROLLBACK'); client.release();
+        return res.status(404).json({ error: 'Pump not found' });
+      }
+
       let d = {};
       try { d = JSON.parse(r.rows[0].data_json || '{}'); } catch {}
+
+      // Merge per-nozzle readings (only update nozzles present in this request)
       d.nozzleReadings = { ...(d.nozzleReadings || {}), ...nozzleReadings };
       if (req.body.nozzleOpen) {
         d.nozzleOpen = { ...(d.nozzleOpen || {}), ...req.body.nozzleOpen };
       }
-      // Compute current_reading as sum of all nozzle readings
+      // FA-03 FIX: stamp when readings were last updated so employees can see carry-forward date
+      d.readingUpdatedAt = istDate() + ' ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
+
       const currentReading = Object.values(d.nozzleReadings).reduce((a, v) => a + (parseFloat(v) || 0), 0);
-      // Compute open_reading as sum of all nozzle opens
-      const openReading = Object.values(d.nozzleOpen || {}).reduce((a, v) => a + (parseFloat(v) || 0), 0);
-      await pool.query(
-        'UPDATE pumps SET data_json=$1, current_reading=$2 WHERE tenant_id=$3 AND id=$4',
-        [JSON.stringify(d), currentReading, tenantId, String(pumpId)]
+      const openReading    = Object.values(d.nozzleOpen || {}).reduce((a, v) => a + (parseFloat(v) || 0), 0);
+
+      await client.query(
+        'UPDATE pumps SET data_json=$1, current_reading=$2, reading_updated_at=$3 WHERE tenant_id=$4 AND id=$5',
+        [JSON.stringify(d), currentReading, d.readingUpdatedAt, tenantId, String(pumpId)]
       );
+      await client.query('COMMIT');
+      client.release();
       res.json({ success: true, currentReading, openReading });
     } catch (e) {
+      try { await client.query('ROLLBACK'); } catch {}
+      client.release();
       console.error('[public/reading]', e.message);
       res.status(500).json({ error: e.message });
     }
@@ -275,6 +320,18 @@ async function startServer() {
       const tenantCheck = await pool.query('SELECT id FROM tenants WHERE id = $1', [tenantId]);
       if (!tenantCheck.rows.length) return res.status(404).json({ error: 'Tenant not found' });
 
+      // TC-018 FIX: Validate pump is not inactive before accepting sale
+      // This prevents API-direct bypass of the UI pump-status filter
+      if (sale.pump) {
+        const pumpCheck = await pool.query(
+          'SELECT status FROM pumps WHERE id = $1 AND tenant_id = $2',
+          [String(sale.pump), tenantId]
+        );
+        if (pumpCheck.rows[0] && pumpCheck.rows[0].status === 'inactive') {
+          return res.status(409).json({ error: 'Pump is inactive — sale not permitted', pump: sale.pump });
+        }
+      }
+
       // BUG-01 FIX: 'employee' bare column does not exist in sales — use employee_id + employee_name
       const r = await pool.query(
         `INSERT INTO sales (tenant_id, date, time, fuel_type, liters, amount, mode, pump, nozzle, vehicle, customer, shift, employee_id, employee_name)
@@ -285,9 +342,28 @@ async function startServer() {
          sale.employeeName||(sale.employee||'')]
       );
 
-      // BUG-04 FIX: Credit balance update was missing from this endpoint (was only in the now-removed singular endpoint)
+      // FA-02 FIX: Server-side credit limit enforcement (client-side check alone is bypassable)
       if ((sale.mode||'cash') === 'credit' && sale.customer) {
         try {
+          // Read current balance and limit before updating
+          const creditRow = await pool.query(
+            'SELECT balance, credit_limit FROM credit_customers WHERE tenant_id = $1 AND name = $2 AND active = 1',
+            [tenantId, sale.customer]
+          );
+          if (creditRow.rows[0]) {
+            const currentBalance = parseFloat(creditRow.rows[0].balance) || 0;
+            const limit = parseFloat(creditRow.rows[0].credit_limit) || 0;
+            if (limit > 0 && (currentBalance + sale.amount) > limit) {
+              // Sale already inserted above — remove it to keep DB consistent
+              await pool.query('DELETE FROM sales WHERE id = $1', [r.rows[0].id]);
+              return res.status(422).json({
+                error: 'Credit limit exceeded',
+                outstanding: currentBalance,
+                limit,
+                available: Math.max(0, limit - currentBalance),
+              });
+            }
+          }
           await pool.query(
             `UPDATE credit_customers SET balance = COALESCE(balance, 0) + $1
              WHERE tenant_id = $2 AND name = $3 AND active = 1`,
@@ -409,24 +485,42 @@ async function startServer() {
 
   // ── PUBLIC: Tank deduction after employee shift submit ──────────────────────
   app.post('/api/public/tank-deduct/:tenantId', async (req, res) => {
+    // FA-04 FIX: If admin recorded a manual dip today (last_dip_source = 'admin_dip'),
+    // skip meter-based deduction — dip is the authoritative physical measurement.
     try {
       const tenantId = req.params.tenantId;
-      const { deductions } = req.body; // { petrol: 100, diesel: 200, premium_petrol: 50 }
+      const { deductions, shiftDate } = req.body; // shiftDate: YYYY-MM-DD from client IST date
       if (!deductions || typeof deductions !== 'object') {
         return res.status(400).json({ error: 'Missing deductions' });
       }
-      const today = new Date().toISOString().slice(0, 10);
+      const today = shiftDate || istDate();
+      const skipped = [];
+
       for (const [fuelType, liters] of Object.entries(deductions)) {
         if (!liters || liters <= 0) continue;
+
+        // Check if admin dipped this tank today — if so, skip meter deduction
+        const tankRow = await pool.query(
+          'SELECT last_dip, last_dip_source FROM tanks WHERE tenant_id = $1 AND fuel_type = $2',
+          [tenantId, fuelType]
+        );
+        const tank = tankRow.rows[0];
+        if (tank && tank.last_dip === today && tank.last_dip_source === 'admin_dip') {
+          console.log(`[tank-deduct] Skipping ${fuelType} — admin dip recorded today (${today}), dip takes precedence`);
+          skipped.push(fuelType);
+          continue;
+        }
+
         await pool.query(
           `UPDATE tanks
            SET current_level = GREATEST(0, COALESCE(current_level, 0) - $1),
-               last_dip = $2
+               last_dip = $2,
+               last_dip_source = 'shift_close'
            WHERE tenant_id = $3 AND fuel_type = $4`,
           [liters, today, tenantId, fuelType]
         );
       }
-      res.json({ success: true });
+      res.json({ success: true, skipped });
     } catch (e) {
       console.error('[public/tank-deduct]', e.message);
       res.status(500).json({ error: e.message });
@@ -452,10 +546,12 @@ async function startServer() {
       if (existing.rows[0]) {
         try { history = JSON.parse(existing.rows[0].value); } catch {}
       }
-      // Prepend new entry, keep last 30
-      history.unshift({
+      // FA-05 FIX: idempotency — upsert same date entry rather than always prepend.
+      // If a record for the same date (and same shift if provided) already exists, update it.
+      const newEntry = {
         date: h.date,
         user: h.user || '',
+        shift: h.shift || '',
         liters: h.liters || 0,
         revenue: h.revenue || 0,
         salesCount: h.salesCount || 0,
@@ -463,7 +559,14 @@ async function startServer() {
         openReadings: h.openReadings || {},
         closeReadings: h.closeReadings || {},
         timestamp: h.timestamp || Date.now(),
-      });
+      };
+      const dupeIdx = history.findIndex(e => e.date === h.date && (e.user === h.user || !e.shift));
+      if (dupeIdx >= 0) {
+        // Update existing record — same date+employee resubmission (network retry or double-tap)
+        history[dupeIdx] = newEntry;
+      } else {
+        history.unshift(newEntry);
+      }
       history = history.slice(0, 30);
       if (existing.rows[0]) {
         await pool.query(
@@ -515,7 +618,7 @@ async function startServer() {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [
           tenantId,
-          e.date || new Date().toISOString().slice(0, 10),
+          e.date || istDate(),
           e.category || 'General',
           e.desc || e.description || '',
           e.amount,

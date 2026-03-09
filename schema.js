@@ -484,7 +484,10 @@ async function initDatabase() {
     `ALTER TABLE tanks ADD COLUMN IF NOT EXISTS last_dip TEXT DEFAULT ''`,
     `ALTER TABLE dip_readings ADD COLUMN IF NOT EXISTS time TEXT DEFAULT ''`,
     `ALTER TABLE dip_readings ADD COLUMN IF NOT EXISTS method TEXT DEFAULT ''`,
-    // BUG-11 FIX: Removed duplicate migrations (last_payment, type, shift already above)
+    // FA-04: track who last updated tank level (admin dip vs shift close)
+    `ALTER TABLE tanks ADD COLUMN IF NOT EXISTS last_dip_source TEXT DEFAULT 'shift_close'`,
+    // FA-03: store timestamp when nozzle readings last updated (carry-forward info for employees)
+    `ALTER TABLE pumps ADD COLUMN IF NOT EXISTS reading_updated_at TEXT DEFAULT ''`,
   ];
   for (const migration of MIGRATIONS) {
     try { await pool.query(migration); }

@@ -145,6 +145,7 @@ let empState = {
   page: 'login', user: null, active: false,
   openReadings: {}, closeReadings: {}, sales: [], dipReadings: [],
   sessionHistory: emp_loadHistory(),
+  pendingSales: [], // FA-01: queued sales that failed to reach server
 };
 let empSaleFuel = 'petrol', empPayMode = 'cash';
 
@@ -198,13 +199,61 @@ function emp_saveSession() {
       page: empState.page === 'login' ? 'readings' : empState.page,
       openReadings: empState.openReadings, closeReadings: empState.closeReadings,
       sales: empState.sales, dipReadings: empState.dipReadings,
+      pendingSales: empState.pendingSales || [], // FA-01: persist queue across page refreshes
     };
     localStorage.setItem('fb_emp_session', signData(data));
   } catch {}
 }
 function emp_clearSession() { try { localStorage.removeItem('fb_emp_session'); } catch {} }
 
-const emp_today = () => new Date().toISOString().split('T')[0];
+// ── FA-01: Offline sale queue — flush on reconnect ─────────────────────────
+async function emp_flushPendingSales() {
+  if (!navigator.onLine) return;
+  const tenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
+  if (!tenant || !tenant.id) return;
+  const queue = empState.pendingSales || [];
+  if (!queue.length) return;
+
+  const toRetry = [...queue];
+  empState.pendingSales = [];
+  emp_saveSession();
+
+  let savedCount = 0, failedCount = 0;
+  for (const sale of toRetry) {
+    try {
+      const resp = await fetch('/api/public/sales/' + encodeURIComponent(tenant.id), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sale),
+      });
+      if (resp.ok) { savedCount++; }
+      else { empState.pendingSales.push(sale); failedCount++; }
+    } catch {
+      empState.pendingSales.push(sale);
+      failedCount++;
+    }
+  }
+  emp_saveSession();
+  if (savedCount > 0) {
+    toast(`✅ ${savedCount} pending sale(s) synced to server`, 'success');
+    renderPage();
+  }
+  if (failedCount > 0) {
+    console.warn('[emp] ' + failedCount + ' sale(s) still pending — will retry on next reconnect');
+  }
+}
+
+// Auto-flush when connectivity restores
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    setTimeout(emp_flushPendingSales, 800); // small delay for connection to stabilise
+  });
+}
+
+const emp_today = () => {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+};
 const emp_time = () => new Date().toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', hour12: false });
 function emp_key(pumpId, nozzle) { return `${pumpId}_${nozzle}`; }
 function emp_hasPerm(permId) {
@@ -218,7 +267,7 @@ function emp_toast(msg, type) { toast(msg, type === 'ok' ? 'success' : type === 
 function emp_myPumps() {
   if (!empState.user) return [];
   const uid = empState.user.id;
-  const todayStr = new Date().toISOString().slice(0,10);
+  const todayStr = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
 
   // Find which shift(s) this employee is rostered for today
   const myRosteredShifts = [];
@@ -674,9 +723,10 @@ function emp_renderCards(mode) {
           ${mode === 'open'
             ? (v !== undefined && v > 0
                 // Carried reading from previous shift — read-only display
+                // FA-03: Show when this reading was last updated so employee can spot stale carry-forwards
                 ? `<div style="flex:1;font-family:var(--mono);font-size:20px;font-weight:700;padding:12px 14px;text-align:center;background:var(--bg-0);border:2px solid rgba(34,197,94,0.3);border-radius:8px;color:var(--accent-light)">
                     ${fmt(v)}
-                    <div style="font-size:10px;font-weight:500;color:var(--text-3);margin-top:2px">Opening (carried from previous shift)</div>
+                    <div style="font-size:10px;font-weight:500;color:var(--text-3);margin-top:2px">Opening (carried from previous shift${(()=>{const pu=(APP.data?.pumps||[]).find(pm=>String(pm.id)===String(p.id));const ts=pu?.readingUpdatedAt||pu?.reading_updated_at||'';return ts ? ' · ' + ts : '';})()})</div>
                   </div>
                   <span style="color:var(--green);font-size:20px;flex-shrink:0">✓</span>`
                 // No previous reading — show editable input
@@ -771,7 +821,11 @@ function emp_renderSales() {
 
   return `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <div><h3 class="fw-800" style="color:var(--text-0);font-size:18px">Quick Sale</h3><p style="font-size:11px;color:var(--text-3)">Record individual fuel sales</p></div>
+      <div>
+        <h3 class="fw-800" style="color:var(--text-0);font-size:18px">Quick Sale</h3>
+        <p style="font-size:11px;color:var(--text-3)">Record individual fuel sales</p>
+        ${(empState.pendingSales||[]).length > 0 ? `<div style="margin-top:4px;font-size:11px;padding:3px 8px;background:rgba(249,115,22,0.12);border:1px solid rgba(249,115,22,0.35);border-radius:4px;color:#f97316;font-weight:600;display:inline-block">⚠️ ${empState.pendingSales.length} sale(s) pending sync — will auto-upload when online</div>` : ''}
+      </div>
       ${badge(empState.sales.length+' sales','badge-green')}
     </div>
     <div class="card" style="margin-bottom:16px"><div class="card-body">
@@ -1027,7 +1081,7 @@ function emp_renderComplete() {
     </div>
     ${(() => {
       // Show nozzle meter variance summary
-      const today = new Date().toISOString().slice(0,10);
+      const today = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
       const myLog = (window._nozzleMeterLog||[]).filter(e => e.date === today && e.source === 'employee' && e.employee === (empState.user?.name||''));
       if (myLog.length === 0) return '';
       const flagged = myLog.filter(e => e.flagged);
@@ -1305,7 +1359,33 @@ async function emp_doLogin() {
   if (!emp) { toast('Select employee','error'); return; }
   if (!checkRateLimit('emp_' + id)) return;
   const pinHash = await hashPassword(pin);
-  if (pinHash !== emp.pinHash) { recordFailedLogin('emp_' + id); toast('Incorrect PIN','error'); return; }
+  // IR-01 FIX: Verify PIN server-side (hashes no longer served publicly).
+  // Falls back to locally cached hash (stored in IDB during admin loadData) when offline.
+  let pinValid = false;
+  try {
+    const tenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
+    if (tenant && tenant.id && navigator.onLine) {
+      const verifyResp = await fetch('/api/public/verify-pin/' + encodeURIComponent(tenant.id), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employeeId: id, pinHash }),
+      });
+      if (verifyResp.ok) {
+        const result = await verifyResp.json();
+        pinValid = result.valid === true;
+      } else {
+        // Server error — fall back to cached hash
+        pinValid = emp.pinHash ? pinHash === emp.pinHash : false;
+      }
+    } else {
+      // Offline — use locally cached hash (populated from IDB during app init)
+      pinValid = emp.pinHash ? pinHash === emp.pinHash : false;
+    }
+  } catch {
+    // Network failure — offline fallback
+    pinValid = emp.pinHash ? pinHash === emp.pinHash : false;
+  }
+  if (!pinValid) { recordFailedLogin('emp_' + id); toast('Incorrect PIN','error'); return; }
   // PIN success — clear bio fail counter so they get fresh 3 attempts next time
   emp_bioClearFails(id);
   recordSuccessLogin('emp_' + id);
@@ -1759,15 +1839,54 @@ function emp_recordSale() {
 
   // ── Save to admin APP.data.sales + server DB via public endpoint ──
   if (APP.data?.sales) APP.data.sales.unshift(sale);
-  // Use public endpoint so sale reaches server DB even when employee has no auth token
+  // FA-01 FIX: Queue sale if network fails — emp_flushPendingSales retries on reconnect
   try {
     const tenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
     if (tenant && tenant.id) {
-      fetch('/api/public/sale/' + encodeURIComponent(tenant.id), {
+      fetch('/api/public/sales/' + encodeURIComponent(tenant.id), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(sale)
-      }).catch(err => console.warn('[emp sale] Server save failed:', err.message));
+      }).then(resp => {
+        if (!resp.ok) {
+          // HTTP error (422 credit limit, 500, etc.) — queue for retry or handle specifically
+          resp.json().then(err => {
+            if (resp.status === 409 && err.error && err.error.includes('inactive')) {
+              // TC-018: pump is inactive — remove sale from local state, show clear error
+              empState.sales = empState.sales.filter(s => s.id !== sale.id);
+              if (APP.data?.sales) APP.data.sales = APP.data.sales.filter(s => s.id !== sale.id);
+              toast(`❌ Pump is inactive — sale rejected. Contact admin.`, 'error');
+              emp_saveSession();
+              renderPage();
+            } else if (resp.status === 422 && err.error === 'Credit limit exceeded') {
+              // FA-02: server rejected credit sale — remove from local state too
+              empState.sales = empState.sales.filter(s => s.id !== sale.id);
+              if (APP.data?.sales) APP.data.sales = APP.data.sales.filter(s => s.id !== sale.id);
+              toast(`❌ Server rejected: credit limit exceeded (available: ${cur(err.available||0)})`, 'error');
+              emp_saveSession();
+              renderPage();
+            } else {
+              console.warn('[emp sale] Server error, queuing for retry:', err.error||resp.status);
+              if (!empState.pendingSales) empState.pendingSales = [];
+              empState.pendingSales.unshift(sale);
+              emp_saveSession();
+            }
+          }).catch(() => {
+            if (!empState.pendingSales) empState.pendingSales = [];
+            empState.pendingSales.unshift(sale);
+            emp_saveSession();
+          });
+        }
+      }).catch(err => {
+        // Network failure — queue for retry when online
+        console.warn('[emp sale] Network error, queuing:', err.message);
+        if (!empState.pendingSales) empState.pendingSales = [];
+        empState.pendingSales.unshift(sale);
+        emp_saveSession();
+        // Show pending badge in UI
+        const pending = (empState.pendingSales || []).length;
+        if (pending === 1) toast(`⚠️ Network error — sale queued, will sync when online`, 'warning');
+      });
     } else {
       // Fallback: try authenticated route (same device as admin)
       db.add('sales', sale).catch(() => {});
@@ -1781,7 +1900,7 @@ function emp_recordSale() {
     const creditCust = APP.data?.creditCustomers?.find(c => c.name === sale.customer);
     if (creditCust) {
       creditCust.outstanding = (creditCust.outstanding || 0) + sale.amount;
-      // Server update happens via /api/public/sale endpoint (already included above)
+      // Server update happens via /api/public/sales endpoint (already included above)
       // Auth update as fallback if admin is on same device
       db.put('creditCustomers', creditCust).catch(() => {});
     }
@@ -1868,6 +1987,8 @@ function emp_confirmEnd() {
 }
 
 async function emp_submit() {
+  // ── FA-01: Flush any pending queued sales before submitting shift ──
+  await emp_flushPendingSales().catch(() => {});
   // ── Refresh tanks from DB to get latest values before deducting ──
   try {
     const freshTanks = await db.getAll('tanks');
@@ -1983,7 +2104,7 @@ async function emp_submit() {
     if (tenantTank && tenantTank.id && Object.keys(tankDeductionsTotalByFuel).length > 0) {
       await fetch('/api/public/tank-deduct/' + encodeURIComponent(tenantTank.id), {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ deductions: tankDeductionsTotalByFuel })
+        body: JSON.stringify({ deductions: tankDeductionsTotalByFuel, shiftDate: emp_today() }) // FA-04: pass IST date so server can compare correctly
       }).catch(e => console.warn('[Tank deduct] server call failed:', e.message));
     }
   } catch(e) { console.warn('[Tank deduct] failed:', e); }
@@ -2636,7 +2757,7 @@ async function deleteCredit(customerId) {
 
 // ── CSV EXPORTS ──────────────────────────────────────────────
 function exportSalesCSV() {
-  const todayIso = new Date().toISOString().slice(0,10);
+  const todayIso = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
   const sales = APP.salesAllTime ? APP.data.sales : APP.data.sales.filter(s => (s.date||'').slice(0,10) === todayIso);
   exportCSV('sales-' + today() + '.csv',
     ['Date', 'Time', 'Vehicle', 'Fuel', 'Liters', 'Amount', 'Pump', 'Nozzle', 'Employee', 'Payment', 'Customer'],
@@ -2710,7 +2831,7 @@ function exportPLCSV() {
 
 function exportDSRCSV() {
   const D = APP.data;
-  const todayIso = new Date().toISOString().slice(0,10);
+  const todayIso = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
   const todaySales = D.sales.filter(s => (s.date||'').slice(0,10) === todayIso);
   exportCSV('dsr-' + today() + '.csv',
     ['Time', 'Vehicle', 'Fuel', 'Liters', 'Amount', 'Employee', 'Payment Mode'],
@@ -3109,8 +3230,8 @@ async function loadData() {
     seeded,
     razorpayKey,
     rawTanks, rawPumps, rawShifts, rawEmployees,
-    rawSales, rawCredit, rawExpenses, rawPurchases, rawDip,
-    prices, purchasePrices,
+    rawSales, rawCredit, rawCreditTxns, rawExpenses, rawPurchases, rawDip,
+    prices, purchasePrices, priceHistory,
     upiVPA, upiName, stationCode, omcName,
     serverAlloc, savedRoster, savedAtt,
     savedTaxRates, savedAdvances, savedBankRecon,
@@ -3124,11 +3245,13 @@ async function loadData() {
     db.getAll('employees').catch(() => []),
     db.getAll('sales').catch(() => []),
     db.getAll('creditCustomers').catch(() => []),
+    db.getAll('creditTransactions').catch(() => []),
     db.getAll('expenses').catch(() => []),
     db.getAll('fuelPurchases').catch(() => []),
     db.getAll('dipReadings').catch(() => []),
     db.getSetting('prices').catch(() => null),
     db.getSetting('purchasePrices').catch(() => null),
+    db.getSetting('price_history').catch(() => []),
     db.getSetting('upiVPA').catch(() => ''),
     db.getSetting('upiName').catch(() => ''),
     db.getSetting('stationCode').catch(() => ''),
@@ -3176,7 +3299,11 @@ async function loadData() {
         }
         return e;
       }),
-      sales: rawSales.sort((a, b) => b.id - a.id),
+      sales: rawSales.sort((a, b) => b.id - a.id).map(function(s) {
+        // Normalise: DB returns employeeName/employee_name, admin.js uses s.employee
+        if (!s.employee) s.employee = s.employeeName || s.employee_name || '';
+        return s;
+      }),
       creditCustomers: rawCredit.map(function(c) {
         c.outstanding = parseFloat(c.outstanding !== undefined ? c.outstanding : (c.balance || 0));
         c.limit       = parseFloat(c.limit       !== undefined ? c.limit       : (c.credit_limit || 0));
@@ -3202,6 +3329,8 @@ async function loadData() {
       prices: prices || SEED.prices,
       purchasePrices: resolvedPurchasePrices,
       weekly: [],
+      creditTransactions: (rawCreditTxns || []).sort((a,b) => (b.id||0)-(a.id||0)),
+      priceHistory: (priceHistory || []),
       upiVPA: upiVPA || SEED.upiVPA,
       upiName: upiName || SEED.upiName,
       stationCode: stationCode || '',
@@ -3222,7 +3351,7 @@ async function loadData() {
         allocations = serverAlloc;
       }
       try {
-        const todayStr = new Date().toISOString().slice(0,10);
+        const todayStr = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
         const todayKeys = Object.keys(allocations).filter(k =>
           k.startsWith(todayStr + '_') &&
           typeof allocations[k] === 'object' &&
