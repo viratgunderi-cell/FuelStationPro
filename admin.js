@@ -499,44 +499,164 @@ function renderPumps(D) {
 // ── SALES ────────────────────────────────────────────────────
 function renderSales(D, filter = 'all') {
   const todayIso = new Date().toISOString().slice(0, 10);
-  const allFiltered = filter === 'all' ? D.sales : D.sales.filter(s => s.fuelType === filter);
-  const filtered = APP.salesAllTime ? allFiltered : allFiltered.filter(s => (s.date || '').slice(0, 10) === todayIso);
-  const total = filtered.reduce((a, s) => a + s.amount, 0);
 
-  const filters = [{ id: 'all', name: 'All' }, ...FUEL_TYPES].map(f =>
-    `<button class="filter-chip ${APP.salesFilter === f.id ? 'active' : ''}" onclick="APP.salesFilter='${f.id}';renderPage()">${f.short || f.name}</button>`
+  // ── Date navigation state ──────────────────────────────────
+  if (!APP.salesDate) APP.salesDate = todayIso;
+  const selDate = APP.salesDate;
+  const isToday = selDate === todayIso;
+
+  // Prev / Next date helpers
+  const dateOffset = (iso, days) => {
+    const d = new Date(iso); d.setDate(d.getDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
+  const fmtDateLabel = iso => {
+    if (iso === todayIso) return 'Today';
+    const yesterday = dateOffset(todayIso, -1);
+    if (iso === yesterday) return 'Yesterday';
+    return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+
+  // ── Employee filter state ──────────────────────────────────
+  if (!APP.salesEmpFilter) APP.salesEmpFilter = 'all';
+
+  // All sales for selected date, fuel-filtered
+  const dateFiltered = D.sales.filter(s => (s.date || '').slice(0, 10) === selDate);
+  const fuelFiltered = filter === 'all' ? dateFiltered : dateFiltered.filter(s => s.fuelType === filter);
+
+  // Unique employees who have sales on this date
+  const empNames = [...new Set(fuelFiltered.map(s => s.employee || '').filter(Boolean))].sort();
+
+  // Final filtered rows (fuel + employee)
+  const filtered = APP.salesEmpFilter === 'all'
+    ? fuelFiltered
+    : fuelFiltered.filter(s => s.employee === APP.salesEmpFilter);
+
+  // Sort by time
+  const sorted = [...filtered].sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+
+  const total   = filtered.reduce((a, s) => a + (s.amount || 0), 0);
+  const liters  = filtered.reduce((a, s) => a + (s.liters || 0), 0);
+
+  // ── Fuel type filter chips ─────────────────────────────────
+  const fuelChips = [{ id: 'all', name: 'All' }, ...FUEL_TYPES].map(f =>
+    `<button class="filter-chip ${APP.salesFilter === f.id ? 'active' : ''}"
+      onclick="APP.salesFilter='${f.id}';renderPage()">${f.short || f.name}</button>`
   ).join('');
 
-  const rows = filtered.map(s => {
+  // ── Per-employee summary cards ─────────────────────────────
+  const empCards = empNames.map(emp => {
+    const empSales = fuelFiltered.filter(s => s.employee === emp);
+    const empAmt   = empSales.reduce((a, s) => a + (s.amount || 0), 0);
+    const empLtrs  = empSales.reduce((a, s) => a + (s.liters || 0), 0);
+    const isActive = APP.salesEmpFilter === emp;
+    const empData  = D.employees?.find(e => e.name === emp);
+    const initials = emp.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+    const avatarBg = empData ? empColor(empData) : '#6b7280';
+    return `<div onclick="APP.salesEmpFilter='${isActive ? 'all' : emp}';renderPage()"
+      style="cursor:pointer;padding:12px 14px;background:${isActive ? 'rgba(212,148,15,0.12)' : 'var(--bg-1)'};
+      border:2px solid ${isActive ? 'var(--accent)' : 'var(--border-light)'};border-radius:10px;
+      display:flex;align-items:center;gap:10px;transition:all 0.15s;min-width:160px"
+      onmouseover="this.style.borderColor='var(--accent)'"
+      onmouseout="this.style.borderColor='${isActive ? 'var(--accent)' : 'var(--border-light)'}'">
+      <div style="width:32px;height:32px;border-radius:8px;background:${avatarBg};display:grid;place-items:center;
+        color:#fff;font-size:11px;font-weight:900;flex-shrink:0">${initials}</div>
+      <div>
+        <div style="font-size:12px;font-weight:800;color:var(--text-0)">${sanitize(emp)}</div>
+        <div style="font-size:11px;color:var(--text-3)">${empSales.length} sales · <span style="color:var(--green);font-weight:700">${cur(empAmt)}</span></div>
+        <div style="font-size:10px;color:var(--text-3)">${empLtrs.toFixed(1)} L</div>
+      </div>
+      ${isActive ? '<span style="margin-left:auto;color:var(--accent);font-size:14px">✓</span>' : ''}
+    </div>`;
+  }).join('');
+
+  // ── Table rows ─────────────────────────────────────────────
+  const rows = sorted.map(s => {
     const fuel = getFuel(s.fuelType);
     const empName = s.employee ? sanitize(s.employee) : '—';
-    return `<tr><td class="mono" style="font-size:11px;white-space:nowrap">${s.time}</td><td class="mono fw-600">${sanitize(s.vehicle)}</td>
+    return `<tr>
+      <td class="mono" style="font-size:11px;white-space:nowrap">${s.time || '—'}</td>
+      <td class="mono fw-600">${sanitize(s.vehicle || '—')}</td>
       <td style="color:${fuel.color}" class="fw-600">${fuel.short}</td>
-      <td class="r mono">${fmt(s.liters)}</td><td class="r mono fw-700">${cur(s.amount)}</td>
+      <td class="r mono">${fmt(s.liters)}</td>
+      <td class="r mono fw-700">${cur(s.amount)}</td>
       <td class="mono" style="font-size:11px">${s.pump ? 'P'+s.pump : '—'}</td>
-      <td style="font-size:11px;font-weight:600;color:var(--text-1)">${empName}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:5px">
+          ${(() => { const e = D.employees?.find(x => x.name === s.employee); const init = s.employee ? s.employee.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase() : '?'; const bg = e ? empColor(e) : '#6b7280'; return s.employee ? `<span style="width:20px;height:20px;border-radius:4px;background:${bg};display:grid;place-items:center;color:#fff;font-size:8px;font-weight:900">${init}</span>` : ''; })()}
+          <span style="font-size:11px;font-weight:600;color:var(--text-1)">${empName}</span>
+        </div>
+      </td>
       <td>${badgeColor(s.mode, payColors[s.mode])}</td>
-      <td>${sanitize(s.customer) || '—'}</td></tr>`;
+      <td style="font-size:11px;color:var(--text-2)">${sanitize(s.customer || '') || '—'}</td>
+    </tr>`;
   }).join('');
+
+  const emptyMsg = sorted.length === 0
+    ? `<tr><td colspan="9" style="text-align:center;padding:32px;color:var(--text-3)">
+        ${dateFiltered.length === 0 ? '📭 No sales recorded for this date' : '🔍 No sales match the selected filters'}
+      </td></tr>`
+    : '';
 
   return `
     <div class="page-hdr">
-      <h3>💰 Today's Sales</h3>
-      <div class="flex" style="gap:8px;flex-wrap:wrap">
-        <div class="filters">${filters}</div>
+      <h3>💰 Sales</h3>
+      <div class="flex" style="gap:8px;flex-wrap:wrap;align-items:center">
+        <div class="filters">${fuelChips}</div>
         <button class="btn btn-accent" onclick="openSaleModal()">+ New Sale</button>
       </div>
     </div>
+
+    <!-- Date navigator -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" onclick="APP.salesDate='${dateOffset(selDate,-1)}';APP.salesEmpFilter='all';renderPage()">◀ Prev</button>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--bg-1);border:1px solid var(--border);border-radius:8px;padding:4px 10px">
+        <span style="font-size:13px;font-weight:700;color:var(--text-0)">${fmtDateLabel(selDate)}</span>
+        <input type="date" value="${selDate}" max="${todayIso}"
+          onchange="APP.salesDate=this.value;APP.salesEmpFilter='all';renderPage()"
+          style="opacity:0;position:absolute;width:120px;cursor:pointer" title="Pick a date" />
+        <span style="font-size:11px;color:var(--text-3);font-family:var(--mono)">${selDate}</span>
+        <span style="font-size:14px;cursor:pointer" title="Pick a date">📅</span>
+      </div>
+      ${!isToday ? `<button class="btn btn-ghost btn-sm" onclick="APP.salesDate='${todayIso}';APP.salesEmpFilter='all';renderPage()">Today</button>` : ''}
+      ${selDate < todayIso ? `<button class="btn btn-ghost btn-sm" onclick="APP.salesDate='${dateOffset(selDate,1)}';APP.salesEmpFilter='all';renderPage()">Next ▶</button>` : ''}
+      <span style="font-size:12px;color:var(--text-3)">${dateFiltered.length} sale${dateFiltered.length!==1?'s':''} on this day</span>
+    </div>
+
+    <!-- Employee summary cards -->
+    ${empNames.length > 0 ? `
+    <div style="margin-bottom:16px">
+      <div style="font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">
+        Employee Summary ${APP.salesEmpFilter !== 'all' ? `— <span style="color:var(--accent-light)">Filtered: ${sanitize(APP.salesEmpFilter)}</span> <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 6px" onclick="APP.salesEmpFilter='all';renderPage()">✕ Clear</button>` : ''}
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px">${empCards}</div>
+    </div>` : ''}
+
+    <!-- Sales table -->
     <div class="card">
       <div class="card-head">
-        <div style="display:flex;gap:12px;align-items:center">
-          <span style="color:var(--text-3);font-size:13px">${filtered.length} today</span>
-          ${allFiltered.length > filtered.length ? `<button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px" onclick="APP.salesFilter='${filter}';APP.salesAllTime=true;renderPage()">Show all-time (${allFiltered.length})</button>` : ''}
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <span style="color:var(--text-3);font-size:13px">${sorted.length} transaction${sorted.length!==1?'s':''}</span>
+          <span style="font-size:12px;color:var(--text-2)">· <span class="mono">${liters.toFixed(1)} L</span></span>
         </div>
-        <span class="mono fw-700" style="color:var(--green)">Total: ${cur(total)}</span>
+        <span class="mono fw-700" style="color:var(--green);font-size:16px">Total: ${cur(total)}</span>
       </div>
-      <div class="card-body"><div class="tbl-wrap"><table><thead><tr><th>Time</th><th>Vehicle</th><th>Fuel</th><th class="r">Liters</th><th class="r">Amount</th><th>Pump</th><th>Employee</th><th>Payment</th><th>Customer</th></tr></thead><tbody>${rows}</tbody></table></div></div>
+      <div class="card-body">
+        <div class="tbl-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th><th>Vehicle</th><th>Fuel</th>
+                <th class="r">Liters</th><th class="r">Amount</th>
+                <th>Pump</th><th>Employee</th><th>Payment</th><th>Customer</th>
+              </tr>
+            </thead>
+            <tbody>${rows}${emptyMsg}</tbody>
+          </table>
+        </div>
+      </div>
     </div>
+
     <div class="flex" style="gap:8px;margin-top:16px">
       <button class="btn btn-ghost" onclick="exportSalesCSV()">↓ Export CSV</button>
       <button class="btn btn-ghost" onclick="shareSalesSummary()">📤 Share Summary</button>
@@ -5018,6 +5138,8 @@ function navigate(pageId) {
   }
   APP.page = pageId;
   APP.salesFilter = 'all';
+  APP.salesDate = new Date().toISOString().slice(0, 10);
+  APP.salesEmpFilter = 'all';
   APP.salesAllTime = false;
   window.location.hash = pageId;
   document.getElementById('pageTitle').textContent = PAGES.find(p => p.id === pageId)?.label || 'Dashboard';
