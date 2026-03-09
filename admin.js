@@ -1785,7 +1785,7 @@ function renderRoster(D) {
     </div>`;
 }
 
-window._rosterWeekOffset = 0;
+if (window._rosterWeekOffset === undefined) window._rosterWeekOffset = 0;
 function rosterNavWeek(dir) {
   window._rosterWeekOffset = (window._rosterWeekOffset || 0) + dir;
   renderPage();
