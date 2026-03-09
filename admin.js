@@ -843,7 +843,7 @@ function renderStaff(D) {
     : window.staffTab === 'attendance'
     ? `<input type="date" class="form-input" style="padding:6px 12px;font-size:13px;width:160px" value="${window._attDate||new Date().toISOString().slice(0,10)}" onchange="window._attDate=this.value;renderPage()" /><button class="btn btn-accent btn-sm" onclick="attSave()">💾 Save</button><button class="btn btn-ghost btn-sm" onclick="attMarkAllPresent('${window._attDate||new Date().toISOString().slice(0,10)}')">✅ All Present</button>`
     : window.staffTab === 'roster'
-    ? `<button class="btn btn-ghost btn-sm" onclick="rosterNavWeek(-1)">◀ Prev</button><button class="btn btn-ghost btn-sm" onclick="rosterNavWeek(1)">Next ▶</button><button class="btn btn-accent btn-sm" onclick="rosterSave()">💾 Save</button>`
+    ? `<button class="btn btn-ghost btn-sm" onclick="rosterNavWeek(-1)">◀ Prev</button><button class="btn btn-ghost btn-sm" onclick="rosterNavWeek(1)">Next ▶</button>${(()=>{const _o=window._rosterWeekOffset||0;const _t=new Date();const _d=_t.getDay()===0?6:_t.getDay()-1;const _w=new Date(_t);_w.setDate(_t.getDate()-_d+_o*7);_w.setHours(0,0,0,0);const _m=new Date(_t);_m.setDate(_t.getDate()-_d);_m.setHours(0,0,0,0);return _w<_m?'':'<button class="btn btn-accent btn-sm" onclick="rosterSave()">💾 Save</button>';})()}`
     : `<button class="btn btn-accent" onclick="openEmployeeModal()">+ Add Employee</button>`;
 
   // ── Tab content ───────────────────────────────────────────────
@@ -1648,9 +1648,12 @@ window.renderStaff = renderStaff;
 // ── SHIFT ROSTER ─────────────────────────────────────────────
 function renderRoster(D) {
   const today = new Date();
-  // Build a 7-day week view starting from current Monday
+  // Build a 7-day week view — offset controlled by rosterNavWeek()
+  const offset = window._rosterWeekOffset || 0;
   const dayOfWeek = today.getDay() === 0 ? 6 : today.getDay() - 1;
-  const weekStart = new Date(today); weekStart.setDate(today.getDate() - dayOfWeek);
+  const weekStart = new Date(today);
+  weekStart.setDate(today.getDate() - dayOfWeek + offset * 7);
+  weekStart.setHours(0,0,0,0);
   const weekDays = Array.from({length: 7}, (_, i) => {
     const d = new Date(weekStart); d.setDate(weekStart.getDate() + i);
     return d;
@@ -1659,6 +1662,10 @@ function renderRoster(D) {
   const fmtDay = d => d.toLocaleDateString('en-IN', {weekday:'short'});
   const fmtNum = d => d.getDate();
   const todayStr = fmtDate(today);
+
+  // Past week = the entire week ends before today's Monday
+  const thisMonday = new Date(today); thisMonday.setDate(today.getDate() - dayOfWeek); thisMonday.setHours(0,0,0,0);
+  const isPastWeek = weekStart < thisMonday;
 
   const shifts = D.shifts && D.shifts.length ? D.shifts : [{name:'Morning',start:'06:00',end:'14:00'},{name:'Afternoon',start:'14:00',end:'22:00'},{name:'Night',start:'22:00',end:'06:00'}];
   const emps = D.employees || [];
@@ -1687,18 +1694,23 @@ function renderRoster(D) {
       const assigned = roster[key] || [];
       const isToday = dateStr === todayStr;
       const assignedEmps = assigned.map(id => emps.find(e => String(e.id) === String(id))).filter(Boolean);
-      const empChips = assignedEmps.map(e =>
-        `<div style="display:flex;align-items:center;gap:5px;background:var(--bg-2);border:1px solid var(--border-light);border-radius:6px;padding:4px 7px;margin-bottom:3px;cursor:pointer"
-          title="Click to remove ${sanitize(e.name)}"
-          onclick="rosterUnassign('${dateStr}','${shift.name}',${e.id})">
-          <span style="width:20px;height:20px;border-radius:5px;background:${empColor(e)};display:grid;place-items:center;color:#fff;font-size:8px;font-weight:800;flex-shrink:0">${empInitials(e.name)}</span>
-          <span style="font-size:10px;font-weight:700;color:var(--text-0)">${sanitize(e.name)}</span>
-          <span style="margin-left:auto;color:var(--red);font-size:10px;line-height:1;opacity:0.7">✕</span>
-        </div>`
+      // Past weeks: read-only chip (no remove button). Current/future: interactive with ✕
+      const empChips = assignedEmps.map(e => isPastWeek
+        ? `<div style="display:flex;align-items:center;gap:5px;background:var(--bg-1);border:1px solid var(--border-light);border-radius:6px;padding:4px 7px;margin-bottom:3px;opacity:0.72;cursor:default">
+            <span style="width:20px;height:20px;border-radius:5px;background:${empColor(e)};display:grid;place-items:center;color:#fff;font-size:8px;font-weight:800;flex-shrink:0">${empInitials(e.name)}</span>
+            <span style="font-size:10px;font-weight:700;color:var(--text-1)">${sanitize(e.name)}</span>
+          </div>`
+        : `<div style="display:flex;align-items:center;gap:5px;background:var(--bg-2);border:1px solid var(--border-light);border-radius:6px;padding:4px 7px;margin-bottom:3px;cursor:pointer"
+            title="Click to remove ${sanitize(e.name)}"
+            onclick="rosterUnassign('${dateStr}','${shift.name}',${e.id})">
+            <span style="width:20px;height:20px;border-radius:5px;background:${empColor(e)};display:grid;place-items:center;color:#fff;font-size:8px;font-weight:800;flex-shrink:0">${empInitials(e.name)}</span>
+            <span style="font-size:10px;font-weight:700;color:var(--text-0)">${sanitize(e.name)}</span>
+            <span style="margin-left:auto;color:var(--red);font-size:10px;line-height:1;opacity:0.7">✕</span>
+          </div>`
       ).join('');
-      // Unassigned employees shown as small avatar buttons
+      // Add-buttons only shown for current/future weeks
       const unassigned = emps.filter(e => !assigned.includes(String(e.id)));
-      const addBtns = unassigned.length === 0 ? '' : `<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:${assignedEmps.length?'5px':'0'}">
+      const addBtns = isPastWeek ? '' : (unassigned.length === 0 ? '' : `<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:${assignedEmps.length?'5px':'0'}">
         ${unassigned.map(e => `<button title="Assign ${sanitize(e.name)}"
           onclick="rosterAssign('${dateStr}','${shift.name}',${e.id})"
           style="display:flex;align-items:center;gap:4px;background:var(--bg-1);border:1px dashed var(--border);border-radius:6px;padding:3px 6px;cursor:pointer;transition:all 0.15s;color:var(--text-2);font-size:10px;font-weight:600"
@@ -1707,7 +1719,7 @@ function renderRoster(D) {
           <span style="width:18px;height:18px;border-radius:4px;background:${empColor(e)};display:grid;place-items:center;color:#fff;font-size:8px;font-weight:800">${empInitials(e.name)}</span>
           ${sanitize(e.name.split(' ')[0])}
         </button>`).join('')}
-      </div>`;
+      </div>`);
       return `<td style="vertical-align:top;padding:6px;background:${isToday?'rgba(212,148,15,0.04)':'transparent'};border-left:1px solid var(--border-light)">
         ${empChips}${addBtns}
       </td>`;
@@ -1731,14 +1743,19 @@ function renderRoster(D) {
       <div style="display:flex;gap:8px">
         <button class="btn btn-ghost btn-sm" onclick="rosterNavWeek(-1)">◀ Prev Week</button>
         <button class="btn btn-ghost btn-sm" onclick="rosterNavWeek(1)">Next Week ▶</button>
-        <button class="btn btn-accent btn-sm" onclick="rosterSave()">💾 Save Roster</button>
+        ${isPastWeek ? '' : `<button class="btn btn-accent btn-sm" onclick="rosterSave()">💾 Save Roster</button>`}
       </div>
     </div>
 
-    <div style="font-size:12px;color:var(--text-3);margin-bottom:16px">
+    <div style="font-size:12px;color:var(--text-3);margin-bottom:${isPastWeek?'8px':'16px'}">
       Week of <strong style="color:var(--text-1)">${weekStart.toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</strong>
-      — Click an employee button to assign · Click an assigned employee to remove.
+      ${isPastWeek
+        ? '— <span style="color:var(--text-3)">View only</span>'
+        : '— Click an employee button to assign · Click an assigned employee to remove.'}
     </div>
+    ${isPastWeek ? `<div style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:6px;padding:5px 10px;margin-bottom:14px;font-size:11px;color:var(--text-3)">
+      🔒 <span>Past week — read only. Navigate to current or future week to make changes.</span>
+    </div>` : ''}
 
     <div class="card mb-24" style="overflow-x:auto">
       <table style="border-collapse:collapse;width:100%;min-width:680px">
