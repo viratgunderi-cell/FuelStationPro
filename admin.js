@@ -1803,7 +1803,7 @@ function renderRoster(D) {
     const d = new Date(weekStart); d.setDate(weekStart.getDate() + i);
     return d;
   });
-  const fmtDate = d => d.toISOString().slice(0,10);
+  const fmtDate = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
   const fmtDay = d => d.toLocaleDateString('en-IN', {weekday:'short'});
   const fmtNum = d => d.getDate();
   const todayStr = fmtDate(today);
@@ -1853,20 +1853,16 @@ function renderRoster(D) {
             <span style="margin-left:auto;color:var(--red);font-size:10px;line-height:1;opacity:0.7">✕</span>
           </div>`
       ).join('');
-      // Add-buttons only shown for current/future weeks
+      // Single dropdown replaces per-employee add-buttons
       const unassigned = emps.filter(e => !assigned.includes(String(e.id)));
-      const addBtns = isPastWeek ? '' : (unassigned.length === 0 ? '' : `<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:${assignedEmps.length?'5px':'0'}">
-        ${unassigned.map(e => `<button title="Assign ${sanitize(e.name)}"
-          onclick="rosterAssign('${dateStr}','${shift.name}',${e.id})"
-          style="display:flex;align-items:center;gap:4px;background:var(--bg-1);border:1px dashed var(--border);border-radius:6px;padding:3px 6px;cursor:pointer;transition:all 0.15s;color:var(--text-2);font-size:10px;font-weight:600"
-          onmouseover="this.style.background='var(--bg-2)';this.style.borderColor='var(--accent)';this.style.color='var(--text-0)'"
-          onmouseout="this.style.background='var(--bg-1)';this.style.borderColor='var(--border)';this.style.color='var(--text-2)'">
-          <span style="width:18px;height:18px;border-radius:4px;background:${empColor(e)};display:grid;place-items:center;color:#fff;font-size:8px;font-weight:800">${empInitials(e.name)}</span>
-          ${sanitize(e.name.split(' ')[0])}
-        </button>`).join('')}
-      </div>`);
+      const addDropdown = isPastWeek || unassigned.length === 0 ? '' :
+        `<select style="margin-top:${assignedEmps.length?'5px':'0'};width:100%;background:var(--bg-1);border:1px dashed var(--border);border-radius:6px;padding:4px 6px;color:var(--text-3);font-size:11px;font-family:var(--font);cursor:pointer"
+          onchange="if(this.value){rosterAssign('${dateStr}','${shift.name}',this.value);this.value=''}">
+          <option value="">+ Assign</option>
+          ${unassigned.map(e => `<option value="${e.id}">${sanitize(e.name)}</option>`).join('')}
+        </select>`;
       return `<td style="vertical-align:top;padding:6px;background:${isToday?'rgba(212,148,15,0.04)':'transparent'};border-left:1px solid var(--border-light)">
-        ${empChips}${addBtns}
+        ${empChips}${addDropdown}
       </td>`;
     }).join('');
 
