@@ -37,7 +37,11 @@ async function apiFetch(path, options = {}) {
     console.error('[API]', options.method || 'GET', path, '→', response.status, bodyText.slice(0, 200));
     let err;
     try { err = JSON.parse(bodyText); } catch { err = {}; }
-    throw new Error(err.error || err.message || `Server error ${response.status} — check Railway logs`);
+    // Friendly messages for common HTTP errors
+    if (response.status === 429) throw new Error(err.error || 'Too many requests — please wait a few minutes and try again');
+    if (response.status === 503 || response.status === 502) throw new Error('Server is starting up — please wait 10 seconds and retry');
+    if (response.status === 404) throw new Error(err.error || 'Not found');
+    throw new Error(err.error || err.message || `Server error ${response.status}`);
   }
 
   return response.json();

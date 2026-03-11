@@ -381,7 +381,16 @@ async function startServer() {
     }
   });
 
-  const authLimiter = rateLimit({ windowMs: 300000, max: 30 });
+  const authLimiter = rateLimit({
+    windowMs: 300000,   // 5-minute window
+    max: 200,           // raised from 30 — supports multi-user stations
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: (req, res) => {
+      const retryAfter = Math.ceil((req.rateLimit.resetTime - Date.now()) / 1000 / 60);
+      res.status(429).json({ error: `Too many login attempts. Please wait ${retryAfter} minute(s) and try again.` });
+    },
+  });
   app.use('/api/auth', authLimiter, authRoutes(db));
 
   // ── Settings routes ──────────────────────────────────────────────────────
