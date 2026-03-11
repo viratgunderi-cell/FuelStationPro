@@ -2697,6 +2697,8 @@ async function doEmpLogin() {
   }
   recordSuccessLogin('emp_' + id);
   APP.loggedIn = true; APP.role = 'employee'; saveSession();
+  // Consume the background preload so loadData() can't overwrite manager data after login
+  if (window._preloadPromise) { window._preloadPromise.catch(()=>{}); window._preloadPromise = null; }
 
   // ── Get JWT token so employee can write to server DB (sales, readings) ──
   // Without a token, all db.add/db.put calls fail silently with 401
@@ -3546,18 +3548,24 @@ async function loadData() {
     APP.data = {
       tanks: rawTanks.map(_normTank),
       pumps: rawPumps.map(_normPump),
-      shifts: rawShifts,
-      employees: rawEmployees.map(function(e) {
-        if (!e.permissions && e.data_json) {
-          try { const j = JSON.parse(e.data_json || '{}'); e.permissions = j.permissions || {}; } catch { e.permissions = {}; }
-        }
-        if (!e.permissions) e.permissions = {};
-        if (e.joinDate === undefined && e.join_date) e.joinDate = e.join_date;
-        if (e.color === undefined && e.data_json) {
-          try { e.color = JSON.parse(e.data_json).color || ''; } catch {}
-        }
-        return e;
-      }),
+      // ── Shift Manager guard: rawShifts/rawEmployees are [] for employee tokens ──
+      // If we already fetched real data via staff-data endpoint, keep it.
+      shifts: (window._mgrShifts && window._mgrShifts.length > 0)
+        ? window._mgrShifts
+        : rawShifts,
+      employees: (window._mgrEmployees && window._mgrEmployees.length > 0)
+        ? window._mgrEmployees
+        : rawEmployees.map(function(e) {
+            if (!e.permissions && e.data_json) {
+              try { const j = JSON.parse(e.data_json || '{}'); e.permissions = j.permissions || {}; } catch { e.permissions = {}; }
+            }
+            if (!e.permissions) e.permissions = {};
+            if (e.joinDate === undefined && e.join_date) e.joinDate = e.join_date;
+            if (e.color === undefined && e.data_json) {
+              try { e.color = JSON.parse(e.data_json).color || ''; } catch {}
+            }
+            return e;
+          }),
       sales: rawSales.sort((a, b) => b.id - a.id).map(function(s) {
         // Normalise: DB returns employeeName/employee_name, admin.js uses s.employee
         if (!s.employee) s.employee = s.employeeName || s.employee_name || '';
@@ -3752,6 +3760,12 @@ async function loadData() {
     }
     if (window._mgrShifts && window._mgrShifts.length > 0) {
       APP.data.shifts = window._mgrShifts;
+    }
+
+    // If employee is already in the app when loadData finishes (background preload),
+    // trigger a silent re-render so they see fresh data without any user action.
+    if (APP.role === 'employee' && empState.active && typeof renderPage === 'function') {
+      try { renderPage(); } catch(e) {}
     }
   } catch (e) {
     console.error('Data load failed, using seed data:', e);
