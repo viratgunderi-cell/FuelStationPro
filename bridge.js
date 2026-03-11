@@ -113,7 +113,8 @@
   const _origIsSuperLoggedIn = window.mt_isSuperLoggedIn;
   window.mt_isSuperLoggedIn = function() {
     const token = sessionStorage.getItem('fb_super_token');
-    if (!token) return false;
+    // BUG-C FIX: guard against empty string token (written accidentally by old doAdminLogin code)
+    if (!token || token.length < 10) return false;
     const s = (() => {
       try { return JSON.parse(sessionStorage.getItem('fb_super_session') || 'null'); } catch { return null; }
     })();
@@ -255,7 +256,10 @@
       const result = await AuthAPI.adminLogin(user, pass, tenant.id);
       if (result.success) {
         setAuthToken(result.token);
-        sessionStorage.setItem('fb_super_token', sessionStorage.getItem('fb_super_token') || '');
+        // NOTE: Do NOT write empty string to fb_super_token — if there's no super token
+        // present, don't set this key at all. An empty string would make mt_isSuperLoggedIn()
+        // find a truthy-but-empty token and cause incorrect super-admin UI display.
+        // BUG-C FIX: removed: sessionStorage.setItem('fb_super_token', sessionStorage.getItem('fb_super_token') || '')
         sessionStorage.setItem('fb_session', JSON.stringify({
           loggedIn: true, role: 'admin',
           adminUser: { name: result.userName, username: user, role: result.userRole },

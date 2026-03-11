@@ -341,9 +341,23 @@ async function startServer() {
   const listTenantsPublic = async (req, res) => {
     try {
       const result = await pool.query(
-        'SELECT id, name, location, icon, color, color_light, active, station_code FROM tenants ORDER BY name'
+        'SELECT id, name, location, owner_name, phone, icon, color, color_light, active, station_code FROM tenants ORDER BY name'
       );
-      res.json(result.rows);
+      // BUG-A FIX: Normalize snake_case DB columns → camelCase expected by multitenant.js
+      // color_light → colorLight, station_code → stationCode, owner_name → ownerName
+      const rows = result.rows.map(t => ({
+        id:          t.id,
+        name:        t.name,
+        location:    t.location,
+        ownerName:   t.owner_name || '',
+        phone:       t.phone || '',
+        icon:        t.icon,
+        color:       t.color,
+        colorLight:  t.color_light,   // multitenant.js uses t.colorLight for gradient
+        active:      t.active,
+        stationCode: t.station_code || '',
+      }));
+      res.json(rows);
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
@@ -354,30 +368,64 @@ async function startServer() {
 
   // ── PUBLIC: save employee sale (tenantId auth only — no JWT needed as fallback) ──
   app.post('/api/public/sales/:tenantId', async (req, res) => {
+    const client = await pool.connect();
     try {
       const { tenantId } = req.params;
       const sale = req.body;
       if (!tenantId || !sale || !sale.fuelType || !sale.liters || !sale.amount) {
+        client.release();
         return res.status(400).json({ error: 'Missing required fields' });
       }
       // Verify tenant exists
-      const tenantCheck = await pool.query('SELECT id FROM tenants WHERE id = $1', [tenantId]);
-      if (!tenantCheck.rows.length) return res.status(404).json({ error: 'Tenant not found' });
+      const tenantCheck = await client.query('SELECT id FROM tenants WHERE id = $1', [tenantId]);
+      if (!tenantCheck.rows.length) { client.release(); return res.status(404).json({ error: 'Tenant not found' }); }
 
       // TC-018 FIX: Validate pump is not inactive before accepting sale
-      // This prevents API-direct bypass of the UI pump-status filter
       if (sale.pump) {
-        const pumpCheck = await pool.query(
+        const pumpCheck = await client.query(
           'SELECT status FROM pumps WHERE id = $1 AND tenant_id = $2',
           [String(sale.pump), tenantId]
         );
         if (pumpCheck.rows[0] && pumpCheck.rows[0].status === 'inactive') {
+          client.release();
           return res.status(409).json({ error: 'Pump is inactive — sale not permitted', pump: sale.pump });
         }
       }
 
+      await client.query('BEGIN');
+
+      // BUG-B FIX: Credit limit enforcement INSIDE a transaction with SELECT FOR UPDATE
+      // prevents TOCTOU race — two concurrent credit sales can no longer both pass the
+      // limit check against the same pre-update balance.
+      if ((sale.mode || 'cash') === 'credit' && sale.customer) {
+        const creditRow = await client.query(
+          'SELECT id, balance, credit_limit FROM credit_customers WHERE tenant_id = $1 AND name = $2 AND active = 1 FOR UPDATE',
+          [tenantId, sale.customer]
+        );
+        if (creditRow.rows[0]) {
+          const currentBalance = parseFloat(creditRow.rows[0].balance) || 0;
+          const limit = parseFloat(creditRow.rows[0].credit_limit) || 0;
+          if (limit > 0 && (currentBalance + sale.amount) > limit) {
+            await client.query('ROLLBACK');
+            client.release();
+            return res.status(422).json({
+              error: 'Credit limit exceeded',
+              outstanding: currentBalance,
+              limit,
+              available: Math.max(0, limit - currentBalance),
+            });
+          }
+          // Update balance atomically within the same transaction
+          await client.query(
+            `UPDATE credit_customers SET balance = COALESCE(balance, 0) + $1
+             WHERE tenant_id = $2 AND name = $3 AND active = 1`,
+            [sale.amount, tenantId, sale.customer]
+          );
+        }
+      }
+
       // BUG-01 FIX: 'employee' bare column does not exist in sales — use employee_id + employee_name
-      const r = await pool.query(
+      const r = await client.query(
         `INSERT INTO sales (tenant_id, date, time, fuel_type, liters, amount, mode, pump, nozzle, vehicle, customer, shift, employee_id, employee_name)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
         [tenantId, sale.date||'', sale.time||'', sale.fuelType||'', sale.liters||0, sale.amount||0,
@@ -386,40 +434,12 @@ async function startServer() {
          sale.employeeName||(sale.employee||'')]
       );
 
-      // FA-02 FIX: Server-side credit limit enforcement (client-side check alone is bypassable)
-      if ((sale.mode||'cash') === 'credit' && sale.customer) {
-        try {
-          // Read current balance and limit before updating
-          const creditRow = await pool.query(
-            'SELECT balance, credit_limit FROM credit_customers WHERE tenant_id = $1 AND name = $2 AND active = 1',
-            [tenantId, sale.customer]
-          );
-          if (creditRow.rows[0]) {
-            const currentBalance = parseFloat(creditRow.rows[0].balance) || 0;
-            const limit = parseFloat(creditRow.rows[0].credit_limit) || 0;
-            if (limit > 0 && (currentBalance + sale.amount) > limit) {
-              // Sale already inserted above — remove it to keep DB consistent
-              await pool.query('DELETE FROM sales WHERE id = $1', [r.rows[0].id]);
-              return res.status(422).json({
-                error: 'Credit limit exceeded',
-                outstanding: currentBalance,
-                limit,
-                available: Math.max(0, limit - currentBalance),
-              });
-            }
-          }
-          await pool.query(
-            `UPDATE credit_customers SET balance = COALESCE(balance, 0) + $1
-             WHERE tenant_id = $2 AND name = $3 AND active = 1`,
-            [sale.amount, tenantId, sale.customer]
-          );
-        } catch (credErr) {
-          console.warn('[public/sales] credit balance update failed:', credErr.message);
-        }
-      }
-
+      await client.query('COMMIT');
+      client.release();
       res.json({ id: r.rows[0].id });
     } catch (e) {
+      try { await client.query('ROLLBACK'); } catch {}
+      client.release();
       console.error('[public/sales]', e.message);
       res.status(500).json({ error: 'Failed to save sale' });
     }
@@ -431,7 +451,10 @@ async function startServer() {
     standardHeaders: true,
     legacyHeaders: false,
     handler: (req, res) => {
-      const retryAfter = Math.ceil((req.rateLimit.resetTime - Date.now()) / 1000 / 60);
+      // BUG-D FIX: req.rateLimit.resetTime may be undefined in some express-rate-limit configs.
+      // Use optional chaining and fallback to a sensible default.
+      const resetMs = req.rateLimit?.resetTime ? (req.rateLimit.resetTime - Date.now()) : 300000;
+      const retryAfter = Math.max(1, Math.ceil(resetMs / 1000 / 60));
       res.status(429).json({ error: `Too many login attempts. Please wait ${retryAfter} minute(s) and try again.` });
     },
   });
@@ -520,12 +543,32 @@ async function startServer() {
 
   // DELETE tenant — this is the critical route that was failing
   app.delete('/api/data/tenants/:id', authMiddleware(db), reqRole('super'), async (req, res) => {
+    const client = await pool.connect();
     try {
       console.log('[Server] DELETE tenant:', req.params.id, 'by:', req.userName);
       await auLog(req, 'DELETE_TENANT', 'tenants', req.params.id, '');
-      await db.prepare('DELETE FROM tenants WHERE id = $1').run(req.params.id);
+
+      await client.query('BEGIN');
+      // BUG-E FIX: Cascade delete all tenant data to prevent orphaned rows.
+      // No FK constraints exist, so manual cleanup is required.
+      const tid = req.params.id;
+      const TENANT_TABLES = [
+        'sales', 'tanks', 'pumps', 'dip_readings', 'expenses', 'fuel_purchases',
+        'credit_customers', 'credit_transactions', 'employees', 'shifts', 'settings',
+        'audit_log', 'lubes_products', 'lubes_sales',
+      ];
+      for (const tbl of TENANT_TABLES) {
+        await client.query(`DELETE FROM ${tbl} WHERE tenant_id = $1`, [tid]);
+      }
+      await client.query('DELETE FROM admin_users WHERE tenant_id = $1', [tid]);
+      await client.query('DELETE FROM sessions WHERE tenant_id = $1', [tid]);
+      await client.query('DELETE FROM tenants WHERE id = $1', [tid]);
+      await client.query('COMMIT');
+      client.release();
       res.json({ success: true });
     } catch (e) {
+      try { await client.query('ROLLBACK'); } catch {}
+      client.release();
       console.error('[Server] DELETE tenant error:', e.message);
       res.status(500).json({ error: e.message });
     }

@@ -135,16 +135,23 @@ function camelToSnake(s) {
   return s.replace(/([A-Z])/g, '_$1').toLowerCase();
 }
 
-// Cache table columns
+// Cache table columns — invalidated after startup delay to pick up any schema migrations
 const _colCache = {};
+let _colCacheReady = false;
+// Allow schema migrations (run on startup) to complete before locking in column cache.
+// After 30s the cache is considered stable for the lifetime of the process.
+setTimeout(() => { _colCacheReady = true; }, 30000);
+
 async function getTableCols(table) {
-  if (_colCache[table]) return _colCache[table];
+  // BUG-F FIX: Don't use stale cache in the first 30s after startup (migration window).
+  if (_colCacheReady && _colCache[table]) return _colCache[table];
   const r = await pool.query(
     'SELECT column_name FROM information_schema.columns WHERE table_name = $1',
     [table]
   );
-  _colCache[table] = r.rows.map(row => row.column_name);
-  return _colCache[table];
+  const cols = r.rows.map(row => row.column_name);
+  if (_colCacheReady) _colCache[table] = cols;
+  return cols;
 }
 
 // ── Upsert a row using direct pool.query ──────────────────────────────────
