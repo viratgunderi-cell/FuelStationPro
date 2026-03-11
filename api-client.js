@@ -33,8 +33,11 @@ async function apiFetch(path, options = {}) {
   }
 
   if (!response.ok) {
-    const err = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(err.error || err.message || `HTTP ${response.status}`);
+    const bodyText = await response.text().catch(() => '');
+    console.error('[API]', options.method || 'GET', path, '→', response.status, bodyText.slice(0, 200));
+    let err;
+    try { err = JSON.parse(bodyText); } catch { err = {}; }
+    throw new Error(err.error || err.message || `Server error ${response.status} — check Railway logs`);
   }
 
   return response.json();
