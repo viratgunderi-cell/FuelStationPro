@@ -398,10 +398,25 @@
     const token = sessionStorage.getItem('fb_super_token');
     if (!token) { stopSuperSessionHeartbeat(); return; }
     try {
-      setAuthToken(token);
-      await AuthAPI.checkSession();
+      // Manually call the session endpoint — bypass apiFetch's auto-logout
+      // so WE control the cleanup, not appLogout (which doesn't clear super tokens)
+      const resp = await fetch('/api/auth/session', {
+        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }
+      });
+      if (resp.status === 401) {
+        // Another device logged in and killed this session — force super logout NOW
+        stopSuperSessionHeartbeat();
+        sessionStorage.removeItem('fb_super_token');
+        sessionStorage.removeItem('fb_super_session');
+        clearAuth();
+        if (typeof mt_toast === 'function') mt_toast('⚠️ Super Admin session ended — another login was detected', 'error');
+        setTimeout(function() {
+          if (typeof mt_showSelector === 'function') mt_showSelector();
+        }, 1500);
+      }
+      // Any other status (200, 500, network error) — stay logged in, try next tick
     } catch (e) {
-      // 401 → apiFetch calls appLogout() automatically
+      // Network offline or server error — do nothing, retry on next tick
     }
   }
   document.addEventListener('visibilitychange', function() {
