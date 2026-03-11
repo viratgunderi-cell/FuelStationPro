@@ -391,8 +391,30 @@
         // 401 is already handled by apiFetch → appLogout() → page reload.
         // Any other error (network offline etc.) — stay logged in, try again next tick.
       }
-    }, 30000); // 30 seconds
+    }, 5000); // 5 seconds — fast enough to kick out the old session immediately
   }
+  // Also check immediately when this tab regains focus — catches the kicked-out state instantly
+  async function _superSessionCheck() {
+    const token = sessionStorage.getItem('fb_super_token');
+    if (!token) { stopSuperSessionHeartbeat(); return; }
+    try {
+      setAuthToken(token);
+      await AuthAPI.checkSession();
+    } catch (e) {
+      // 401 → apiFetch calls appLogout() automatically
+    }
+  }
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible' && sessionStorage.getItem('fb_super_token')) {
+      _superSessionCheck();
+    }
+  });
+  window.addEventListener('focus', function() {
+    if (sessionStorage.getItem('fb_super_token')) {
+      _superSessionCheck();
+    }
+  });
+
   function stopSuperSessionHeartbeat() {
     if (_superHeartbeatTimer) {
       clearInterval(_superHeartbeatTimer);
