@@ -1,15 +1,16 @@
 /**
- * FuelBunk Pro — Service Worker v6.0
+ * FuelBunk Pro — Service Worker v8.0
  * Strategy:
  *   - App shell (index.html, api-client.js, bridge.js): Cache-first, network fallback
  *   - API /api/public/*: Network-first, cache fallback (employee portal offline support)
+ *   - API /api/data/compare/*: Network-first, cache fallback (compare page offline)
  *   - API /api/data/* and /api/auth/*: Network-only (auth + data must be fresh)
  *   - Static assets (manifest, icons): Cache-first, long TTL
  */
 
-const CACHE_NAME    = 'fuelbunk-v7';
-const SHELL_CACHE   = 'fuelbunk-shell-v7';
-const API_CACHE     = 'fuelbunk-api-v7';
+const CACHE_NAME    = 'fuelbunk-v8';
+const SHELL_CACHE   = 'fuelbunk-shell-v8';
+const API_CACHE     = 'fuelbunk-api-v8';
 
 // App shell — cache on install (split bundle: v7)
 const SHELL_ASSETS = [
@@ -70,6 +71,22 @@ self.addEventListener('fetch', event => {
     // Public employee APIs (/api/public/*): network-first, fall back to cache
     // This lets the employee portal work offline after first load
     if (path.startsWith('/api/public/') && request.method === 'GET') {
+      event.respondWith(
+        fetch(request.clone())
+          .then(res => {
+            if (res.ok) {
+              const clone = res.clone();
+              caches.open(API_CACHE).then(c => c.put(request, clone));
+            }
+            return res;
+          })
+          .catch(() => caches.match(request))
+      );
+      return;
+    }
+
+    // Compare summary: network-first, cache fallback (useful when briefly offline)
+    if (path.startsWith('/api/data/compare/') && request.method === 'GET') {
       event.respondWith(
         fetch(request.clone())
           .then(res => {

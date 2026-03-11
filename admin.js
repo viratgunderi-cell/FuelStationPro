@@ -1686,9 +1686,9 @@ function renderSettings(D) {
       <h4 class="mb-14 fw-700" style="color:var(--text-0);font-size:13px">🗺️ Suggested Build Order — Roadmap</h4>
       <div style="display:flex;flex-direction:column;gap:8px">
         ${[
-          { tier:'✅ Live', color:'var(--green)', items:['Fuel Tax Rates (ZLST/GST)', 'Purchase density + IS-1460 check', 'Payroll Run + bulk calculate', 'Salary Advances + EMI plan', 'Employee Performance leaderboard', 'Vehicle-wise Fuel Report', 'Bank Reconciliation (Cash/UPI/Card)', 'Hourly Sales Pattern chart', 'Analytics page (Vehicle / Density / Bank Recon)', '📟 Nozzle Meter Log — shift open/close with variance flagging', '💬 WhatsApp Alerts — wa.me + CallMeBot free API', '🛢️ Lubes & Products — catalogue, HSN, GST%, stock, sales, restock', '📤 Exports — Daily CSV/Print, Payslips, Credit Statements, Lubes Report', '🧾 GST Module — GSTR-1 JSON, Tally XML, HSN-wise summary, GSTR-3B', '🔒 Day-Lock — Close books & prevent retroactive edits', '🔒 Role-based access — Owner/Manager/Accountant/Cashier', '📊 Advanced Analytics — Monthly Trends, Fuel P&L, Top Customers', '⭐ Loyalty Points — earn on credit sales, redeem for discounts'] },
-          { tier:'🔜 Next', color:'var(--accent-light)', items:['📱 PWA offline mode — works without internet', '🏢 Multi-station dashboard — compare stations', '🤖 AI insights — anomaly detection, demand forecasting'] },
-          { tier:'🔮 Later', color:'#a855f7', items:['📱 PWA offline mode — works without internet', '🏢 Multi-station dashboard — compare stations', '🤖 AI insights — anomaly detection, demand forecasting'] },
+          { tier:'✅ Live', color:'var(--green)', items:['Fuel Tax Rates (ZLST/GST)', 'Purchase density + IS-1460 check', 'Payroll Run + bulk calculate', 'Salary Advances + EMI plan', 'Employee Performance leaderboard', 'Vehicle-wise Fuel Report', 'Bank Reconciliation (Cash/UPI/Card)', 'Hourly Sales Pattern chart', 'Analytics page (Vehicle / Density / Bank Recon)', '📟 Nozzle Meter Log — shift open/close with variance flagging', '💬 WhatsApp Alerts — wa.me + CallMeBot free API', '🛢️ Lubes & Products — catalogue, HSN, GST%, stock, sales, restock', '📤 Exports — Daily CSV/Print, Payslips, Credit Statements, Lubes Report', '🧾 GST Module — GSTR-1 JSON, Tally XML, HSN-wise summary, GSTR-3B', '🔒 Day-Lock — Close books & prevent retroactive edits', '🔒 Role-based access — Owner/Manager/Accountant/Cashier', '📊 Advanced Analytics — Monthly Trends, Fuel P&L, Top Customers', '⭐ Loyalty Points — earn on credit sales, redeem for discounts', '📱 PWA Full Offline — admin add sales, edit tanks, queue + sync on reconnect', '🏢 Multi-station Compare — revenue, litres, tanks across all stations', '🤖 AI Insights — 9-rule anomaly engine with severity-ranked alerts'] },
+          { tier:'🔜 Next', color:'var(--accent-light)', items:['📲 MSG91 SMS Alerts — low stock & day-close summary', '📋 Leave Request & Approval Workflow', '📦 Supplier PO / Indent Workflow', '🧾 E-Invoice (IRN) Generation'] },
+          { tier:'🔮 Later', color:'#a855f7', items:['Claude API narrative insights — AI explains anomalies in plain language', 'Dexie.js deep offline — full IndexedDB sync', 'PDF Payslips & PO generation', 'Khata-style mobile app'] },
         ].map(section => `
           <div style="margin-bottom:4px">
             <div class="fw-700" style="color:${section.color};font-size:11px;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:6px">${section.tier}</div>
@@ -4981,7 +4981,7 @@ window.exportTallyXML = exportTallyXML;
 const ROLE_PAGES = {
   Owner:      null,  // null = all pages
   Manager:    null,  // null = all pages (same as Owner — full operational access)
-  Accountant: ['dashboard','finance','credit','exports','reports','analytics','lubes'],
+  Accountant: ['dashboard','finance','credit','exports','reports','analytics','lubes','insights'],
   Cashier:    ['dashboard','tanks','pumps','sales','lubes'],
 };
 
@@ -5756,6 +5756,8 @@ const PAGES = [
   { id: 'exports', label: 'Exports', icon: '📤', group: 'reports' },
   { id: 'reports', label: 'Reports', icon: '📄', group: 'reports' },
   { id: 'analytics', label: 'Analytics', icon: '🔍', group: 'reports' },
+  { id: 'compare', label: 'Compare Stations', icon: '🏢', group: 'reports' },
+  { id: 'insights', label: 'AI Insights', icon: '🤖', group: 'reports' },
   { id: 'settings', label: 'Settings', icon: '⚙️', group: 'reports' },
 ];
 
@@ -5899,6 +5901,8 @@ function renderPage() {
       case 'exports': html = renderExports(D); break;
       case 'reports': html = renderReports(D); break;
       case 'analytics': html = renderAnalytics(D); break;
+      case 'compare': html = renderCompare(D); break;
+      case 'insights': html = renderInsights(D); break;
       case 'employee': html = renderEmployeePortal(); break;
       case 'settings': html = renderSettings(D); break;
       default: html = renderDashboard(D);
@@ -8487,3 +8491,354 @@ Object.defineProperty(window, 'allocations', {
   set: (v) => { allocations = v; },
   configurable: true,
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── COMPARE STATIONS ─────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+window._compareData     = null;
+window._compareFetching = false;
+window._compareLastFetch = 0;
+
+async function _fetchCompare() {
+  if (window._compareFetching) return;
+  window._compareFetching = true;
+  try {
+    const result = await apiFetch('/data/compare/summary');
+    window._compareData = result;
+  } catch (e) {
+    console.warn('[Compare]', e.message);
+  }
+  window._compareFetching = false;
+  if (APP.page === 'compare') renderPage();
+}
+
+function renderCompare(D) {
+  const cd = window._compareData;
+  const now = Date.now();
+  if (!cd || (now - window._compareLastFetch > 300000)) {
+    window._compareLastFetch = now;
+    _fetchCompare();
+  }
+
+  const r   = n => '\u20b9' + (n||0).toLocaleString('en-IN', {maximumFractionDigits:0});
+  const l   = n => ((n||0).toFixed(1)) + ' L';
+  const pct = n => Math.min(100, Math.max(0, Math.round(n||0)));
+  const tdS = 'padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;';
+  const thS = 'padding:10px 14px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-3);border-bottom:2px solid var(--border);text-align:left;';
+
+  if (!cd) return `<div class="card card-pad" style="text-align:center;padding:60px 20px">
+    <div style="font-size:40px;margin-bottom:16px">🏢</div>
+    <div class="fw-700" style="color:var(--text-1);margin-bottom:8px">Loading station comparison data\u2026</div>
+    <div style="color:var(--text-3);font-size:12px">Auto-refreshes every 5 minutes</div></div>`;
+
+  const { stations, benchmark, isSuperUser, today } = cd;
+  if (!stations || !stations.length) return `<div class="card card-pad" style="text-align:center;padding:60px;color:var(--text-3)">
+    <div style="font-size:32px;margin-bottom:12px">🏢</div><div class="fw-700">No station data available</div></div>`;
+
+  const bench = benchmark || {};
+  const topStation = [...stations].sort((a,b) => b.today.revenue - a.today.revenue)[0];
+
+  const tankBars = tanks => tanks.map(t => {
+    const p = pct((t.current / Math.max(t.capacity,1)) * 100);
+    const c = p<20 ? 'var(--red)' : p<40 ? 'var(--yellow)' : 'var(--green)';
+    return `<div style="margin-bottom:5px">
+      <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">
+        <span style="color:var(--text-2)">${t.fuelType}</span>
+        <span style="color:${c};font-weight:700">${p}%</span>
+      </div>
+      <div style="height:5px;background:var(--bg-0);border-radius:4px">
+        <div style="height:100%;width:${p}%;background:${c};border-radius:4px"></div>
+      </div></div>`;
+  }).join('');
+
+  const diffBadge = val => {
+    if (!val) return `<span style="color:var(--text-3);font-size:11px">\u2014 at avg</span>`;
+    const c = val>0 ? 'var(--green)' : 'var(--red)', a = val>0 ? '\u25b2' : '\u25bc';
+    return `<span style="color:${c};font-size:11px;font-weight:700">${a} ${Math.abs(val)}% vs network</span>`;
+  };
+
+  // Super: full table
+  const superTable = `<div class="card card-pad mt-16" style="overflow:auto">
+    <table style="width:100%;border-collapse:collapse;min-width:600px">
+      <thead><tr>
+        <th style="${thS}">Station</th>
+        <th style="${thS};text-align:right">Today Revenue</th>
+        <th style="${thS};text-align:right">Litres</th>
+        <th style="${thS};text-align:right">Txns</th>
+        <th style="${thS}">Tanks</th>
+        <th style="${thS};text-align:right">Staff</th>
+        <th style="${thS}">vs 7-Day Avg</th>
+      </tr></thead>
+      <tbody>
+        ${stations.map(s => {
+          const isTop = s.tenantId === topStation?.tenantId;
+          const d7 = s.avg7.revenue>0 ? Math.round(((s.today.revenue-s.avg7.revenue)/s.avg7.revenue)*100) : 0;
+          const d7c = d7>=0 ? 'var(--green)' : 'var(--red)';
+          return `<tr style="${isTop?'background:rgba(34,197,94,0.04)':''}">
+            <td style="${tdS}">
+              <div class="fw-700" style="color:var(--text-0)">${sanitize(s.name)}${isTop?' \ud83c\udfc6':''}</div>
+              <div style="font-size:11px;color:var(--text-3)">${sanitize(s.location||'')}</div></td>
+            <td style="${tdS};text-align:right;font-weight:700;color:var(--accent)">${r(s.today.revenue)}</td>
+            <td style="${tdS};text-align:right">${l(s.today.liters)}</td>
+            <td style="${tdS};text-align:right;color:var(--text-2)">${s.today.txns}</td>
+            <td style="${tdS};min-width:120px">${tankBars(s.tanks)}</td>
+            <td style="${tdS};text-align:right;color:var(--text-2)">${s.employees}</td>
+            <td style="${tdS}"><span style="color:${d7c};font-weight:700;font-size:12px">${d7>=0?'\u25b2':'\u25bc'} ${Math.abs(d7)}%</span>
+              <div style="font-size:11px;color:var(--text-3)">${r(s.avg7.revenue)}/day avg</div></td>
+          </tr>`;
+        }).join('')}
+        <tr style="background:var(--bg-0)">
+          <td style="${tdS};font-weight:700;color:var(--text-3)">Network Average</td>
+          <td style="${tdS};text-align:right;font-weight:700;color:var(--text-2)">${r(bench.avgRevenue)}</td>
+          <td style="${tdS};text-align:right;color:var(--text-3)">${l(bench.avgLiters)}</td>
+          <td style="${tdS}" colspan="4"></td>
+        </tr>
+      </tbody>
+    </table></div>`;
+
+  // Owner: KPI benchmark cards
+  const own = stations.find(s=>s.isOwn) || stations[0];
+  const revDiff = bench.avgRevenue>0 ? Math.round(((own.today.revenue-bench.avgRevenue)/bench.avgRevenue)*100) : 0;
+  const litDiff = bench.avgLiters>0  ? Math.round(((own.today.liters-bench.avgLiters)/bench.avgLiters)*100) : 0;
+  const avgTxns = bench.stationCount>0 ? Math.round(stations.reduce((a,b)=>a+b.today.txns,0)/stations.length) : 0;
+
+  const ownerCards = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-top:16px">
+      ${[
+        {label:'Today Revenue',  val:r(own.today.revenue),  diff:revDiff, sub:'Network avg: '+r(bench.avgRevenue)},
+        {label:'Litres Dispensed',val:l(own.today.liters),  diff:litDiff, sub:'Network avg: '+l(bench.avgLiters)},
+        {label:'Transactions',   val:own.today.txns,        diff:null,    sub:'Network avg: '+avgTxns},
+        {label:'Stations in Network', val:bench.stationCount||1, diff:null, sub:'Top revenue: '+r(bench.maxRevenue)},
+      ].map(c=>`<div class="card card-pad">
+        <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">${c.label}</div>
+        <div style="font-size:22px;font-weight:800;color:var(--accent)">${c.val}</div>
+        ${c.diff!==null ? `<div style="margin-top:4px">${diffBadge(c.diff)}</div>` : ''}
+        <div style="font-size:11px;color:var(--text-3);margin-top:3px">${c.sub}</div>
+      </div>`).join('')}
+    </div>
+    <div class="card card-pad mt-16">
+      <div class="fw-700" style="font-size:13px;margin-bottom:12px">Your Tank Levels</div>
+      ${own.tanks.length ? own.tanks.map(t=>{
+        const p = pct((t.current/Math.max(t.capacity,1))*100);
+        const c = p<20?'var(--red)':p<40?'var(--yellow)':'var(--green)';
+        const alrt = t.current<=t.lowAlert ? ` <span style="color:var(--red);font-size:11px;font-weight:700">\u26a0 LOW</span>` : '';
+        return `<div style="margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+            <span class="fw-700">${t.fuelType}${alrt}</span>
+            <span style="color:${c};font-weight:700">${t.current.toFixed(0)} L / ${t.capacity.toFixed(0)} L (${p}%)</span>
+          </div>
+          <div style="height:10px;background:var(--bg-0);border-radius:6px;overflow:hidden">
+            <div style="height:100%;width:${p}%;background:${c};border-radius:6px;transition:width 0.5s"></div>
+          </div></div>`;
+      }).join('') : '<div style="color:var(--text-3)">No tanks configured</div>'}
+    </div>`;
+
+  return `
+    <div class="card card-pad" style="border-bottom:1px solid var(--border);border-radius:0;background:var(--bg-1)">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+        <div>
+          <h2 style="font-size:18px;font-weight:800;color:var(--text-0);margin-bottom:2px">\ud83c\udfe2 Compare Stations</h2>
+          <div style="font-size:12px;color:var(--text-3)">Today \u00b7 ${today} \u00b7 ${bench.stationCount||1} station${(bench.stationCount||1)>1?'s':''}</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="window._compareData=null;window._compareLastFetch=0;renderPage()">\ud83d\udd04 Refresh</button>
+      </div>
+    </div>
+    ${isSuperUser ? superTable : ownerCards}`;
+}
+window.renderCompare = renderCompare;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── AI INSIGHTS — Rules Engine ───────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function renderInsights(D) {
+  if (!D) return '<div style="padding:40px;text-align:center;color:var(--text-3)">Loading\u2026</div>';
+
+  const today = new Date().toISOString().slice(0,10);
+  const todayDate = new Date(today);
+
+  function rollingAvg(arr, field, nDays) {
+    const cutoff = new Date(todayDate.getTime() - nDays*86400000).toISOString().slice(0,10);
+    const rows = arr.filter(s => s.date >= cutoff && s.date < today);
+    if (!rows.length) return 0;
+    return rows.reduce((a,b) => a+(parseFloat(b[field])||0), 0) / nDays;
+  }
+
+  const todaySales    = (D.sales||[]).filter(s => s.date === today);
+  const todayRevenue  = todaySales.reduce((a,b) => a+(parseFloat(b.amount)||0), 0);
+  const todayLiters   = todaySales.reduce((a,b) => a+(parseFloat(b.liters)||0), 0);
+  const todayExpenses = (D.expenses||[]).filter(e => e.date===today).reduce((a,b)=>a+(parseFloat(b.amount)||0), 0);
+  const avgRevenue  = rollingAvg(D.sales||[],    'amount', 7);
+  const avgLiters   = rollingAvg(D.sales||[],    'liters', 7);
+  const avgExpenses = rollingAvg(D.expenses||[], 'amount', 7);
+
+  const alerts = [];
+
+  // R1: Revenue drop >=20%
+  if (avgRevenue>0 && todayRevenue>0) {
+    const drop = ((avgRevenue-todayRevenue)/avgRevenue)*100;
+    if (drop>=20) alerts.push({ sev:'critical', icon:'\ud83d\udcc9', title:'Revenue significantly below average',
+      msg:`Today \u20b9${todayRevenue.toLocaleString('en-IN',{maximumFractionDigits:0})} is ${drop.toFixed(1)}% below the 7-day avg of \u20b9${avgRevenue.toLocaleString('en-IN',{maximumFractionDigits:0})}/day.`,
+      action:'Check shift activity, pump status, and any reported downtime.' });
+    else if (drop>=10) alerts.push({ sev:'warning', icon:'\ud83d\udcca', title:'Revenue slightly below average',
+      msg:`Today is ${drop.toFixed(1)}% below the 7-day average.`,
+      action:'Monitor through the rest of the shift.' });
+  }
+
+  // R2: Litre drop >=25%
+  if (avgLiters>0 && todayLiters>0) {
+    const drop = ((avgLiters-todayLiters)/avgLiters)*100;
+    if (drop>=25) alerts.push({ sev:'warning', icon:'\u26fd', title:'Low fuel dispensed today',
+      msg:`${todayLiters.toFixed(1)} L vs 7-day avg ${avgLiters.toFixed(1)} L/day (\u2212${drop.toFixed(1)}%).`,
+      action:'Verify pump meters and nozzle allocation.' });
+  }
+
+  // R3: Tank below alert
+  (D.tanks||[]).forEach(t => {
+    const curr = parseFloat(t.current||t.current_level)||0;
+    const alrt = parseFloat(t.low_alert||t.lowAlert)||500;
+    const cap  = parseFloat(t.capacity)||1;
+    const p    = (curr/cap)*100;
+    const ft   = t.fuel_type||t.fuelType||'Tank';
+    if (curr<=alrt) alerts.push({ sev:'critical', icon:'\ud83d\udee2\ufe0f', title:`${ft} tank critically low`,
+      msg:`${t.name||ft}: ${curr.toFixed(0)} L remaining (${p.toFixed(1)}%). Below alert level of ${alrt} L.`,
+      action:'Place emergency fuel purchase order immediately.' });
+    else if (p<25) alerts.push({ sev:'warning', icon:'\u26a0\ufe0f', title:`${ft} tank below 25%`,
+      msg:`${t.name||ft}: ${curr.toFixed(0)} L (${p.toFixed(1)}%).`,
+      action:'Schedule fuel purchase in the next 24\u201348 hours.' });
+  });
+
+  // R4: Credit customer near limit >=80%
+  const cAlerts = [];
+  (D.creditCustomers||[]).filter(c=>c.active).forEach(c => {
+    const bal = parseFloat(c.balance)||0, lim = parseFloat(c.credit_limit||c.creditLimit)||0;
+    if (lim>0 && bal/lim>=0.8) cAlerts.push(`${c.name} (${Math.round((bal/lim)*100)}%)`);
+  });
+  if (cAlerts.length) alerts.push({ sev:cAlerts.length>=3?'critical':'warning', icon:'\ud83d\udcb3',
+    title:`${cAlerts.length} credit customer${cAlerts.length>1?'s':''} near limit`,
+    msg:cAlerts.slice(0,5).join(', ')+(cAlerts.length>5?` and ${cAlerts.length-5} more`:'')+'.',
+    action:'Consider pausing credit sales or requesting immediate payment.' });
+
+  // R5: Expense spike >=50%
+  if (avgExpenses>0 && todayExpenses>avgExpenses*1.5) {
+    const spike = ((todayExpenses-avgExpenses)/avgExpenses)*100;
+    alerts.push({ sev:'info', icon:'\ud83d\udcb8', title:'Unusual expense activity today',
+      msg:`Today \u20b9${todayExpenses.toLocaleString('en-IN',{maximumFractionDigits:0})} is ${spike.toFixed(1)}% above 7-day avg.`,
+      action:'Review today\u2019s expense entries for anomalies or data entry errors.' });
+  }
+
+  // R6: Density anomaly
+  const DENS = { petrol:{min:720,max:775}, diesel:{min:820,max:880}, hsd:{min:820,max:880} };
+  (D.dipReadings||[]).filter(d=>d.date===today).forEach(d => {
+    const dens = parseFloat(d.density)||0, ft = (d.fuelType||d.fuel_type||'diesel').toLowerCase();
+    const rng = DENS[ft]||DENS.diesel;
+    if (dens>0 && (dens<rng.min||dens>rng.max)) alerts.push({ sev:'critical', icon:'\u2697\ufe0f',
+      title:`Density anomaly \u2014 ${d.fuelType||'tank'}`,
+      msg:`Measured ${dens} kg/m\u00b3 outside IS-1460 range (${rng.min}\u2013${rng.max}).`,
+      action:'Recheck measurement. Report to OMC if confirmed. Do not sell until verified.' });
+  });
+
+  // R7: No sales past 3h during business hours
+  const hr = new Date().getHours();
+  if (hr>=8 && hr<=20 && todayRevenue>0) {
+    const cutoff = new Date(Date.now()-3*3600000);
+    const recent = todaySales.filter(s => {
+      const p = (s.time||'').split(':');
+      if (p.length<2) return false;
+      const sd = new Date(today); sd.setHours(+p[0],+p[1],0,0);
+      return sd >= cutoff;
+    });
+    if (!recent.length) alerts.push({ sev:'warning', icon:'\u23f0', title:'No sales recorded in the last 3 hours',
+      msg:`Last sale was over 3 hours ago (now ${new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}).`,
+      action:'Verify all pumps are operational and employees are logged in.' });
+  }
+
+  // R8: Pending advances >30 days
+  try {
+    const adv = D.advances ? (typeof D.advances==='string' ? JSON.parse(D.advances) : D.advances) : null;
+    if (adv) {
+      const overdue = Object.values(adv).flatMap(a=>Array.isArray(a)?a:[a])
+        .filter(a=>a&&!a.repaid&&a.date&&(Date.now()-new Date(a.date).getTime())/86400000>30);
+      if (overdue.length) alerts.push({ sev:'info', icon:'\ud83d\udcbc',
+        title:`${overdue.length} salary advance${overdue.length>1?'s':''} pending >30 days`,
+        msg:`${overdue.length} advance(s) not marked repaid in over a month.`,
+        action:'Review Payroll \u2192 Advances and update repayment status.' });
+    }
+  } catch {}
+
+  // R9: Stock forecast <4 days
+  (D.tanks||[]).forEach(t => {
+    const curr = parseFloat(t.current||t.current_level)||0;
+    const avgD = rollingAvg(D.sales||[], 'liters', 7);
+    if (avgD>0 && curr>0) {
+      const days = curr/avgD;
+      const ft = t.fuel_type||t.fuelType||'Fuel';
+      if (days<2) alerts.push({ sev:'critical', icon:'\ud83d\udcc6', title:`${ft} stock runs out in <2 days`,
+        msg:`At ${avgD.toFixed(0)} L/day avg, current ${curr.toFixed(0)} L lasts ~${days.toFixed(1)} days.`,
+        action:'Place fuel purchase order today.' });
+      else if (days<4) alerts.push({ sev:'warning', icon:'\ud83d\udcc6', title:`${ft} stock runs low in ~${days.toFixed(1)} days`,
+        msg:`Stock lasts until ~${new Date(Date.now()+days*86400000).toLocaleDateString('en-IN',{day:'numeric',month:'short'})}.`,
+        action:'Schedule fuel purchase within the next 24 hours.' });
+    }
+  });
+
+  // Render
+  const sevOrd = {critical:0, warning:1, info:2};
+  const sevCol = {critical:'var(--red)', warning:'var(--yellow)', info:'var(--accent)'};
+  const sevBg  = {critical:'rgba(239,68,68,0.06)', warning:'rgba(234,179,8,0.06)', info:'rgba(212,148,15,0.06)'};
+  const sevBdr = {critical:'rgba(239,68,68,0.2)', warning:'rgba(234,179,8,0.2)', info:'rgba(212,148,15,0.2)'};
+  const sevLbl = {critical:'\ud83d\udd34 Critical', warning:'\ud83d\udfe1 Warning', info:'\ud83d\udd35 Info'};
+
+  const sorted = [...alerts].sort((a,b) => (sevOrd[a.sev]??9)-(sevOrd[b.sev]??9));
+  const critC = alerts.filter(a=>a.sev==='critical').length;
+  const warnC = alerts.filter(a=>a.sev==='warning').length;
+  const infoC = alerts.filter(a=>a.sev==='info').length;
+
+  const badge = (n, col, lbl) => n ? `<span style="background:${col.replace(')',',0.1)')};color:${col};font-weight:700;font-size:12px;padding:4px 10px;border-radius:20px">${n} ${lbl}</span>` : '';
+
+  return `
+    <div class="card card-pad" style="background:var(--bg-1);border-bottom:1px solid var(--border);border-radius:0">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+        <div>
+          <h2 style="font-size:18px;font-weight:800;margin-bottom:2px">\ud83e\udd16 AI Insights</h2>
+          <div style="font-size:12px;color:var(--text-3)">Rules-based anomaly detection \u00b7 ${today} \u00b7 9 rules active</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          ${badge(critC,'var(--red)','critical')}
+          ${badge(warnC,'var(--yellow)','warnings')}
+          ${badge(infoC,'var(--accent)','info')}
+          ${!alerts.length ? '<span style="background:rgba(34,197,94,0.1);color:var(--green);font-weight:700;font-size:12px;padding:4px 10px;border-radius:20px">\u2705 All clear</span>' : ''}
+          <button class="btn btn-ghost btn-sm" onclick="renderPage()">\ud83d\udd04 Re-run</button>
+        </div>
+      </div>
+    </div>
+
+    ${!sorted.length ? `<div class="card card-pad mt-16" style="text-align:center;padding:60px 20px">
+      <div style="font-size:48px;margin-bottom:16px">\u2705</div>
+      <div class="fw-700" style="font-size:18px;color:var(--green);margin-bottom:8px">All clear \u2014 no issues detected</div>
+      <div style="font-size:13px;color:var(--text-3)">9 rules checked \u00b7 tanks, revenue, expenses, credit, density &amp; more</div>
+    </div>` : `<div style="display:flex;flex-direction:column;gap:10px;margin-top:16px">
+      ${sorted.map(a=>`<div class="card card-pad" style="background:${sevBg[a.sev]};border:1px solid ${sevBdr[a.sev]}">
+        <div style="display:flex;align-items:flex-start;gap:14px">
+          <div style="font-size:28px;flex-shrink:0;line-height:1">${a.icon}</div>
+          <div style="flex:1">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;flex-wrap:wrap">
+              <span class="fw-700" style="color:${sevCol[a.sev]};font-size:11px">${sevLbl[a.sev]}</span>
+              <span class="fw-700" style="color:var(--text-0);font-size:14px">${a.title}</span>
+            </div>
+            <div style="color:var(--text-2);font-size:13px;margin-bottom:6px">${a.msg}</div>
+            <div style="font-size:12px;color:var(--text-3);font-style:italic">\ud83d\udca1 ${a.action}</div>
+          </div>
+        </div></div>`).join('')}
+    </div>`}
+
+    <div class="card card-pad mt-16" style="background:var(--bg-0)">
+      <div class="fw-700" style="font-size:12px;color:var(--text-3);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">9 Active Rules</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        ${['\ud83d\udcc9 Revenue drop >20%','\u26fd Litre throughput drop >25%','\ud83d\udee2\ufe0f Tank below alert threshold','\ud83d\udcb3 Credit >80% limit','\ud83d\udcb8 Expense spike >50%','\u2697\ufe0f IS-1460 density range','\u23f0 No sales for 3h (business hours)','\ud83d\udcbc Salary advance pending >30d','\ud83d\udcc6 Stock runout forecast <4 days']
+          .map(r=>`<span style="padding:4px 10px;border-radius:16px;background:var(--bg-1);border:1px solid var(--border);color:var(--text-2);font-size:11px">${r}</span>`).join('')}
+      </div>
+    </div>`;
+}
+window.renderInsights = renderInsights;

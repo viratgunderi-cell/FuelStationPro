@@ -65,12 +65,24 @@ function updateOnlineStatus() {
   const online = navigator.onLine;
   document.body.classList.toggle('is-offline', !online);
   const pill = document.getElementById('statusPill');
+  const queuePill = document.getElementById('offlineQueuePill');
+  const qLen = typeof offlineQueueSize === 'function' ? offlineQueueSize() : 0;
   if (pill) {
     pill.className = `status-pill ${online ? 'online' : 'offline'}`;
     pill.querySelector('.status-text').textContent = online ? 'Online' : 'Offline';
   }
-  if (online && 'serviceWorker' in navigator && 'SyncManager' in window) {
-    navigator.serviceWorker.ready.then(reg => reg.sync.register('sync-sales')).catch(() => {});
+  if (queuePill) {
+    queuePill.style.display = qLen > 0 ? 'flex' : 'none';
+    const cntEl = document.getElementById('offlineQueueCount');
+    if (cntEl) cntEl.textContent = qLen;
+  }
+  if (online) {
+    if ('serviceWorker' in navigator && 'SyncManager' in window) {
+      navigator.serviceWorker.ready.then(reg => reg.sync.register('sync-sales')).catch(() => {});
+    }
+    if (typeof flushOfflineQueue === 'function' && qLen > 0) {
+      setTimeout(flushOfflineQueue, 800);
+    }
   }
 }
 window.addEventListener('online', updateOnlineStatus);
@@ -159,8 +171,19 @@ async function initApp() {
         loadData(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('DB timeout 5s')), 5000))
       ]);
+      // Snapshot data for offline use
+      if (typeof saveDataSnapshot === 'function' && APP.data) saveDataSnapshot(APP.data);
     } catch (e) {
-      console.warn('DB load failed, using seed:', e);
+      console.warn('DB load failed:', e.message);
+      // Offline fallback — restore from last snapshot
+      if (!navigator.onLine && typeof loadDataSnapshot === 'function') {
+        const snap = loadDataSnapshot();
+        if (snap) {
+          APP.data = snap;
+          console.log('[Offline] Restored data from snapshot');
+          if (typeof toast === 'function') toast('📴 Offline — showing last saved data', 'info');
+        }
+      }
     }
     // ── Shift Manager session restore: employee token can't access /api/data/employees
     // so loadData() returns empty arrays. Fetch staff-data explicitly before rendering.

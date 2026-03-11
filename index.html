@@ -102,6 +102,7 @@
       <div class="topbar-right">
         <div class="status-pills">
           <div class="status-pill online" id="statusPill"><span class="dot"></span><span class="status-text" style="color:var(--text-2)">Online</span></div>
+          <div id="offlineQueuePill" style="display:none;background:rgba(234,179,8,0.12);border:1px solid rgba(234,179,8,0.3);border-radius:20px;padding:4px 10px;font-size:11px;font-weight:700;color:var(--yellow);cursor:pointer" onclick="if(typeof flushOfflineQueue==='function')flushOfflineQueue()" title="Tap to sync offline changes">⟳ <span id="offlineQueueCount">0</span> pending</div>
         </div>
         <div class="topbar-clock">
           <div class="time" id="clock">--:--:--</div>
@@ -140,7 +141,7 @@
 
   // Register service worker v6 — works on any HTTPS or localhost origin
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js?v=7.0', { scope: '/' })
+    navigator.serviceWorker.register('/sw.js?v=8.0', { scope: '/' })
       .then(function(reg) {
         reg.update(); // check for updates on every load
       })

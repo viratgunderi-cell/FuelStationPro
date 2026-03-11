@@ -740,6 +740,91 @@ async function startServer() {
     }
   });
 
+  // ── COMPARE: multi-station summary (super = all tenants; admin = own + benchmark) ──
+  app.get('/api/data/compare/summary', authMiddleware(db), async (req, res) => {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+      const isSuperUser = req.userType === 'super';
+      const ownerTenantId = req.tenantId;
+
+      // Determine which tenant IDs to query
+      let tenantIds = [];
+      if (isSuperUser) {
+        const rows = await pool.query('SELECT id FROM tenants WHERE active = true ORDER BY created_at');
+        tenantIds = rows.rows.map(r => r.id);
+      } else {
+        // Owner sees own tenant plus we still compute network aggregate across all
+        const rows = await pool.query('SELECT id FROM tenants WHERE active = true');
+        tenantIds = rows.rows.map(r => r.id);
+      }
+
+      if (!tenantIds.length) return res.json({ stations: [], benchmark: null });
+
+      // Per-tenant today summary
+      const stationData = await Promise.all(tenantIds.map(async tid => {
+        const [tenantRow, salesRow, tankRow, empRow, sales7Row] = await Promise.all([
+          pool.query('SELECT name, location FROM tenants WHERE id = $1', [tid]),
+          pool.query(
+            `SELECT COALESCE(SUM(amount),0) AS revenue, COALESCE(SUM(liters),0) AS liters, COUNT(*) AS txns
+             FROM sales WHERE tenant_id = $1 AND date = $2`, [tid, today]),
+          pool.query(
+            `SELECT fuel_type, current_level, capacity, low_alert FROM tanks WHERE tenant_id = $1`, [tid]),
+          pool.query('SELECT COUNT(*) AS cnt FROM employees WHERE tenant_id = $1 AND active = 1', [tid]),
+          pool.query(
+            `SELECT COALESCE(SUM(amount),0)/7 AS avg_revenue, COALESCE(SUM(liters),0)/7 AS avg_liters
+             FROM sales WHERE tenant_id = $1 AND date >= $2 AND date < $3`, [tid, sevenDaysAgo, today]),
+        ]);
+        const t = tenantRow.rows[0] || {};
+        const s = salesRow.rows[0] || {};
+        const s7 = sales7Row.rows[0] || {};
+        const tanks = tankRow.rows || [];
+        return {
+          tenantId: tid,
+          name: t.name || tid,
+          location: t.location || '',
+          today: {
+            revenue: parseFloat(s.revenue) || 0,
+            liters: parseFloat(s.liters) || 0,
+            txns: parseInt(s.txns) || 0,
+          },
+          avg7: {
+            revenue: parseFloat(s7.avg_revenue) || 0,
+            liters: parseFloat(s7.avg_liters) || 0,
+          },
+          tanks: tanks.map(t => ({
+            fuelType: t.fuel_type, current: parseFloat(t.current_level) || 0,
+            capacity: parseFloat(t.capacity) || 1,
+            lowAlert: parseFloat(t.low_alert) || 500,
+            pct: Math.round((parseFloat(t.current_level) || 0) / Math.max(parseFloat(t.capacity) || 1, 1) * 100)
+          })),
+          employees: parseInt(empRow.rows[0]?.cnt) || 0,
+          isOwn: !isSuperUser && tid === ownerTenantId,
+        };
+      }));
+
+      // Network benchmark (aggregate of all stations)
+      const allTodayRevenue = stationData.map(s => s.today.revenue);
+      const allTodayLiters  = stationData.map(s => s.today.liters);
+      const benchmark = {
+        avgRevenue: allTodayRevenue.reduce((a, b) => a + b, 0) / (allTodayRevenue.length || 1),
+        avgLiters:  allTodayLiters.reduce((a, b) => a + b, 0) / (allTodayLiters.length || 1),
+        maxRevenue: Math.max(...allTodayRevenue, 0),
+        stationCount: stationData.length,
+      };
+
+      // Super sees all; owner sees own station only but also gets benchmark
+      const visible = isSuperUser
+        ? stationData
+        : stationData.filter(s => s.tenantId === ownerTenantId);
+
+      res.json({ stations: visible, benchmark, isSuperUser, today });
+    } catch (err) {
+      console.error('[compare/summary]', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('*', (req, res) => {
     if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Not found' });
     res.sendFile(path.join(publicDir, 'index.html'));
