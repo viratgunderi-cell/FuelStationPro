@@ -412,7 +412,25 @@ function emp_go(page) {
   if (page === 'history' && empState.user) {
     // Load server history in background so employee sees all past shifts
     emp_loadHistoryFromServer().catch(() => {});
-  } empState.page = page; renderPage(); if (page === 'sales') { setTimeout(() => { emp_refreshNozzles(); }, 50); } }
+  }
+  if (page === 'staff' && empState.user?.role === 'Shift Manager') {
+    // Refresh employees/shifts/roster/attendance from server in background
+    const tenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
+    if (tenant && tenant.id) {
+      fetch('/api/public/staff-data/' + encodeURIComponent(tenant.id))
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (!data) return;
+          if (Array.isArray(data.employees) && data.employees.length > 0) APP.data.employees = data.employees;
+          if (Array.isArray(data.shifts)    && data.shifts.length > 0)    APP.data.shifts    = data.shifts;
+          if (data.roster     && typeof data.roster     === 'object') window._rosterData     = data.roster;
+          if (data.attendance && typeof data.attendance === 'object') window._attendanceData = data.attendance;
+          renderPage();
+        })
+        .catch(() => {});
+    }
+  }
+  empState.page = page; renderPage(); if (page === 'sales') { setTimeout(() => { emp_refreshNozzles(); }, 50); } }
 
 // ── MAIN RENDER ──
 function renderEmployeePortal() {
@@ -2726,6 +2744,29 @@ async function doEmpLogin() {
       // Load credit customers so credit sales work
       if (serverCreditCusts && Array.isArray(serverCreditCusts)) {
         APP.data.creditCustomers = serverCreditCusts;
+      }
+      // ── Shift Manager: load full staff data (employees, shifts, roster, attendance) ──
+      if (emp.role === 'Shift Manager') {
+        try {
+          const staffResp = await fetch('/api/public/staff-data/' + tid);
+          const staffData = staffResp.ok ? await staffResp.json() : null;
+          if (staffData) {
+            if (Array.isArray(staffData.employees) && staffData.employees.length > 0) {
+              APP.data.employees = staffData.employees;
+            }
+            if (Array.isArray(staffData.shifts) && staffData.shifts.length > 0) {
+              APP.data.shifts = staffData.shifts;
+            }
+            if (staffData.roster && typeof staffData.roster === 'object') {
+              window._rosterData = staffData.roster;
+            }
+            if (staffData.attendance && typeof staffData.attendance === 'object') {
+              window._attendanceData = staffData.attendance;
+            }
+          }
+        } catch(staffErr) {
+          console.warn('[doEmpLogin] Staff data fetch failed:', staffErr.message);
+        }
       }
     }
   } catch(fetchErr) {
