@@ -165,31 +165,9 @@ async function initApp() {
     // ── Shift Manager session restore: employee token can't access /api/data/employees
     // so loadData() returns empty arrays. Fetch staff-data explicitly before rendering.
     if (APP.role === 'employee' && empState.active && empState.user?.role === 'Shift Manager') {
-      try {
-        const _smTenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
-        if (_smTenant && _smTenant.id) {
-          const _smResp = await fetch('/api/public/staff-data/' + encodeURIComponent(_smTenant.id));
-          if (_smResp.ok) {
-            const _smData = await _smResp.json();
-            if (Array.isArray(_smData.employees) && _smData.employees.length > 0) {
-              window._mgrEmployees  = _smData.employees;
-              APP.data.employees    = _smData.employees;
-            }
-            if (Array.isArray(_smData.shifts) && _smData.shifts.length > 0) {
-              window._mgrShifts = _smData.shifts;
-              APP.data.shifts   = _smData.shifts;
-            }
-            if (_smData.roster     && typeof _smData.roster     === 'object') window._rosterData     = _smData.roster;
-            if (_smData.attendance && typeof _smData.attendance === 'object') window._attendanceData = _smData.attendance;
-            if (Array.isArray(_smData.lubesProducts)) window._lubesProducts = _smData.lubesProducts;
-            if (Array.isArray(_smData.lubesSales))    window._lubesSales    = _smData.lubesSales;
-            if (Array.isArray(_smData.advances))      window._advancesData  = _smData.advances;
-            if (_smData.payroll && typeof _smData.payroll === 'object' && Object.keys(_smData.payroll).length > 0) {
-              window._payrollSaved = _smData.payroll;
-            }
-          }
-        }
-      } catch(e) { console.warn('[initApp] Shift Manager staff-data fetch failed:', e.message); }
+      if (typeof _fetchMgrData === 'function') {
+        try { await _fetchMgrData(); } catch(e) { console.warn('[initApp] Shift Manager data fetch failed:', e.message); }
+      }
     }
     enterApp();
   } else {
