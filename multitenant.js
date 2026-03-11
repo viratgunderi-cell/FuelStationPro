@@ -68,11 +68,29 @@ function mt_isSuperLoggedIn() {
   const s = mt_getSuperSession();
   if (!s || !s.loggedIn) return false;
   if (Date.now() - s.at > 4 * 60 * 60 * 1000) { mt_clearSuperSession(); return false; } // 4hr
+  // BUG-FIX: Restore JWT token on every check so API calls work after page reload
+  try {
+    const savedJwt = localStorage.getItem('fb_super_jwt');
+    if (savedJwt && typeof setAuthToken === 'function') setAuthToken(savedJwt);
+  } catch {}
   return true;
 }
 
 // ── Tenant Selector UI ──
 async function mt_showSelector() {
+  // BUG-FIX: Always fetch tenants from the server first so PostgreSQL data is shown.
+  // The old code only read from localStorage (fb_tenants) which is empty on a fresh
+  // browser session — stations lived in the DB but the UI never fetched them.
+  if (typeof TenantAPI !== 'undefined') {
+    try {
+      const serverTenants = await TenantAPI.list();
+      if (Array.isArray(serverTenants) && serverTenants.length >= 0) {
+        mt_saveTenants(serverTenants); // sync DB → localStorage so offline reads work too
+      }
+    } catch (e) {
+      console.warn('[mt_showSelector] Could not fetch tenants from server, using localStorage cache:', e.message);
+    }
+  }
   const tenants = mt_getTenants();
   const app = document.getElementById('app');
   const isSuperLoggedIn = mt_isSuperLoggedIn();
@@ -257,7 +275,7 @@ async function mt_saveTenant(isEdit) {
         await TenantAPI.create({ name, location, ownerName, phone, icon, adminUser, adminPass });
         mt_toast(name + ' created!', 'success');
       }
-      if (typeof mt_getTenants_async === 'function') await mt_getTenants_async();
+      if (typeof mt_getTenants_api === 'function') await mt_getTenants_api().then(ts => { if (Array.isArray(ts)) mt_saveTenants(ts); }).catch(()=>{});
       mt_showSelector();
     } catch(e) {
       mt_toast(e.message || 'Failed to save', 'error');
@@ -489,18 +507,48 @@ async function mt_doSuperLogin() {
   const u = (document.getElementById('superUser')?.value || '').trim().toLowerCase();
   const p = document.getElementById('superPass')?.value || '';
   if (!u || !p) { mt_toast('Enter credentials', 'error'); return; }
+
+  // BUG-FIX: Previously this validated credentials purely client-side against a localStorage
+  // hash, never obtaining a JWT token. That meant TenantAPI calls (which require auth) would
+  // fail with 401, so stations added in one browser/session were invisible in another.
+  // Now we authenticate against the server first to get a real JWT token.
+  if (typeof AuthAPI !== 'undefined') {
+    try {
+      const result = await AuthAPI.superLogin(u, p);
+      if (!result || !result.token) {
+        mt_toast('Invalid super admin credentials', 'error');
+        return;
+      }
+      // JWT token is now set in api-client via setAuthToken(result.token)
+      mt_saveSuperSession();
+      // Persist token for this session so subsequent API calls are authenticated
+      try { localStorage.setItem('fb_super_jwt', result.token); } catch {}
+      mt_toast('Super Admin logged in', 'success');
+      mt_showSelector();
+      return;
+    } catch (e) {
+      mt_toast(e.message || 'Login failed', 'error');
+      return;
+    }
+  }
+
+  // Fallback: offline / no API — validate against cached credentials
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(p));
   const hash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
   const creds = mt_getSuperCreds();
   const isValid = (u === creds.username && hash === creds.passHash);
   if (!isValid) { mt_toast('Invalid super admin credentials', 'error'); return; }
   mt_saveSuperSession();
-  mt_toast('Super Admin logged in', 'success');
+  mt_toast('Super Admin logged in (offline mode)', 'success');
   mt_showSelector();
 }
 
 function mt_superLogout() {
   mt_clearSuperSession();
+  // BUG-FIX: Also clear the JWT token and revoke server session
+  try { localStorage.removeItem('fb_super_jwt'); } catch {}
+  if (typeof AuthAPI !== 'undefined') AuthAPI.logout().catch(()=>{});
+  if (typeof clearAuth === 'function') clearAuth();
   mt_showSelector();
 }
 
