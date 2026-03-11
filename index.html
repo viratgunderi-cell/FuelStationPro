@@ -141,7 +141,7 @@
 
   // Register service worker v6 — works on any HTTPS or localhost origin
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js?v=8.0', { scope: '/' })
+    navigator.serviceWorker.register('/sw.js?v=9.0', { scope: '/' })
       .then(function(reg) {
         reg.update(); // check for updates on every load
       })
@@ -826,13 +826,13 @@ try {
 </script>
 
 <!-- FuelBunk Pro — Backend Integration (SQLite REST API) -->
-<script src="/api-client.js"></script>
+<script src="/api-client.js?v=9"></script>
 
-<script src="/multitenant.js"></script>
-<script src="/utils.js"></script>
-<script src="/admin.js"></script>
-<script src="/employee.js"></script>
-<script src="/app.js"></script>
-<script src="/bridge.js"></script>
+<script src="/multitenant.js?v=9"></script>
+<script src="/utils.js?v=9"></script>
+<script src="/admin.js?v=9"></script>
+<script src="/employee.js?v=9"></script>
+<script src="/app.js?v=9"></script>
+<script src="/bridge.js?v=9"></script>
 </body>
 </html>

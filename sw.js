@@ -8,9 +8,9 @@
  *   - Static assets (manifest, icons): Cache-first, long TTL
  */
 
-const CACHE_NAME    = 'fuelbunk-v8';
-const SHELL_CACHE   = 'fuelbunk-shell-v8';
-const API_CACHE     = 'fuelbunk-api-v8';
+const CACHE_NAME    = 'fuelbunk-v9';
+const SHELL_CACHE   = 'fuelbunk-shell-v9';
+const API_CACHE     = 'fuelbunk-api-v9';
 
 // App shell — cache on install (split bundle: v7)
 const SHELL_ASSETS = [
@@ -174,4 +174,4 @@ self.addEventListener('notificationclick', event => {
   );
 });
 
-console.log('[SW] FuelBunk Pro Service Worker v6 loaded');
+console.log('[SW] FuelBunk Pro Service Worker v9 loaded');

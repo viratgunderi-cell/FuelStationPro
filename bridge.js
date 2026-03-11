@@ -46,9 +46,22 @@
       tenants.forEach(t => { t.active = t.active === 1 || t.active === true; });
       _tenantCache = tenants;
       _tenantCacheTime = Date.now();
-      // Also update localStorage as cache
-      localStorage.setItem('fb_tenants', JSON.stringify(tenants));
-      return tenants;
+
+      if (tenants.length > 0) {
+        // SERVER HAS DATA — authoritative, sync to localStorage cache
+        localStorage.setItem('fb_tenants', JSON.stringify(tenants));
+        return tenants;
+      } else {
+        // SERVER IS EMPTY — do NOT overwrite localStorage with [].
+        // Stations may exist in localStorage from a previous deployment.
+        // Wiping them here causes permanent visible data loss.
+        // Preserve localStorage data and return it as fallback.
+        const localTenants = mt_getTenants();
+        if (localTenants.length > 0) {
+          console.log('[Bridge] Server returned 0 stations — preserving', localTenants.length, 'local station(s) from cache');
+        }
+        return localTenants;
+      }
     } catch (e) {
       console.warn('[Bridge] Failed to fetch tenants from server, using cache:', e.message);
       return mt_getTenants();
@@ -487,6 +500,57 @@
           if (typeof mt_toast === 'function') mt_toast('Super Admin logged in', 'success');
           // ── Start session heartbeat — kicks this tab out if another device logs in ──
           startSuperSessionHeartbeat();
+
+          // ── AUTO-MIGRATION: recover stations from localStorage → PostgreSQL ──
+          // If server has 0 stations but browser localStorage has stations, this means
+          // the app previously ran in local-only mode (no backend) or the backend DB was
+          // re-provisioned. Automatically migrate so no data is lost.
+          try {
+            const serverTenants = await TenantAPI.list();
+            if (serverTenants.length === 0) {
+              const localTenants = (typeof mt_getTenants === 'function') ? mt_getTenants() : [];
+              if (localTenants.length > 0) {
+                if (typeof mt_toast === 'function') mt_toast('⟳ Recovering ' + localTenants.length + ' station(s) from local storage...', 'info');
+                let migrated = 0, failed = 0;
+                const migratedPasswords = [];
+                for (const t of localTenants) {
+                  try {
+                    const adminUsername = (t.adminUsers && t.adminUsers[0] && t.adminUsers[0].username) || 'admin';
+                    // Generate a deterministic temporary password from the station name
+                    const tempPass = 'Admin@' + (t.name || 'Station').replace(/[^a-zA-Z0-9]/g, '').substring(0, 8) + '1';
+                    await TenantAPI.create({
+                      id: t.id || undefined,
+                      name: t.name,
+                      location: t.location || '',
+                      ownerName: t.ownerName || '',
+                      phone: t.phone || '',
+                      icon: t.icon || '⛽',
+                      color: t.color || '#d4940f',
+                      colorLight: t.colorLight || '#f0b429',
+                      adminUser: adminUsername,
+                      adminPass: tempPass,
+                    });
+                    migrated++;
+                    migratedPasswords.push({ station: t.name, user: adminUsername, pass: tempPass });
+                    console.log('[Bridge] ✅ Migrated station "' + t.name + '" — admin: ' + adminUsername + ' / pass: ' + tempPass);
+                  } catch (migrErr) {
+                    failed++;
+                    console.warn('[Bridge] ⚠️ Migration failed for "' + (t.name || '?') + '":', migrErr.message);
+                  }
+                }
+                if (migrated > 0) {
+                  console.log('[Bridge] MIGRATION COMPLETE — New admin credentials:', JSON.stringify(migratedPasswords, null, 2));
+                  if (typeof mt_toast === 'function') mt_toast('✅ ' + migrated + ' station(s) recovered! Open browser console (F12) for new login credentials.', 'success');
+                }
+                if (failed > 0 && typeof mt_toast === 'function') {
+                  mt_toast('⚠️ ' + failed + ' station(s) could not be migrated — they may already exist', 'error');
+                }
+              }
+            }
+          } catch (migrationErr) {
+            console.warn('[Bridge] Auto-migration check failed:', migrationErr.message);
+          }
+
           await mt_getTenants_async();
           if (typeof mt_showSelector === 'function') mt_showSelector();
         }
