@@ -3803,88 +3803,337 @@ window.emp_saveLubeSale = emp_saveLubeSale;
 // ── STAFF VIEW — Shift Manager Portal ────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 function emp_renderStaffView() {
-  const today  = emp_today();
-  const emps   = EMP_LIST || [];
-  const pumps  = EMP_PUMPS || [];
+  const D = APP.data;
+  if (!D) return '<div style="padding:20px;color:var(--text-3)">Loading data...</div>';
 
-  // ── Build allocation map for today ────────────────────────────────
-  const empAllocMap = {}; // empId → [{shift, pumpName, nozzle}]
-  Object.entries(allocations).forEach(([dk, shiftAlloc]) => {
-    if (!dk.startsWith(today + '_')) return;
-    if (typeof shiftAlloc !== 'object') return;
-    const shiftName = dk.slice(today.length + 1);
-    Object.entries(shiftAlloc).forEach(([key, empId]) => {
-      if (!empId) return;
-      const [pumpId, nozzle] = key.split('_');
-      const pump = pumps.find(p => String(p.id) === String(pumpId));
-      if (!empAllocMap[empId]) empAllocMap[empId] = [];
-      empAllocMap[empId].push({ shift: shiftName, pumpName: pump?.name || ('P'+pumpId), nozzle });
-    });
-  });
+  // ── Sub-tab state ─────────────────────────────────────────────────
+  if (!window._empStaffTab) window._empStaffTab = 'allocation';
+  const tab = window._empStaffTab;
+  const today = emp_today();
 
-  // ── Roster for today ────────────────────────────────────────────────
-  const todayRosterIds = new Set();
-  if (window._rosterData) {
-    Object.entries(window._rosterData).forEach(([rk, ids]) => {
-      if (rk.startsWith(today + '_') && Array.isArray(ids)) ids.forEach(id => todayRosterIds.add(String(id)));
+  const tabBar = `<div style="display:flex;gap:3px;background:var(--bg-1);border-radius:var(--radius);padding:4px;margin-bottom:16px;border:1px solid var(--border-light)">
+    ${[
+      {id:'allocation',icon:'⛽',l:'Allocation'},
+      {id:'roster',    icon:'🗓️',l:'Roster'},
+      {id:'attendance',icon:'✅',l:'Attendance'},
+      {id:'directory', icon:'📋',l:'Directory'},
+    ].map(t=>`<button onclick="window._empStaffTab='${t.id}';renderPage()"
+      style="flex:1;padding:8px 4px;border-radius:calc(var(--radius) - 2px);border:none;background:${tab===t.id?'var(--bg-3)':'transparent'};color:${tab===t.id?'var(--accent-light)':'var(--text-3)'};font-family:var(--font);font-size:9px;font-weight:700;cursor:pointer;letter-spacing:0.3px;text-transform:uppercase;white-space:nowrap">
+      <span style="font-size:13px;display:block;margin-bottom:1px">${t.icon}</span>${t.l}
+    </button>`).join('')}
+  </div>`;
+
+  const hdr = `<div style="margin-bottom:12px">
+    <h3 class="fw-800" style="color:var(--text-0);font-size:18px">👥 Staff &amp; Allocation</h3>
+    <p style="font-size:11px;color:var(--text-3);margin-top:2px">${today} · ${(D.employees||[]).length} employees</p>
+  </div>`;
+
+  // ═══════════════════════════════════════════════════════════════
+  // TAB: ALLOCATION
+  // ═══════════════════════════════════════════════════════════════
+  if (tab === 'allocation') {
+    const curAllocShift = window.allocShift || (D.shifts[0]?.name || 'Morning');
+    const curAllocDate  = window.allocDate  || today;
+
+    // Week anchor
+    if (!window.allocWeekAnchor) {
+      const d = new Date(); const day = d.getDay(); const diff = (day===0?-6:1-day);
+      d.setDate(d.getDate()+diff); window.allocWeekAnchor = d.toISOString().slice(0,10);
+    }
+    const weekStart = new Date(window.allocWeekAnchor);
+    const weekDays  = Array.from({length:7},(_,i)=>{const d=new Date(weekStart);d.setDate(d.getDate()+i);return d.toISOString().slice(0,10);});
+    const pvW = new Date(weekStart); pvW.setDate(pvW.getDate()-7);
+    const nxW = new Date(weekStart); nxW.setDate(nxW.getDate()+7);
+    if (!weekDays.includes(curAllocDate)) window.allocDate = weekDays.includes(today) ? today : weekDays[0];
+
+    const shiftTabs = (D.shifts||[]).map(s=>
+      `<button onclick="window.allocShift='${s.name}';renderPage()"
+        style="padding:6px 12px;border-radius:6px;border:1px solid ${curAllocShift===s.name?'var(--accent)':'var(--border)'};background:${curAllocShift===s.name?'rgba(212,148,15,0.12)':'transparent'};color:${curAllocShift===s.name?'var(--accent-light)':'var(--text-3)'};font-size:11px;font-weight:700;cursor:pointer">
+        ${s.name}<span style="font-size:9px;opacity:0.6;margin-left:4px">${s.start}–${s.end}</span>
+      </button>`).join('');
+
+    const weekLabel = new Date(weekDays[0]).toLocaleDateString('en-IN',{day:'numeric',month:'short'})+' – '+new Date(weekDays[6]).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+
+    const fuelInfo = {
+      petrol:{short:'Petrol',color:'var(--petrol-color,#ef4444)'},
+      diesel:{short:'Diesel',color:'var(--diesel-color,#f97316)'},
+      premium_petrol:{short:'Premium',color:'var(--premium-color,#8b5cf6)'},
+    };
+
+    // Day headers
+    const dayHeaders = weekDays.map(date=>{
+      const isToday=date===today, isSel=date===curAllocDate;
+      const d=new Date(date);
+      return `<th style="padding:8px 4px;text-align:center;min-width:100px;cursor:pointer;border-bottom:2px solid ${isSel?'var(--accent)':isToday?'var(--green)':'var(--border)'}"
+        onclick="window.allocDate='${date}';renderPage()">
+        <div style="font-size:10px;font-weight:700;color:${isToday?'var(--green)':isSel?'var(--accent-light)':'var(--text-3)'}">${d.toLocaleDateString('en-IN',{weekday:'short'}).toUpperCase()}</div>
+        <div style="font-size:15px;font-weight:800;color:${isToday?'var(--green)':isSel?'var(--accent-light)':'var(--text-0)'}">${d.getDate()}</div>
+      </th>`;
+    }).join('');
+
+    // Helper: get rostered/shift emps for a date
+    function _dayEmps(date) {
+      const rk = date+'_'+curAllocShift;
+      const ids = (window._rosterData && window._rosterData[rk])||[];
+      return ids.length>0
+        ? D.employees.filter(e=>ids.includes(String(e.id)))
+        : D.employees.filter(e=>(e.shift||'').split(',').map(s=>s.trim()).includes(curAllocShift));
+    }
+
+    // Build rows
+    const rows = [];
+    (D.pumps||[]).forEach(p=>{
+      const nLabels = p.nozzleLabels||(p.nozzles===1?['A']:['A','B']);
+      const pNozzleFuels = p.nozzleFuels||{};
+      nLabels.forEach(n=>{
+        const nKey=`${String(p.id)}_${n}`;
+        const fi = fuelInfo[pNozzleFuels[n]||p.fuelType]||fuelInfo.petrol;
+        const label=`<td style="padding:10px 12px;white-space:nowrap;border-right:1px solid var(--border);background:var(--bg-3);position:sticky;left:0;z-index:1">
+          <div style="font-weight:800;font-size:12px;color:var(--text-0)">${p.name}</div>
+          <div style="font-size:10px;margin-top:2px"><span style="color:${fi.color};font-weight:700">N${n}</span> <span style="color:var(--text-3)">${fi.short}</span></div>
+        </td>`;
+        const cells=weekDays.map(date=>{
+          const dk=date+'_'+curAllocShift;
+          const empId=(window.allocations||{})[dk]?.[nKey];
+          const emp=empId?D.employees.find(e=>parseInt(e.id)===parseInt(empId)):null;
+          const isToday=date===today,isSel=date===curAllocDate;
+          const dayEmps=_dayEmps(date);
+          const opts=dayEmps.map(e=>`<option value="${e.id}"${emp&&parseInt(e.id)===parseInt(emp.id)?' selected':''}>${sanitize(e.name)}</option>`).join('');
+          const ini=emp?emp.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase():'';
+          const clr=emp?(emp.color||'var(--accent)'):'';
+          return `<td style="padding:5px;background:${isSel?'rgba(212,148,15,0.04)':isToday?'rgba(34,197,94,0.03)':'transparent'};border-right:1px solid var(--border-light);vertical-align:middle;min-width:110px">
+            ${emp?`<div style="display:flex;align-items:center;gap:5px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.25);border-radius:7px;padding:5px 7px;margin-bottom:4px">
+              <span style="width:22px;height:22px;border-radius:6px;background:${clr};display:grid;place-items:center;color:#fff;font-size:9px;font-weight:800;flex-shrink:0">${ini}</span>
+              <span style="font-size:11px;font-weight:700;color:var(--green);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${sanitize(emp.name)}</span>
+              <button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;padding:0" onclick="window.allocDate='${date}';removeAllocForDate(${p.id},'${n}','${date}')">✕</button>
+            </div>`:''}
+            <select onchange="window.allocDate='${date}';assignNozzleForDate(${p.id},'${n}','${date}',this.value);this.value=''"
+              style="width:100%;font-size:11px;padding:5px 7px;border-radius:7px;background:var(--bg-1);border:1px solid var(--border);color:var(--text-2);cursor:pointer;outline:none">
+              <option value="">${emp?'↺ Change':'＋ Assign'}</option>
+              ${opts}
+            </select>
+          </td>`;
+        }).join('');
+        rows.push(`<tr style="border-bottom:1px solid var(--border-light)">${label}${cells}</tr>`);
+      });
     });
+
+    const board=`<div style="overflow-x:auto;border-radius:var(--radius);border:1px solid var(--border)">
+      <table style="width:100%;border-collapse:collapse;min-width:700px">
+        <thead><tr style="background:var(--bg-3)">
+          <th style="padding:10px 12px;text-align:left;font-size:11px;color:var(--text-3);font-weight:700;border-right:1px solid var(--border);position:sticky;left:0;z-index:2;background:var(--bg-3)">PUMP / NOZZLE</th>
+          ${dayHeaders}
+        </tr></thead>
+        <tbody>${rows.join('')}</tbody>
+      </table>
+    </div>`;
+
+    return hdr+tabBar+`
+      <div class="card mb-16">
+        <div class="card-head">
+          <h4>⛽ Pump &amp; Nozzle Allocation</h4>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-ghost btn-sm" onclick="autoAssignAlloc()">⚡ Auto</button>
+            <button class="btn btn-ghost btn-sm" onclick="clearShiftAllocConfirm()">🗑 Clear</button>
+            <button class="btn btn-accent btn-sm" onclick="copyAllocModal()">📋 Copy</button>
+          </div>
+        </div>
+        <div style="padding:12px 16px 8px">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${shiftTabs}</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+            <button class="btn btn-ghost btn-sm" onclick="window.allocWeekAnchor='${pvW.toISOString().slice(0,10)}';renderPage()">&#8249; Prev</button>
+            <span style="font-weight:700;font-size:12px;color:var(--text-1);flex:1;text-align:center">${weekLabel}</span>
+            <button class="btn btn-ghost btn-sm" onclick="window.allocWeekAnchor='${nxW.toISOString().slice(0,10)}';renderPage()">Next &#8250;</button>
+          </div>
+          <div style="font-size:11px;color:var(--text-3);margin-bottom:8px">Assign employees to nozzles for <strong style="color:var(--accent-light)">${curAllocShift}</strong> shift</div>
+        </div>
+        <div style="padding:0 16px 16px">${board}</div>
+      </div>`;
   }
 
-  // ── Shift summary cards ─────────────────────────────────────────────
-  const shiftKeys  = [...new Set(Object.keys(allocations).filter(dk => dk.startsWith(today + '_')).map(dk => dk.slice(today.length+1)))];
-  const shiftCards = shiftKeys.map(shiftName => {
-    const dk = today + '_' + shiftName;
-    const sa = allocations[dk] || {};
-    const assignedIds = [...new Set(Object.values(sa).filter(Boolean).map(String))];
-    const assignedEmps = assignedIds.map(id => emps.find(e => String(e.id) === id)).filter(Boolean);
-    if (assignedEmps.length === 0) return '';
-    const pills = assignedEmps.map(e => {
-      const initials = e.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-      return `<div style="display:flex;align-items:center;gap:6px;padding:5px 0">
-        <div style="width:26px;height:26px;border-radius:6px;background:${e.color||'var(--accent)'};display:grid;place-items:center;color:#fff;font-size:9px;font-weight:800;flex-shrink:0">${initials}</div>
-        <div><div style="font-size:12px;font-weight:700;color:var(--text-0)">${sanitize(e.name)}</div>
-        <div style="font-size:10px;color:var(--text-3)">${(empAllocMap[String(e.id)]||[]).filter(a=>a.shift===shiftName).map(a=>`${a.pumpName} N${a.nozzle}`).join(', ')||'—'}</div></div>
-      </div>`;
-    }).join('');
-    return `<div class="card" style="margin-bottom:10px">
-      <div class="card-head"><h4>⏰ ${sanitize(shiftName)}</h4><span style="font-size:12px;font-weight:700;color:var(--text-2)">${assignedEmps.length} staff</span></div>
-      <div class="card-body" style="padding:4px 16px">${pills}</div>
-    </div>`;
-  }).filter(Boolean).join('');
+  // ═══════════════════════════════════════════════════════════════
+  // TAB: ROSTER
+  // ═══════════════════════════════════════════════════════════════
+  if (tab === 'roster') {
+    if (!window._rosterData) window._rosterData = {};
+    const offset = window._rosterWeekOffset || 0;
+    const todayObj = new Date();
+    const dow = todayObj.getDay()===0?6:todayObj.getDay()-1;
+    const weekStart = new Date(todayObj); weekStart.setDate(todayObj.getDate()-dow+offset*7); weekStart.setHours(0,0,0,0);
+    const thisMonday = new Date(todayObj); thisMonday.setDate(todayObj.getDate()-dow); thisMonday.setHours(0,0,0,0);
+    const isPast = weekStart < thisMonday;
+    const fmtDate = d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    const weekDays = Array.from({length:7},(_,i)=>{const d=new Date(weekStart);d.setDate(weekStart.getDate()+i);return d;});
+    const shifts = D.shifts&&D.shifts.length?D.shifts:[{name:'Morning'},{name:'Afternoon'},{name:'Night'}];
+    const shiftColors = ['rgba(212,148,15,0.12)','rgba(59,130,246,0.12)','rgba(139,92,246,0.12)','rgba(34,197,94,0.1)'];
+    const shiftBorderColors = ['var(--accent)','#3b82f6','#8b5cf6','#22c55e'];
 
-  // ── Full employee directory ──────────────────────────────────────────
-  const rows = emps.map(e => {
-    const initials = e.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-    const myAllocs = empAllocMap[String(e.id)] || empAllocMap[e.id] || [];
-    const allocPills = myAllocs.map(a =>
-      `<span style="font-size:9px;font-weight:700;background:rgba(212,148,15,0.12);border:1px solid rgba(212,148,15,0.25);color:var(--accent-light);padding:2px 7px;border-radius:4px">${sanitize(a.pumpName)} N${a.nozzle}</span>`
-    ).join(' ');
-    const isRostered = todayRosterIds.has(String(e.id));
-    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border-light)">
+    const dayHeaders = weekDays.map(d=>{
+      const isT=fmtDate(d)===today;
+      return `<th style="text-align:center;padding:8px 4px;min-width:80px;${isT?'color:var(--accent-light);font-weight:800':''}">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase">${d.toLocaleDateString('en-IN',{weekday:'short'})}</div>
+        <div style="font-size:16px;font-weight:800;margin-top:1px${isT?';color:var(--accent)':''}">${d.getDate()}</div>
+      </th>`;
+    }).join('');
+
+    const shiftRows = shifts.map((shift,si)=>{
+      const cells=weekDays.map(d=>{
+        const ds=fmtDate(d); const key=ds+'_'+shift.name;
+        const assigned=(window._rosterData[key]||[]);
+        const isT=ds===today;
+        const assignedEmps=assigned.map(id=>D.employees.find(e=>String(e.id)===String(id))).filter(Boolean);
+        const unassigned=D.employees.filter(e=>!assigned.includes(String(e.id)));
+        const chips=assignedEmps.map(e=>{
+          const ini=e.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+          return isPast
+            ? `<div style="display:flex;align-items:center;gap:4px;background:var(--bg-1);border:1px solid var(--border-light);border-radius:6px;padding:3px 6px;margin-bottom:2px;opacity:0.72">
+                <span style="width:18px;height:18px;border-radius:4px;background:${e.color||'var(--accent)'};display:grid;place-items:center;color:#fff;font-size:8px;font-weight:800">${ini}</span>
+                <span style="font-size:10px;font-weight:700;color:var(--text-1)">${sanitize(e.name)}</span>
+              </div>`
+            : `<div style="display:flex;align-items:center;gap:4px;background:var(--bg-2);border:1px solid var(--border-light);border-radius:6px;padding:3px 6px;margin-bottom:2px;cursor:pointer"
+                onclick="rosterUnassign('${ds}','${shift.name}',${e.id})">
+                <span style="width:18px;height:18px;border-radius:4px;background:${e.color||'var(--accent)'};display:grid;place-items:center;color:#fff;font-size:8px;font-weight:800">${ini}</span>
+                <span style="font-size:10px;font-weight:700;color:var(--text-0)">${sanitize(e.name)}</span>
+                <span style="margin-left:auto;color:var(--red);font-size:10px;opacity:0.7">✕</span>
+              </div>`;
+        }).join('');
+        const addDrop=isPast||!unassigned.length?'':
+          `<select style="width:100%;background:var(--bg-1);border:1px dashed var(--border);border-radius:6px;padding:4px 5px;color:var(--text-3);font-size:10px;font-family:var(--font);cursor:pointer;margin-top:${assignedEmps.length?'4px':'0'}"
+            onchange="if(this.value){rosterAssign('${ds}','${shift.name}',this.value);this.value=''}">
+            <option value="">+ Assign</option>
+            ${unassigned.map(e=>`<option value="${e.id}">${sanitize(e.name)}</option>`).join('')}
+          </select>`;
+        return `<td style="vertical-align:top;padding:5px;background:${isT?'rgba(212,148,15,0.04)':'transparent'};border-left:1px solid var(--border-light)">${chips}${addDrop}</td>`;
+      }).join('');
+      return `<tr>
+        <td style="padding:8px 10px;white-space:nowrap;border-right:2px solid ${shiftBorderColors[si%4]};background:${shiftColors[si%4]}">
+          <div style="font-size:11px;font-weight:800;color:var(--text-0)">${sanitize(shift.name)}</div>
+          <div style="font-size:9px;color:var(--text-3)">${sanitize(shift.start||'')}–${sanitize(shift.end||'')}</div>
+        </td>${cells}
+      </tr>`;
+    }).join('');
+
+    const weekLabel=weekStart.toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'});
+    return hdr+tabBar+`
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-ghost btn-sm" onclick="rosterNavWeek(-1)">◀ Prev</button>
+        <span style="font-size:12px;font-weight:700;color:var(--text-1);flex:1;text-align:center">Week of ${weekLabel}</span>
+        <button class="btn btn-ghost btn-sm" onclick="rosterNavWeek(1)">Next ▶</button>
+        ${!isPast?`<button class="btn btn-accent btn-sm" onclick="rosterSave()">💾 Save</button>`:''}
+      </div>
+      ${isPast?`<div style="padding:6px 10px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--text-3);margin-bottom:12px">🔒 Past week — read only</div>`:''}
+      <div class="card" style="overflow-x:auto;padding:0">
+        <table style="border-collapse:collapse;width:100%;min-width:600px">
+          <thead style="background:var(--bg-1);border-bottom:2px solid var(--border)">
+            <tr><th style="padding:8px 10px;text-align:left;min-width:80px;font-size:10px;text-transform:uppercase;color:var(--text-3)">Shift</th>${dayHeaders}</tr>
+          </thead>
+          <tbody>${shiftRows}</tbody>
+        </table>
+      </div>`;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // TAB: ATTENDANCE
+  // ═══════════════════════════════════════════════════════════════
+  if (tab === 'attendance') {
+    if (!window._attendanceData) window._attendanceData = {};
+    if (!window._attDate) window._attDate = today;
+    const attDate = window._attDate;
+    const att = window._attendanceData;
+    if (!att[attDate]) att[attDate] = {};
+    const emps = (D.employees||[]).filter(e=>e.status!=='inactive');
+    const statusOpts = ['present','absent','half-day','leave','holiday'];
+    const statusColor = {present:'var(--green)',absent:'var(--red)','half-day':'var(--orange)',leave:'#8b5cf6',holiday:'#3b82f6'};
+    const statusEmoji = {present:'✅',absent:'❌','half-day':'🌓',leave:'🏖️',holiday:'🎉'};
+    const counts = statusOpts.reduce((a,s)=>{a[s]=0;return a;},{});
+    emps.forEach(e=>{const s=att[attDate]?.[e.id]?.status||'absent';counts[s]=(counts[s]||0)+1;});
+
+    const rows = emps.map(e=>{
+      const rec=att[attDate]?.[e.id]||{};
+      const status=rec.status||''; const note=rec.note||'';
+      return `<tr>
+        <td style="padding:10px 12px">
+          <div style="font-weight:700;color:var(--text-0);font-size:13px">${sanitize(e.name)}</div>
+          <div style="font-size:10px;color:var(--text-3)">${sanitize(e.role||'')} · ${sanitize((e.shift||'').split(',')[0]||'—')}</div>
+        </td>
+        <td style="padding:10px 12px">
+          <select class="form-input" style="padding:6px 10px;font-size:12px;width:130px" onchange="attSetStatus(${e.id},'${attDate}',this.value)">
+            <option value="">Mark status</option>
+            ${statusOpts.map(s=>`<option value="${s}"${status===s?' selected':''} style="color:${statusColor[s]}">${statusEmoji[s]} ${s.charAt(0).toUpperCase()+s.slice(1)}</option>`).join('')}
+          </select>
+        </td>
+        <td style="padding:10px 12px">
+          ${status?`<span style="padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;background:${statusColor[status]}22;color:${statusColor[status]};border:1px solid ${statusColor[status]}44">${statusEmoji[status]} ${status.charAt(0).toUpperCase()+status.slice(1)}</span>`:'<span style="font-size:11px;color:var(--text-3)">Not marked</span>'}
+        </td>
+        <td style="padding:10px 12px">
+          <input style="background:var(--bg-1);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:11px;color:var(--text-1);width:140px" placeholder="Note" value="${sanitize(note)}" oninput="attSetNote(${e.id},'${attDate}',this.value)" />
+        </td>
+      </tr>`;
+    }).join('');
+
+    return hdr+tabBar+`
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+        <input type="date" class="form-input" style="padding:6px 12px;font-size:13px;width:160px" value="${attDate}" onchange="window._attDate=this.value;renderPage()" />
+        <button class="btn btn-accent btn-sm" onclick="attSave()">💾 Save</button>
+        <button class="btn btn-ghost btn-sm" onclick="attMarkAllPresent('${attDate}')">✅ All Present</button>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+        ${statusOpts.map(s=>`<div style="padding:5px 12px;border-radius:20px;font-size:11px;font-weight:700;background:${statusColor[s]}18;color:${statusColor[s]};border:1px solid ${statusColor[s]}33">${statusEmoji[s]} ${s.charAt(0).toUpperCase()+s.slice(1)}: ${counts[s]}</div>`).join('')}
+      </div>
+      <div class="card" style="padding:0;overflow:hidden">
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Employee</th><th>Mark Status</th><th>Status</th><th>Note</th></tr></thead>
+          <tbody>${rows||'<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:24px">No employees</td></tr>'}</tbody>
+        </table></div>
+      </div>`;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // TAB: DIRECTORY
+  // ═══════════════════════════════════════════════════════════════
+  const emps = D.employees||[];
+  const pumps = D.pumps||[];
+  const empAllocMap = {};
+  Object.entries(window.allocations||{}).forEach(([dk,sa])=>{
+    if (!dk.startsWith(today+'_')||typeof sa!=='object') return;
+    const sn=dk.slice(today.length+1);
+    Object.entries(sa).forEach(([key,empId])=>{
+      if (!empId) return;
+      const [pid,nozzle]=key.split('_');
+      const pump=pumps.find(p=>String(p.id)===String(pid));
+      if (!empAllocMap[empId]) empAllocMap[empId]=[];
+      empAllocMap[empId].push({shift:sn,pumpName:pump?.name||('P'+pid),nozzle});
+    });
+  });
+  const todayRosterIds=new Set();
+  if (window._rosterData) Object.entries(window._rosterData).forEach(([rk,ids])=>{
+    if (rk.startsWith(today+'_')&&Array.isArray(ids)) ids.forEach(id=>todayRosterIds.add(String(id)));
+  });
+
+  const rows = emps.map(e=>{
+    const ini=e.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    const myAllocs=empAllocMap[String(e.id)]||[];
+    const allocPills=myAllocs.map(a=>`<span style="font-size:9px;font-weight:700;background:rgba(212,148,15,0.12);border:1px solid rgba(212,148,15,0.25);color:var(--accent-light);padding:2px 7px;border-radius:4px">${sanitize(a.pumpName)} N${a.nozzle}</span>`).join(' ');
+    const rostered=todayRosterIds.has(String(e.id));
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:11px 0;border-bottom:1px solid var(--border-light)">
       <div style="display:flex;align-items:center;gap:10px">
-        <div style="width:32px;height:32px;border-radius:8px;background:${e.color||'var(--accent)'};display:grid;place-items:center;color:#fff;font-size:10px;font-weight:800;flex-shrink:0">${initials}</div>
+        <div style="width:32px;height:32px;border-radius:8px;background:${e.color||'var(--accent)'};display:grid;place-items:center;color:#fff;font-size:10px;font-weight:800;flex-shrink:0">${ini}</div>
         <div>
           <div class="fw-700" style="font-size:13px;color:var(--text-0)">${sanitize(e.name)}</div>
           <div style="font-size:10px;color:var(--text-3)">${sanitize(e.role||'')} · ${sanitize(e.shift||'—')}</div>
-          ${e.phone ? `<div style="font-size:10px;color:var(--text-3)">📞 ${sanitize(e.phone)}</div>` : ''}
+          ${e.phone?`<div style="font-size:10px;color:var(--text-3)">📞 ${sanitize(e.phone)}</div>`:''}
         </div>
       </div>
       <div style="text-align:right">
-        ${allocPills ? `<div style="display:flex;gap:3px;flex-wrap:wrap;justify-content:flex-end;margin-bottom:4px">${allocPills}</div>` : ''}
-        ${isRostered ? `<span style="font-size:9px;font-weight:700;background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.25);color:var(--green);padding:2px 7px;border-radius:4px">✅ Rostered</span>` : `<span style="font-size:9px;color:var(--text-3)">Not rostered</span>`}
+        ${allocPills?`<div style="display:flex;gap:3px;flex-wrap:wrap;justify-content:flex-end;margin-bottom:4px">${allocPills}</div>`:''}
+        ${rostered
+          ?`<span style="font-size:9px;font-weight:700;background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.25);color:var(--green);padding:2px 7px;border-radius:4px">✅ Rostered</span>`
+          :`<span style="font-size:9px;color:var(--text-3)">Not rostered</span>`}
       </div>
     </div>`;
-  }).join('') || `<div style="text-align:center;padding:20px;color:var(--text-3);font-size:12px">No employees found</div>`;
+  }).join('')||`<div style="text-align:center;padding:20px;color:var(--text-3);font-size:12px">No employees found</div>`;
 
-  return `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-      <div><h3 class="fw-800" style="color:var(--text-0);font-size:18px">👥 Staff & Allocation</h3>
-      <p style="font-size:11px;color:var(--text-3);margin-top:2px">${today} · ${emps.length} employees total</p></div>
-    </div>
-    ${shiftCards || `<div class="card" style="padding:16px;margin-bottom:10px;text-align:center;color:var(--text-3);font-size:12px">No allocations set for today yet</div>`}
-    <div class="card"><div class="card-head"><h4>📋 All Staff</h4></div>
-    <div class="card-body" style="padding:0 16px">${rows}</div></div>
-  `;
+  return hdr+tabBar+`<div class="card"><div class="card-body" style="padding:0 16px">${rows}</div></div>`;
 }
 window.emp_renderStaffView = emp_renderStaffView;
 

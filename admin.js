@@ -7931,3 +7931,34 @@ window.shareUPILink2 = shareUPILink2;
 window.confirmUPIPayment = confirmUPIPayment;
 window.recordSaleWithUPI = recordSaleWithUPI;
 window.openAddAdminUserModal = openAddAdminUserModal;
+
+// ── Allocation write functions — needed by Shift Manager portal ──
+window.saveAllocations       = saveAllocations;
+window.assignNozzle          = assignNozzle;
+window.assignNozzleForDate   = assignNozzleForDate;
+window.removeAlloc           = removeAlloc;
+window.removeAllocForDate    = removeAllocForDate;
+window.openChangeAllocModal  = openChangeAllocModal;
+window.openWeekAllocCell     = openWeekAllocCell;
+window.autoAssignAlloc       = autoAssignAlloc;
+window.clearShiftAllocConfirm = clearShiftAllocConfirm;
+window.doClearAlloc          = doClearAlloc;
+window.copyAllocModal        = copyAllocModal;
+window.doCopyAlloc           = doCopyAlloc;
+window.attSetNote            = attSetNote;
+// Expose allocShift / allocDate as getters+setters so employee.js can read/write them
+Object.defineProperty(window, 'allocShift', {
+  get: () => allocShift,
+  set: (v) => { allocShift = v; },
+  configurable: true,
+});
+Object.defineProperty(window, 'allocDate', {
+  get: () => allocDate,
+  set: (v) => { allocDate = v; },
+  configurable: true,
+});
+Object.defineProperty(window, 'allocations', {
+  get: () => allocations,
+  set: (v) => { allocations = v; },
+  configurable: true,
+});
