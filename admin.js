@@ -1559,7 +1559,7 @@ function renderSettings(D) {
           <div class="fw-700" style="color:var(--text-1);margin-bottom:6px">Role Permissions</div>
           ${[
             { role:'Owner',      color:'var(--accent-light)', desc:'Full access — all pages, all actions' },
-            { role:'Manager',    color:'var(--blue)',          desc:'Operations — Staff, Allocation & Roster access. No payroll disbursement, no user management' },
+            { role:'Manager',    color:'var(--blue)',          desc:'Full operational access — Staff, Payroll, Lubes & Finance. Cannot reset data or manage admin users' },
             { role:'Accountant', color:'#a855f7',             desc:'Finance & reports only — no operations' },
             { role:'Cashier',    color:'var(--green)',         desc:'Dashboard, tanks, pumps, sales, lubes only' },
           ].map(r=>`<div class="flex-between" style="padding:5px 0;border-bottom:1px solid var(--border-light)">
@@ -4548,7 +4548,7 @@ window.exportTallyXML = exportTallyXML;
 
 const ROLE_PAGES = {
   Owner:      null,  // null = all pages
-  Manager:    ['dashboard','tanks','pumps','sales','credit','staff','lubes','reports','analytics','settings'],
+  Manager:    null,  // null = all pages (same as Owner — full operational access)
   Accountant: ['dashboard','finance','credit','exports','reports','analytics','lubes'],
   Cashier:    ['dashboard','tanks','pumps','sales','lubes'],
 };
@@ -4556,7 +4556,7 @@ const ROLE_PAGES = {
 // Actions blocked per role (used by rbac_can())
 const ROLE_BLOCKED_ACTIONS = {
   Owner:      [],
-  Manager:    ['delete_employee','payroll_pay','reset_data','export_all','add_admin_user'],
+  Manager:    ['reset_data','add_admin_user'],  // Cannot wipe data or create admin users
   Accountant: ['delete_employee','payroll_pay','reset_data','add_admin_user','add_employee','edit_employee','save_prices','add_tank','delete_tank','add_pump','delete_pump'],
   Cashier:    ['delete_employee','payroll_pay','reset_data','add_admin_user','add_employee','edit_employee','save_prices','add_tank','delete_tank','add_pump','delete_pump','view_finance','view_payroll','view_staff','credit_edit','view_exports','view_analytics'],
 };
