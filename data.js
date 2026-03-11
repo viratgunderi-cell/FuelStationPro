@@ -352,8 +352,86 @@ function dataRoutes(db) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
+  // ── Day-Lock helper ───────────────────────────────────────────────────────
+  // Stores that should be blocked once a day is closed.
+  const DAY_LOCKED_STORES = new Set([
+    'sales', 'dipReadings', 'expenses', 'fuelPurchases',
+    'creditTransactions', 'lubesSales'
+  ]);
+
+  async function checkDayLock(req, res, next) {
+    const store = req.params.store;
+    if (!DAY_LOCKED_STORES.has(store)) return next();
+    // Determine the record date: body.date, or today
+    const recDate = (req.body && req.body.date)
+      ? String(req.body.date).slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
+    try {
+      const r = await pool.query(
+        `SELECT value FROM settings WHERE key = $1 AND tenant_id = $2`,
+        [`day_lock_${recDate}`, req.tenantId || '']
+      );
+      if (r.rows[0] && r.rows[0].value === 'true') {
+        return res.status(423).json({
+          error: `Day ${recDate} is locked. Unlock from Settings → Day-Lock before editing.`,
+          locked: true, date: recDate
+        });
+      }
+    } catch (e) { /* Lock check failed — allow through */ }
+    return next();
+  }
+
+  // ── Day-Lock admin routes (Owner only) ────────────────────────────────────
+  router.post('/day-lock/:date/close', async (req, res) => {
+    // Only Owner role can close books
+    if (req.userRole !== 'Owner' && req.userRole !== 'super') {
+      return res.status(403).json({ error: 'Only Owner can close books' });
+    }
+    const date = req.params.date; // YYYY-MM-DD
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
+      return res.status(400).json({ error: 'Invalid date format' });
+    try {
+      await pool.query(
+        `INSERT INTO settings (key, tenant_id, value, updated_at)
+         VALUES ($1, $2, 'true', NOW())
+         ON CONFLICT (key, tenant_id) DO UPDATE SET value='true', updated_at=NOW()`,
+        [`day_lock_${date}`, req.tenantId || '']
+      );
+      await auditLog(req, 'DAY_LOCK_CLOSE', 'settings', date, '');
+      res.json({ success: true, date, locked: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.post('/day-lock/:date/open', async (req, res) => {
+    if (req.userRole !== 'Owner' && req.userRole !== 'super') {
+      return res.status(403).json({ error: 'Only Owner can unlock books' });
+    }
+    const date = req.params.date;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
+      return res.status(400).json({ error: 'Invalid date format' });
+    try {
+      await pool.query(
+        `DELETE FROM settings WHERE key = $1 AND tenant_id = $2`,
+        [`day_lock_${date}`, req.tenantId || '']
+      );
+      await auditLog(req, 'DAY_LOCK_OPEN', 'settings', date, '');
+      res.json({ success: true, date, locked: false });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.get('/day-lock/:date/status', async (req, res) => {
+    const date = req.params.date;
+    try {
+      const r = await pool.query(
+        `SELECT value FROM settings WHERE key = $1 AND tenant_id = $2`,
+        [`day_lock_${date}`, req.tenantId || '']
+      );
+      res.json({ date, locked: !!(r.rows[0] && r.rows[0].value === 'true') });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   // ── Generic store POST (create) ───────────────────────────────────────────
-  router.post('/:store', async (req, res) => {
+  router.post('/:store', checkDayLock, async (req, res) => {
     const meta = STORE_MAP[req.params.store];
     if (!meta) return res.status(404).json({ error: 'Unknown store' });
     try {
@@ -367,7 +445,7 @@ function dataRoutes(db) {
   });
 
   // ── Bulk PUT — MUST be before PUT /:store (Express matches /:store first otherwise) ──
-  router.put('/:store/bulk', async (req, res) => {
+  router.put('/:store/bulk', checkDayLock, async (req, res) => {
     const meta = STORE_MAP[req.params.store];
     if (!meta) return res.status(404).json({ error: 'Unknown store' });
     if (!Array.isArray(req.body)) return res.status(400).json({ error: 'Expected array' });
@@ -381,7 +459,7 @@ function dataRoutes(db) {
   });
 
   // ── Generic store PUT (upsert) ────────────────────────────────────────────
-  router.put('/:store', async (req, res) => {
+  router.put('/:store', checkDayLock, async (req, res) => {
     const meta = STORE_MAP[req.params.store];
     if (!meta) return res.status(404).json({ error: 'Unknown store' });
     try {
@@ -405,7 +483,7 @@ function dataRoutes(db) {
   });
 
   // ── Generic store DELETE by id ────────────────────────────────────────────
-  router.delete('/:store/:id', async (req, res) => {
+  router.delete('/:store/:id', checkDayLock, async (req, res) => {
     const meta = STORE_MAP[req.params.store];
     if (!meta) return res.status(404).json({ error: 'Unknown store' });
     const keyCol = meta.keyCol || 'id';

@@ -247,7 +247,7 @@ async function startServer() {
 
       const [empRows, shiftRows, rosterRow, attRow, lubeProdsRow, lubeSalesRow, advancesRow, payrollRow] = await Promise.all([
         pool.query('SELECT id, name, role, shift, phone, data_json FROM employees WHERE tenant_id = $1 AND active = 1 ORDER BY name', [tid]),
-        pool.query('SELECT * FROM shifts WHERE tenant_id = $1 ORDER BY start', [tid]),
+        pool.query('SELECT * FROM shifts WHERE tenant_id = $1 ORDER BY start_time', [tid]),
         pool.query("SELECT value FROM settings WHERE key = 'shift_roster' AND tenant_id = $1", [tid]),
         pool.query("SELECT value FROM settings WHERE key = 'attendance_data' AND tenant_id = $1", [tid]),
         pool.query("SELECT value FROM settings WHERE key = 'lubes_products' AND tenant_id = $1", [tid]),
@@ -266,7 +266,17 @@ async function startServer() {
 
       res.json({
         employees,
-        shifts:     shiftRows.rows,
+        // FIX: Normalize shift field names — DB stores start_time/end_time but
+        // frontend (employee.js, admin.js) expects start/end everywhere
+        shifts: shiftRows.rows.map(s => ({
+          id:    s.id,
+          name:  s.name,
+          start: s.start_time || s.start || '',
+          end:   s.end_time   || s.end   || '',
+          start_time: s.start_time || s.start || '',
+          end_time:   s.end_time   || s.end   || '',
+          status: s.status || 'open',
+        })),
         roster:     parse(rosterRow, {}),
         attendance: parse(attRow, {}),
         lubesProducts: parse(lubeProdsRow, []),

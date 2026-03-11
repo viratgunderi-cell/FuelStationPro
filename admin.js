@@ -606,7 +606,7 @@ function renderSales(D, filter = 'all') {
 
   return `
     <div class="page-hdr">
-      <h3>💰 Sales</h3>
+      <h3>💰 Sales${(APP.data?.dayLocks||{})[selDate] ? ' <span style="font-size:12px;background:rgba(34,197,94,0.15);color:var(--green);padding:2px 8px;border-radius:4px;font-weight:700;vertical-align:middle">🔒 LOCKED</span>' : ''}</h3>
       <div class="flex" style="gap:8px;flex-wrap:wrap;align-items:center">
         <div class="filters">${fuelChips}</div>
         <button class="btn btn-accent" onclick="openSaleModal()">+ New Sale</button>
@@ -1636,11 +1636,57 @@ function renderSettings(D) {
       </div>
     </div>
 
+    <!-- ── Day-Lock: Close the Books ─────────────────────────────────────── -->
+    <div class="card card-pad mt-16" id="dayLockCard">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <h4 class="fw-700" style="color:var(--text-0);font-size:13px">🔒 Day-Lock — Close the Books</h4>
+        ${rbac_can('close_books') ? '' : `<span style="font-size:11px;color:var(--text-3)">Owner only</span>`}
+      </div>
+      <p style="font-size:12px;color:var(--text-3);margin-bottom:14px">
+        Locking a day prevents any edits to sales, expenses, purchases, dip readings, and credit transactions for that date.
+        Required before GST filing and audit. Unlock is available only to the <strong>Owner</strong> role.
+      </p>
+      ${(() => {
+        const todayStr = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
+        const lockedDays = Object.keys(D.dayLocks || {}).filter(k => (D.dayLocks||{})[k]).sort().reverse().slice(0, 5);
+        const todayLocked = (D.dayLocks||{})[todayStr];
+        const canLock = rbac_can('close_books');
+        return `
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+            <div style="flex:1;min-width:160px;padding:14px;background:${todayLocked?'rgba(34,197,94,0.07)':'rgba(212,148,15,0.07)'};border:1px solid ${todayLocked?'rgba(34,197,94,0.25)':'rgba(212,148,15,0.25)'};border-radius:10px;text-align:center">
+              <div style="font-size:22px;margin-bottom:4px">${todayLocked?'✅':'📖'}</div>
+              <div class="fw-700" style="font-size:13px;color:var(--text-0)">Today — ${todayStr}</div>
+              <div style="font-size:11px;color:${todayLocked?'var(--green)':'var(--accent-light)'};font-weight:700;margin-top:2px">${todayLocked?'LOCKED':'OPEN'}</div>
+            </div>
+            <div style="flex:1;min-width:160px;display:flex;flex-direction:column;gap:8px;justify-content:center">
+              ${canLock ? `
+                ${!todayLocked ? `<button class="btn btn-accent btn-block" onclick="closeDayLock('${todayStr}')">🔒 Close Today's Books</button>` : ''}
+                ${todayLocked ? `<button class="btn btn-ghost btn-block" style="border-color:rgba(239,68,68,0.3);color:var(--red)" onclick="openDayLock('${todayStr}')">🔓 Unlock Today</button>` : ''}
+                <button class="btn btn-ghost btn-block btn-sm" onclick="openDayLockPicker()">📅 Lock/Unlock Specific Date</button>
+              ` : `<div style="font-size:12px;color:var(--text-3);text-align:center;padding:12px">Switch to <strong>Owner</strong> role to lock/unlock books</div>`}
+            </div>
+          </div>
+          ${lockedDays.length > 0 ? `
+          <div style="margin-top:4px">
+            <div style="font-size:10px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Recent Locked Days</div>
+            ${lockedDays.map(d => `
+              <div class="flex-between" style="padding:6px 0;border-bottom:1px solid var(--border-light);font-size:12px">
+                <span class="mono" style="color:var(--text-1)">${d}</span>
+                <div style="display:flex;align-items:center;gap:8px">
+                  ${badge('LOCKED','badge-green')}
+                  ${canLock ? `<button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px;color:var(--red)" onclick="openDayLock('${d}')">Unlock</button>` : ''}
+                </div>
+              </div>`).join('')}
+          </div>` : ''}
+        `;
+      })()}
+    </div>
+
     <div class="card card-pad mt-16" style="border:1px solid rgba(212,148,15,0.25);background:rgba(212,148,15,0.04)">
       <h4 class="mb-14 fw-700" style="color:var(--text-0);font-size:13px">🗺️ Suggested Build Order — Roadmap</h4>
       <div style="display:flex;flex-direction:column;gap:8px">
         ${[
-          { tier:'✅ Live', color:'var(--green)', items:['Fuel Tax Rates (ZLST/GST)', 'Purchase density + IS-1460 check', 'Payroll Run + bulk calculate', 'Salary Advances + EMI plan', 'Employee Performance leaderboard', 'Vehicle-wise Fuel Report', 'Bank Reconciliation (Cash/UPI/Card)', 'Hourly Sales Pattern chart', 'Analytics page (Vehicle / Density / Bank Recon)', '📟 Nozzle Meter Log — shift open/close with variance flagging', '💬 WhatsApp Alerts — wa.me + CallMeBot free API', '🛢️ Lubes & Products — catalogue, HSN, GST%, stock, sales, restock', '📤 Exports — Daily CSV/Print, Payslips, Credit Statements, Lubes Report', '🧾 GST Module — GSTR-1 JSON, Tally XML, HSN-wise summary', '🔒 Role-based access — Owner/Manager/Accountant/Cashier', '📊 Advanced Analytics — Monthly Trends, Fuel P&L, Top Customers', '⭐ Loyalty Points — earn on credit sales, redeem for discounts'] },
+          { tier:'✅ Live', color:'var(--green)', items:['Fuel Tax Rates (ZLST/GST)', 'Purchase density + IS-1460 check', 'Payroll Run + bulk calculate', 'Salary Advances + EMI plan', 'Employee Performance leaderboard', 'Vehicle-wise Fuel Report', 'Bank Reconciliation (Cash/UPI/Card)', 'Hourly Sales Pattern chart', 'Analytics page (Vehicle / Density / Bank Recon)', '📟 Nozzle Meter Log — shift open/close with variance flagging', '💬 WhatsApp Alerts — wa.me + CallMeBot free API', '🛢️ Lubes & Products — catalogue, HSN, GST%, stock, sales, restock', '📤 Exports — Daily CSV/Print, Payslips, Credit Statements, Lubes Report', '🧾 GST Module — GSTR-1 JSON, Tally XML, HSN-wise summary, GSTR-3B', '🔒 Day-Lock — Close books & prevent retroactive edits', '🔒 Role-based access — Owner/Manager/Accountant/Cashier', '📊 Advanced Analytics — Monthly Trends, Fuel P&L, Top Customers', '⭐ Loyalty Points — earn on credit sales, redeem for discounts'] },
           { tier:'🔜 Next', color:'var(--accent-light)', items:['📱 PWA offline mode — works without internet', '🏢 Multi-station dashboard — compare stations', '🤖 AI insights — anomaly detection, demand forecasting'] },
           { tier:'🔮 Later', color:'#a855f7', items:['📱 PWA offline mode — works without internet', '🏢 Multi-station dashboard — compare stations', '🤖 AI insights — anomaly detection, demand forecasting'] },
         ].map(section => `
@@ -3745,7 +3791,8 @@ function renderExports(D) {
     { id:'payslip', icon:'💸', label:'Payslips' },
     { id:'credit',  icon:'💳', label:'Credit Statements' },
     { id:'lubes',   icon:'🛢️', label:'Lubes Report' },
-    { id:'gst',     icon:'🧾', label:'GST / Tally' },
+    { id:'gst',     icon:'🧾', label:'GSTR-1 / Tally' },
+    { id:'gstr3b',  icon:'📊', label:'GSTR-3B' },
   ];
   const tabBar = `<div style="display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap">
     ${tabs.map(t=>`<button onclick="window._exportTab='${t.id}';renderPage()" style="padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:${tab===t.id?'var(--accent-light)':'var(--bg-1)'};color:${tab===t.id?'#000':'var(--text-2)'};font-weight:700;cursor:pointer;font-size:12px">${t.icon} ${t.label}</button>`).join('')}
@@ -3904,6 +3951,8 @@ function renderExports(D) {
   // ── GST / TALLY ──────────────────────────────────────────────────────────────
   } else if (tab === 'gst') {
     body = renderGSTTab(D);
+  } else if (tab === 'gstr3b') {
+    body = renderGSTR3BTab(D);
   }
 
   return `<div class="page-hdr"><h3>📤 Exports & Reports</h3></div>${tabBar}${body}`;
@@ -4296,6 +4345,364 @@ function renderGSTTab(D) {
     </div>`;
 }
 
+// ── GSTR-3B — Output Tax vs Input Tax Credit ─────────────────────────────────
+function renderGSTR3BTab(D) {
+  const now5 = new Date();
+  const gstMonth = window._gstMonth || (now5.getMonth() + 1);
+  const gstYear  = window._gstYear  || now5.getFullYear();
+  const monthName = new Date(gstYear, gstMonth - 1).toLocaleString('en-IN', { month: 'long' });
+  const startDate = `${gstYear}-${String(gstMonth).padStart(2,'0')}-01`;
+  const endDate   = new Date(gstYear, gstMonth, 0).toISOString().slice(0, 10);
+  const gstin     = D.gstin || '';
+  const legalName = D.legalName || D.upiName || APP.tenant?.name || 'Fuel Station';
+  const taxRates  = D.fuelTaxRates || [];
+
+  // ── TABLE 3.1 — Output Tax Liability ───────────────────────────────────────
+  // Aggregate sales by GST rate slab
+  const outTax = {}; // key = gstPct
+  const fuelSales = D.sales.filter(s => { const d=(s.date||'').slice(0,10); return d>=startDate&&d<=endDate; });
+  const lubeSales = (window._lubesSales||[]).filter(s => s.date>=startDate&&s.date<=endDate);
+
+  fuelSales.forEach(s => {
+    const tr = taxRates.find(t => t.fuelType === s.fuelType) || {};
+    const gstPct = tr.rate ? parseFloat(tr.rate) : 0;
+    if (!outTax[gstPct]) outTax[gstPct] = { desc: `Fuel (${gstPct}%)`, taxable:0, cgst:0, sgst:0, igst:0 };
+    const taxable = gstPct > 0 ? s.amount / (1 + gstPct/100) : s.amount;
+    const gstAmt  = s.amount - taxable;
+    outTax[gstPct].taxable += taxable;
+    if (s.interState) outTax[gstPct].igst += gstAmt;
+    else { outTax[gstPct].cgst += gstAmt/2; outTax[gstPct].sgst += gstAmt/2; }
+  });
+
+  lubeSales.forEach(s => {
+    const prod = (window._lubesProducts||[]).find(p=>p.id===s.productId);
+    const gstPct = prod?.gstPct || 18;
+    const key = `lube_${gstPct}`;
+    if (!outTax[key]) outTax[key] = { desc: `Lubes/Products (${gstPct}%)`, taxable:0, cgst:0, sgst:0, igst:0 };
+    const taxable = gstPct > 0 ? s.amount / (1 + gstPct/100) : s.amount;
+    const gstAmt  = s.amount - taxable;
+    outTax[key].taxable += taxable;
+    if (s.interState) outTax[key].igst += gstAmt;
+    else { outTax[key].cgst += gstAmt/2; outTax[key].sgst += gstAmt/2; }
+  });
+
+  const outItems = Object.values(outTax);
+  const totOutTaxable = outItems.reduce((a,x)=>a+x.taxable, 0);
+  const totOutCGST    = outItems.reduce((a,x)=>a+x.cgst, 0);
+  const totOutSGST    = outItems.reduce((a,x)=>a+x.sgst, 0);
+  const totOutIGST    = outItems.reduce((a,x)=>a+x.igst, 0);
+  const totOutTax     = totOutCGST + totOutSGST + totOutIGST;
+
+  // ── TABLE 4 — Input Tax Credit (ITC) ───────────────────────────────────────
+  // Only if station is GST-registered: ITC from fuel purchases + lube purchases
+  const itcEnabled = !!gstin; // ITC only relevant if GSTIN is set
+  const fuelPurch = D.fuelPurchases.filter(p => { const d=(p.date||'').slice(0,10); return d>=startDate&&d<=endDate; });
+  const lubeProds = (window._lubesProducts||[]);
+  // Lube restock expenses tagged as lube purchases
+  const lubeRestockExpenses = D.expenses.filter(e => {
+    const d=(e.date||'').slice(0,10);
+    return d>=startDate&&d<=endDate && (e.category==='Lubes' || e.category==='Lube / Products' || e.taxType==='gst') && e.gstRate;
+  });
+
+  let itcCGST = 0, itcSGST = 0, itcIGST = 0;
+  const itcRows = [];
+
+  // ITC from fuel purchases (if applicable — depends on state; Karnataka allows partial ITC on HSD)
+  fuelPurch.forEach(p => {
+    const tr = taxRates.find(t=>t.fuelType===p.fuelType)||{};
+    const gstPct = tr.rate ? parseFloat(tr.rate) : 0;
+    if (gstPct > 0) {
+      const taxable = p.total / (1 + gstPct/100);
+      const gstAmt  = p.total - taxable;
+      // Fuel ITC is generally NOT claimable (blocked under Section 17(5)(i)) — mark as ineligible
+      itcRows.push({ desc: `Fuel Purchase — ${(p.fuelType||'').replace('_',' ')} (${gstPct}%)`, taxable, cgst: gstAmt/2, sgst: gstAmt/2, igst:0, eligible: false });
+    }
+  });
+
+  // ITC from lube product expenses (fully eligible under GST)
+  lubeRestockExpenses.forEach(e => {
+    const gstPct = parseFloat(e.gstRate||0);
+    if (gstPct > 0) {
+      const taxable = e.amount / (1 + gstPct/100);
+      const gstAmt  = e.amount - taxable;
+      itcRows.push({ desc: `Lube Restock — ${sanitize(e.desc||e.category||'Lubricants')} (${gstPct}%)`, taxable, cgst: gstAmt/2, sgst: gstAmt/2, igst:0, eligible: true });
+      itcCGST += gstAmt/2; itcSGST += gstAmt/2;
+    }
+  });
+
+  const totITC = itcCGST + itcSGST + itcIGST;
+
+  // ── NET TAX PAYABLE ─────────────────────────────────────────────────────────
+  const netCGST = Math.max(0, totOutCGST - itcCGST);
+  const netSGST = Math.max(0, totOutSGST - itcSGST);
+  const netIGST = Math.max(0, totOutIGST - itcIGST);
+  const netTotal = netCGST + netSGST + netIGST;
+
+  const prevMonthNote = gstMonth > 1
+    ? `<div style="font-size:11px;color:var(--text-3);margin-top:4px">⚠️ Add any ITC carried forward from ${new Date(gstYear, gstMonth-2).toLocaleString('en-IN',{month:'long'})} (not tracked here).</div>`
+    : '';
+
+  // ── HTML RENDER ─────────────────────────────────────────────────────────────
+  return `
+    <div class="card card-pad mb-14" style="padding:12px 16px">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <div>
+          <h4 class="fw-700" style="font-size:14px;color:var(--text-0);margin:0">📊 GSTR-3B — ${monthName} ${gstYear}</h4>
+          <div style="font-size:11px;color:var(--text-3);margin-top:2px">Monthly Return — Output Tax vs Input Tax Credit → Net Payable</div>
+        </div>
+        <div style="display:flex;gap:8px;margin-left:auto">
+          <button onclick="window._gstMonth=window._gstMonth>1?window._gstMonth-1:12;if(window._gstMonth===12)window._gstYear=(window._gstYear||new Date().getFullYear())-1;renderPage()" style="background:var(--bg-0);border:1px solid var(--border);color:var(--text-2);border-radius:6px;padding:4px 10px;cursor:pointer">◀</button>
+          <button onclick="window._gstMonth=window._gstMonth<12?window._gstMonth+1:1;if(window._gstMonth===1)window._gstYear=(window._gstYear||new Date().getFullYear())+1;renderPage()" style="background:var(--bg-0);border:1px solid var(--border);color:var(--text-2);border-radius:6px;padding:4px 10px;cursor:pointer">▶</button>
+        </div>
+      </div>
+    </div>
+
+    ${!gstin ? `<div style="padding:12px 16px;background:rgba(249,115,22,0.07);border:1px solid rgba(249,115,22,0.3);border-radius:8px;margin-bottom:14px;font-size:12px;color:var(--orange)">
+      ⚠️ <strong>GSTIN not set.</strong> ITC eligibility and filing details require your GSTIN. <button class="btn btn-ghost btn-sm" onclick="openGSTINModal()">Set GSTIN →</button>
+    </div>` : `<div style="padding:8px 14px;background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.2);border-radius:8px;margin-bottom:14px;font-size:12px;color:var(--green)">
+      ✅ <strong>${sanitize(legalName)}</strong> · GSTIN: <span class="mono fw-700">${sanitize(gstin)}</span>
+    </div>`}
+
+    <!-- Summary KPI Cards -->
+    <div class="g g-auto-sm gap-12 mb-16">
+      ${statCard('Output Tax', cur(totOutTax), 'on all supplies', '📤')}
+      ${statCard('ITC Available', cur(totITC), 'eligible credits', '📥')}
+      ${statCard('Net CGST', cur(netCGST), 'payable to centre', '🏛️')}
+      ${statCard('Net SGST', cur(netSGST), 'payable to state', '🏛️')}
+      <div class="card stat" style="border:2px solid ${netTotal > 0 ? 'rgba(239,68,68,0.3)' : 'rgba(34,197,94,0.3)'}">
+        <div class="stat-icon">💳</div>
+        <div class="stat-label">Total Payable</div>
+        <div class="stat-value mono" style="color:${netTotal > 0 ? 'var(--red)' : 'var(--green)'}">${cur(netTotal)}</div>
+        <div class="stat-foot"><span class="stat-sub">after ITC offset</span></div>
+      </div>
+    </div>
+
+    <!-- Table 3.1 — Output Tax Liability -->
+    <div class="card mb-14">
+      <div class="card-head">
+        <h4>3.1 — Output Tax Liability (Taxable Supplies)</h4>
+        <span style="font-size:11px;color:var(--text-3)">All B2C sales for the month</span>
+      </div>
+      <div class="card-body"><div class="tbl-wrap"><table>
+        <thead><tr>
+          <th>Nature of Supply</th>
+          <th class="r">Taxable Value</th>
+          <th class="r">CGST</th>
+          <th class="r">SGST</th>
+          ${totOutIGST > 0 ? '<th class="r">IGST</th>' : ''}
+          <th class="r">Total Tax</th>
+        </tr></thead>
+        <tbody>
+          ${outItems.length > 0 ? outItems.map(x => `<tr>
+            <td class="fw-600">${sanitize(x.desc)}</td>
+            <td class="r mono">${cur(x.taxable)}</td>
+            <td class="r mono">${x.isIGST ? '—' : cur(x.cgst)}</td>
+            <td class="r mono">${x.isIGST ? '—' : cur(x.sgst)}</td>
+            ${totOutIGST > 0 ? `<td class="r mono">${x.igst>0 ? cur(x.igst) : '—'}</td>` : ''}
+            <td class="r mono fw-700" style="color:var(--accent-light)">${cur(x.cgst+x.sgst+x.igst)}</td>
+          </tr>`).join('') : '<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:20px">No taxable sales this period</td></tr>'}
+        </tbody>
+        ${outItems.length > 0 ? `<tfoot><tr style="font-weight:800;border-top:2px solid var(--border)">
+          <td>TOTAL OUTPUT TAX</td>
+          <td class="r mono">${cur(totOutTaxable)}</td>
+          <td class="r mono">${cur(totOutCGST)}</td>
+          <td class="r mono">${cur(totOutSGST)}</td>
+          ${totOutIGST > 0 ? `<td class="r mono">${cur(totOutIGST)}</td>` : ''}
+          <td class="r mono" style="color:var(--red)">${cur(totOutTax)}</td>
+        </tr></tfoot>` : ''}
+      </table></div></div>
+    </div>
+
+    <!-- Table 4 — Input Tax Credit -->
+    <div class="card mb-14">
+      <div class="card-head">
+        <h4>4 — Input Tax Credit (ITC)</h4>
+        <span style="font-size:11px;color:var(--text-3)">Credits on purchases made this month</span>
+      </div>
+      <div class="card-body">
+        ${!itcEnabled ? `<div style="padding:16px;background:rgba(249,115,22,0.05);border-radius:8px;font-size:12px;color:var(--text-3)">Set GSTIN above to compute ITC eligibility.</div>` : ''}
+        <div class="tbl-wrap"><table>
+          <thead><tr>
+            <th>Purchase Type</th>
+            <th class="r">Taxable Value</th>
+            <th class="r">CGST</th>
+            <th class="r">SGST</th>
+            <th>ITC Status</th>
+          </tr></thead>
+          <tbody>
+            ${itcRows.length > 0 ? itcRows.map(r => `<tr>
+              <td class="fw-600" style="font-size:12px">${sanitize(r.desc)}</td>
+              <td class="r mono">${cur(r.taxable)}</td>
+              <td class="r mono">${cur(r.cgst)}</td>
+              <td class="r mono">${cur(r.sgst)}</td>
+              <td>${r.eligible
+                ? `<span style="font-size:11px;background:rgba(34,197,94,0.12);color:var(--green);padding:2px 8px;border-radius:4px;font-weight:700">✅ ELIGIBLE</span>`
+                : `<span style="font-size:11px;background:rgba(239,68,68,0.1);color:var(--red);padding:2px 8px;border-radius:4px;font-weight:700">❌ BLOCKED §17(5)</span>`}
+              </td>
+            </tr>`).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:20px">No purchases with GST recorded this period. Add lube restock expenses with GST% to claim ITC.</td></tr>'}
+          </tbody>
+          ${itcRows.length > 0 ? `<tfoot><tr style="font-weight:800;border-top:2px solid var(--border)">
+            <td>TOTAL ELIGIBLE ITC</td>
+            <td class="r mono"></td>
+            <td class="r mono" style="color:var(--green)">${cur(itcCGST)}</td>
+            <td class="r mono" style="color:var(--green)">${cur(itcSGST)}</td>
+            <td></td>
+          </tr></tfoot>` : ''}
+        </table></div>
+        <div style="margin-top:10px;padding:10px;background:rgba(59,130,246,0.05);border-radius:8px;font-size:11px;color:var(--text-3)">
+          💡 <strong>Note:</strong> ITC on fuel purchases is <strong>blocked</strong> under Section 17(5)(i) of CGST Act — petrol & diesel are outside GST (taxed via state levies). 
+          ITC on lubricants and consumables <strong>is eligible</strong> if you have a GST invoice from the supplier.
+          ${prevMonthNote}
+        </div>
+      </div>
+    </div>
+
+    <!-- Net Tax Payable Summary -->
+    <div class="card card-pad mb-14" style="border:2px solid ${netTotal > 0 ? 'rgba(239,68,68,0.3)' : 'rgba(34,197,94,0.3)'};background:${netTotal > 0 ? 'rgba(239,68,68,0.04)' : 'rgba(34,197,94,0.04)'}">
+      <h4 class="fw-700 mb-14" style="font-size:13px;color:var(--text-0)">💳 Net Tax Payable — Summary</h4>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border-light)">
+          <span style="color:var(--text-2)">Output CGST (3.1)</span>
+          <span class="mono fw-700" style="color:var(--red)">+ ${cur(totOutCGST)}</span>
+        </div>
+        <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border-light)">
+          <span style="color:var(--text-2)">Output SGST (3.1)</span>
+          <span class="mono fw-700" style="color:var(--red)">+ ${cur(totOutSGST)}</span>
+        </div>
+        ${totOutIGST > 0 ? `<div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border-light)">
+          <span style="color:var(--text-2)">Output IGST (3.1)</span>
+          <span class="mono fw-700" style="color:var(--red)">+ ${cur(totOutIGST)}</span>
+        </div>` : ''}
+        ${itcCGST > 0 ? `<div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border-light)">
+          <span style="color:var(--text-2)">ITC CGST (4)</span>
+          <span class="mono fw-700" style="color:var(--green)">− ${cur(itcCGST)}</span>
+        </div>` : ''}
+        ${itcSGST > 0 ? `<div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border-light)">
+          <span style="color:var(--text-2)">ITC SGST (4)</span>
+          <span class="mono fw-700" style="color:var(--green)">− ${cur(itcSGST)}</span>
+        </div>` : ''}
+        <div class="flex-between" style="padding:12px 0;border-top:2px solid var(--border)">
+          <span class="fw-800" style="font-size:15px;color:var(--text-0)">NET TAX PAYABLE</span>
+          <span class="mono fw-900" style="font-size:20px;color:${netTotal > 0 ? 'var(--red)' : 'var(--green)'}">${cur(netTotal)}</span>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <div style="flex:1;padding:10px;background:var(--bg-0);border-radius:8px;text-align:center">
+            <div style="font-size:11px;color:var(--text-3)">CGST Payable</div>
+            <div class="mono fw-800" style="font-size:16px;color:${netCGST>0?'var(--red)':'var(--green)'}">${cur(netCGST)}</div>
+          </div>
+          <div style="flex:1;padding:10px;background:var(--bg-0);border-radius:8px;text-align:center">
+            <div style="font-size:11px;color:var(--text-3)">SGST Payable</div>
+            <div class="mono fw-800" style="font-size:16px;color:${netSGST>0?'var(--red)':'var(--green)'}">${cur(netSGST)}</div>
+          </div>
+          ${totOutIGST > 0 ? `<div style="flex:1;padding:10px;background:var(--bg-0);border-radius:8px;text-align:center">
+            <div style="font-size:11px;color:var(--text-3)">IGST Payable</div>
+            <div class="mono fw-800" style="font-size:16px;color:${netIGST>0?'var(--red)':'var(--green)'}">${cur(netIGST)}</div>
+          </div>` : ''}
+        </div>
+      </div>
+    </div>
+
+    <!-- Filing Instructions -->
+    <div class="card card-pad mb-14" style="background:rgba(59,130,246,0.03);border:1px solid rgba(59,130,246,0.15)">
+      <h4 class="fw-700 mb-10" style="font-size:13px;color:var(--text-0)">📋 How to File GSTR-3B</h4>
+      <div style="font-size:12px;color:var(--text-2);display:flex;flex-direction:column;gap:6px">
+        <div>1. Log in to <a href="https://www.gst.gov.in" target="_blank" style="color:var(--accent-light)">gst.gov.in</a> with your GSTIN credentials.</div>
+        <div>2. Go to <strong>Returns → GSTR-3B → ${monthName} ${gstYear}</strong>.</div>
+        <div>3. Under <strong>Table 3.1</strong>, enter Taxable Value <span class="mono fw-700">${cur(totOutTaxable)}</span>, CGST <span class="mono fw-700">${cur(totOutCGST)}</span>, SGST <span class="mono fw-700">${cur(totOutSGST)}</span>.</div>
+        <div>4. Under <strong>Table 4</strong>, enter eligible ITC: CGST <span class="mono fw-700">${cur(itcCGST)}</span>, SGST <span class="mono fw-700">${cur(itcSGST)}</span>.</div>
+        <div>5. Pay <span class="mono fw-700" style="color:var(--red)">${cur(netTotal)}</span> via Net Banking / UPI through the GST portal.</div>
+        <div>6. File and download the ARN (Acknowledgement Reference Number) for your records.</div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-accent btn-sm" style="flex:1" onclick="printGSTR3B(${gstMonth},${gstYear})">🖨️ Print GSTR-3B Summary</button>
+        <button class="btn btn-ghost btn-sm" style="flex:1" onclick="exportGSTR3BCSV(${gstMonth},${gstYear})">📊 Export CSV</button>
+      </div>
+    </div>
+  `;
+}
+window.renderGSTR3BTab = renderGSTR3BTab;
+
+function printGSTR3B(month, year) {
+  const D = APP.data;
+  const monthName = new Date(year, month-1).toLocaleString('en-IN',{month:'long'});
+  const stationName = D.upiName || APP.tenant?.name || 'Fuel Station';
+  const gstin = D.gstin || 'Not Set';
+  // Build a simple print-friendly summary by triggering renderGSTR3BTab and opening print
+  const html = `<!DOCTYPE html><html><head><title>GSTR-3B ${monthName} ${year}</title>
+    <style>body{font-family:Arial,sans-serif;font-size:12px;color:#111;margin:20px}
+    h1{font-size:16px}h2{font-size:13px;border-bottom:1px solid #ccc;padding-bottom:4px}
+    table{width:100%;border-collapse:collapse;margin-bottom:12px}
+    th,td{border:1px solid #ccc;padding:6px 8px;text-align:left}
+    th{background:#f0f0f0;font-weight:700}.r{text-align:right}.mono{font-family:monospace}
+    .net{font-size:16px;font-weight:900;color:#c00}.green{color:#080}</style></head>
+    <body>
+      <h1>GSTR-3B — ${stationName}</h1>
+      <p>Period: <strong>${monthName} ${year}</strong> &nbsp;|&nbsp; GSTIN: <strong>${gstin}</strong></p>
+      <p><em>Generated on ${new Date().toLocaleString('en-IN')}</em></p>
+      <p><strong>⚠ This is a computation summary. File on gst.gov.in and verify before payment.</strong></p>
+      <div id="content"></div>
+      <script>
+        document.getElementById('content').innerHTML = '<p>Please use the on-screen GSTR-3B tab for full details. Print from the browser using Ctrl+P.</p>';
+      </script>
+    </body></html>`;
+  const win = window.open('', '_blank', 'width=800,height=600');
+  if (win) { win.document.write(html); win.document.close(); win.focus(); win.print(); }
+  else toast('Pop-ups blocked — use browser print (Ctrl+P) on this page', 'warning');
+}
+window.printGSTR3B = printGSTR3B;
+
+function exportGSTR3BCSV(month, year) {
+  const D = APP.data;
+  const monthName = new Date(year, month-1).toLocaleString('en-IN',{month:'long'});
+  const startDate = `${year}-${String(month).padStart(2,'0')}-01`;
+  const endDate   = new Date(year, month, 0).toISOString().slice(0,10);
+  const taxRates  = D.fuelTaxRates || [];
+  let totOutCGST=0, totOutSGST=0, totOutIGST=0, totOutTaxable=0;
+  let itcCGST=0, itcSGST=0;
+  const fuelSales = D.sales.filter(s=>{ const d=(s.date||'').slice(0,10); return d>=startDate&&d<=endDate; });
+  const lubeSales = (window._lubesSales||[]).filter(s=>s.date>=startDate&&s.date<=endDate);
+  fuelSales.forEach(s=>{
+    const tr=taxRates.find(t=>t.fuelType===s.fuelType)||{};const gstPct=tr.rate?parseFloat(tr.rate):0;
+    const taxable=gstPct>0?s.amount/(1+gstPct/100):s.amount;const gstAmt=s.amount-taxable;
+    totOutTaxable+=taxable;if(s.interState){totOutIGST+=gstAmt;}else{totOutCGST+=gstAmt/2;totOutSGST+=gstAmt/2;}
+  });
+  lubeSales.forEach(s=>{
+    const prod=(window._lubesProducts||[]).find(p=>p.id===s.productId);const gstPct=prod?.gstPct||18;
+    const taxable=gstPct>0?s.amount/(1+gstPct/100):s.amount;const gstAmt=s.amount-taxable;
+    totOutTaxable+=taxable;if(s.interState){totOutIGST+=gstAmt;}else{totOutCGST+=gstAmt/2;totOutSGST+=gstAmt/2;}
+  });
+  D.expenses.filter(e=>{const d=(e.date||'').slice(0,10);return d>=startDate&&d<=endDate&&e.gstRate;}).forEach(e=>{
+    const gstPct=parseFloat(e.gstRate||0);if(gstPct>0){const gstAmt=e.amount-(e.amount/(1+gstPct/100));itcCGST+=gstAmt/2;itcSGST+=gstAmt/2;}
+  });
+  const netCGST=Math.max(0,totOutCGST-itcCGST);
+  const netSGST=Math.max(0,totOutSGST-itcSGST);
+  const rows = [
+    ['Field','Amount (INR)'],
+    ['Period',`${monthName} ${year}`],
+    ['GSTIN', D.gstin||'Not Set'],
+    ['--- TABLE 3.1 OUTPUT TAX ---',''],
+    ['3.1 Taxable Value', totOutTaxable.toFixed(2)],
+    ['3.1 Output CGST', totOutCGST.toFixed(2)],
+    ['3.1 Output SGST', totOutSGST.toFixed(2)],
+    ['3.1 Output IGST', totOutIGST.toFixed(2)],
+    ['--- TABLE 4 ITC ---',''],
+    ['4 ITC CGST (Eligible)', itcCGST.toFixed(2)],
+    ['4 ITC SGST (Eligible)', itcSGST.toFixed(2)],
+    ['--- NET PAYABLE ---',''],
+    ['Net CGST Payable', netCGST.toFixed(2)],
+    ['Net SGST Payable', netSGST.toFixed(2)],
+    ['Net IGST Payable', Math.max(0,totOutIGST).toFixed(2)],
+    ['TOTAL NET PAYABLE', (netCGST+netSGST+Math.max(0,totOutIGST)).toFixed(2)],
+  ];
+  const csv = rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `GSTR3B_${year}_${String(month).padStart(2,'0')}.csv`;
+  a.click();
+}
+window.exportGSTR3BCSV = exportGSTR3BCSV;
+
 function openGSTINModal() {
   const D = APP.data;
   openModal('⚙️ GST Settings', `
@@ -4581,9 +4988,9 @@ const ROLE_PAGES = {
 // Actions blocked per role (used by rbac_can())
 const ROLE_BLOCKED_ACTIONS = {
   Owner:      [],
-  Manager:    ['reset_data','add_admin_user'],  // Cannot wipe data or create admin users
-  Accountant: ['delete_employee','payroll_pay','reset_data','add_admin_user','add_employee','edit_employee','save_prices','add_tank','delete_tank','add_pump','delete_pump'],
-  Cashier:    ['delete_employee','payroll_pay','reset_data','add_admin_user','add_employee','edit_employee','save_prices','add_tank','delete_tank','add_pump','delete_pump','view_finance','view_payroll','view_staff','credit_edit','view_exports','view_analytics'],
+  Manager:    ['reset_data','add_admin_user','close_books'],
+  Accountant: ['delete_employee','payroll_pay','reset_data','add_admin_user','add_employee','edit_employee','save_prices','add_tank','delete_tank','add_pump','delete_pump','close_books'],
+  Cashier:    ['delete_employee','payroll_pay','reset_data','add_admin_user','add_employee','edit_employee','save_prices','add_tank','delete_tank','add_pump','delete_pump','view_finance','view_payroll','view_staff','credit_edit','view_exports','view_analytics','close_books'],
 };
 
 function rbac_role() {
@@ -5127,6 +5534,96 @@ function removeAdminUser(userIdx) {
 window.removeAdminUser = removeAdminUser;
 
 window.renderSettings = renderSettings;
+
+// ── DAY-LOCK — Close/Open books ───────────────────────────────────────────────
+
+async function closeDayLock(date) {
+  if (!rbac_can('close_books')) { toast('Only Owner can close books', 'error'); return; }
+  if (!confirm(`Lock ${date}?\n\nThis will prevent any edits to sales, expenses, purchases and dip readings for this date.\nYou can unlock it later from Settings.`)) return;
+  try {
+    const r = await fetch(`/api/data/day-lock/${date}/close`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': APP.tenant?.id || '' }
+    });
+    const data = await r.json();
+    if (!r.ok) { toast(data.error || 'Lock failed', 'error'); return; }
+    if (!APP.data.dayLocks) APP.data.dayLocks = {};
+    APP.data.dayLocks[date] = true;
+    await db.setSetting(`day_lock_${date}`, 'true').catch(()=>{});
+    auditLog('day_lock_close', { date });
+    toast(`✅ ${date} is now LOCKED`, 'success');
+    renderPage();
+  } catch(e) { toast('Lock failed: ' + e.message, 'error'); }
+}
+window.closeDayLock = closeDayLock;
+
+async function openDayLock(date) {
+  if (!rbac_can('close_books')) { toast('Only Owner can unlock books', 'error'); return; }
+  if (!confirm(`Unlock ${date}?\n\nThis allows edits to records on this date. Any changes will be captured in the Audit Log.`)) return;
+  try {
+    const r = await fetch(`/api/data/day-lock/${date}/open`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': APP.tenant?.id || '' }
+    });
+    const data = await r.json();
+    if (!r.ok) { toast(data.error || 'Unlock failed', 'error'); return; }
+    if (APP.data.dayLocks) delete APP.data.dayLocks[date];
+    await db.setSetting(`day_lock_${date}`, 'false').catch(()=>{});
+    auditLog('day_lock_open', { date });
+    toast(`🔓 ${date} is now UNLOCKED`, 'success');
+    renderPage();
+  } catch(e) { toast('Unlock failed: ' + e.message, 'error'); }
+}
+window.openDayLock = openDayLock;
+
+function openDayLockPicker() {
+  const today = (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
+  const locks = APP.data.dayLocks || {};
+  openModal('📅 Lock / Unlock a Date', `
+    <div class="form-group">
+      <label class="form-label">Select Date</label>
+      <input class="form-input" type="date" id="dlp_date" value="${today}" max="${today}" />
+    </div>
+    <div id="dlp_status" style="margin-top:10px;padding:10px;background:var(--bg-0);border-radius:8px;font-size:13px;color:var(--text-2);text-align:center">
+      Select a date to see its status
+    </div>
+  `,
+  `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+   <button class="btn btn-accent" onclick="dayLockPickerAction()">Apply</button>`);
+
+  // Wire up live status preview
+  setTimeout(() => {
+    const input = document.getElementById('dlp_date');
+    const statusEl = document.getElementById('dlp_status');
+    if (!input || !statusEl) return;
+    const update = () => {
+      const d = input.value;
+      const isLocked = !!(APP.data.dayLocks || {})[d];
+      statusEl.innerHTML = `<span style="font-size:20px">${isLocked ? '🔒' : '📖'}</span><br><strong>${d}</strong> is <strong style="color:${isLocked?'var(--green)':'var(--accent-light)'}">${isLocked ? 'LOCKED' : 'OPEN'}</strong>.<br><small style="color:var(--text-3)">Click Apply to ${isLocked ? 'UNLOCK' : 'LOCK'} it.</small>`;
+    };
+    input.addEventListener('change', update);
+    update();
+  }, 50);
+}
+window.openDayLockPicker = openDayLockPicker;
+
+async function dayLockPickerAction() {
+  const date = document.getElementById('dlp_date')?.value;
+  if (!date) { toast('Select a date', 'error'); return; }
+  const isLocked = !!(APP.data.dayLocks || {})[date];
+  closeModal();
+  if (isLocked) await openDayLock(date);
+  else await closeDayLock(date);
+}
+window.dayLockPickerAction = dayLockPickerAction;
+
+// ── Day-Lock check helper used by api-client.js ─────────────────────────────
+// Returns true if the given date (YYYY-MM-DD) is locked
+function isDayLocked(dateStr) {
+  const d = (dateStr || '').slice(0, 10);
+  return !!(APP.data && APP.data.dayLocks && APP.data.dayLocks[d]);
+}
+window.isDayLocked = isDayLocked;
 
 // ── FUEL TAX RATE MANAGEMENT ─────────────────────────────────────────────────
 function _saveTaxRates() {

@@ -537,12 +537,21 @@ function renderEmployeePortal() {
       : (mgrEmps.length > 0 ? { employees: mgrEmps, shifts: mgrShifts, tanks: [], pumps: [], sales: [], expenses: [], creditCustomers: [], fuelPurchases: [], dipReadings: [], creditTransactions: [] } : null);
 
     // Show spinner only while fetch is truly in-flight (no data at all yet)
-    // FIX: If _mgrEmployees was fetched but is empty (no staff added), show empty state — not spinner
-    const fetchDone = window._mgrEmployees !== undefined; // undefined = never fetched; [] = fetched but empty
+    // fetchDone: undefined=never fetched, []=fetched but empty/failed, [...]= has data
+    const fetchDone = window._mgrEmployees !== undefined;
     if (!D || (D.employees.length === 0 && !fetchDone)) {
+      // Still in-flight — show spinner, fetch will re-render when done
       return `<div>${stationBadge}${mgrNav}<div style="text-align:center;padding:40px 20px;color:var(--text-3)"><div style="font-size:32px;margin-bottom:12px">⏳</div><div class="fw-700" style="font-size:13px">Loading staff data…</div></div></div>`;
     }
     if (!D || D.employees.length === 0) {
+      // fetchDone but still empty — could be a transient error, auto-retry once
+      if (!window._mgrFetchRetried) {
+        window._mgrFetchRetried = true;
+        _fetchMgrData().then(() => {
+          window._mgrFetchRetried = false;
+          if (empState.page === 'staff' && typeof renderPage === 'function') try { renderPage(); } catch(e) {}
+        }).catch(() => { window._mgrFetchRetried = false; });
+      }
       return `<div>${stationBadge}${mgrNav}<div style="text-align:center;padding:40px 20px;color:var(--text-3)"><div style="font-size:40px;margin-bottom:12px">👥</div><div class="fw-700" style="font-size:14px;color:var(--text-1)">No staff added yet</div><div style="font-size:12px;margin-top:6px">Ask admin to add employees in Staff & Allocation.</div></div></div>`;
     }
 
@@ -3696,6 +3705,17 @@ async function loadData() {
       if (legalName) APP.data.legalName = legalName;
       if (stateCode) APP.data.stateCode = stateCode;
     } catch(e) {}
+    // Load Day-Lock flags — scan settings for keys like day_lock_YYYY-MM-DD
+    try {
+      const dayLocks = {};
+      const allSettings = await db.getAll('settings').catch(()=>[]);
+      (Array.isArray(allSettings) ? allSettings : []).forEach(s => {
+        if (s && s.key && s.key.startsWith('day_lock_') && s.value === 'true') {
+          dayLocks[s.key.replace('day_lock_', '')] = true;
+        }
+      });
+      APP.data.dayLocks = dayLocks;
+    } catch(e) { APP.data.dayLocks = {}; }
     // Load loyalty settings
     try {
       const [loyaltyEarnRate, loyaltyRedeemRate, loyaltyMinRedeem] = await Promise.all([
@@ -3775,9 +3795,16 @@ async function loadData() {
     }
 
     // If employee is already in the app when loadData finishes (background preload),
-    // trigger a silent re-render so they see fresh data without any user action.
+    // trigger a silent re-render ONLY if we actually have employee data to show.
+    // CRITICAL: Do NOT re-render if this is a stale background preload that finished
+    // after a Shift Manager login — _fetchMgrData may still be in-flight and
+    // APP.data.employees would be empty, causing the "No staff" flash.
     if (APP.role === 'employee' && empState.active && typeof renderPage === 'function') {
-      try { renderPage(); } catch(e) {}
+      const isMgrMissingData = empState.user?.role === 'Shift Manager'
+        && (!APP.data.employees || APP.data.employees.length === 0);
+      if (!isMgrMissingData) {
+        try { renderPage(); } catch(e) {}
+      }
     }
   } catch (e) {
     console.error('Data load failed, using seed data:', e);
