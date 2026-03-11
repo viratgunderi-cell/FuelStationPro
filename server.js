@@ -240,26 +240,43 @@ async function startServer() {
   app.get('/api/public/staff-data/:tenantId', async (req, res) => {
     try {
       const tid = req.params.tenantId;
-      const [empRows, shiftRows, rosterRow, attRow] = await Promise.all([
+      const now = new Date();
+      const pm = String(now.getMonth()+1).padStart(2,'0');
+      const py = now.getFullYear();
+      const payrollKey = `payroll_${py}_${now.getMonth()+1}`;
+
+      const [empRows, shiftRows, rosterRow, attRow, lubeProdsRow, lubeSalesRow, advancesRow, payrollRow] = await Promise.all([
         pool.query('SELECT id, name, role, shift, phone, data_json FROM employees WHERE tenant_id = $1 AND active = 1 ORDER BY name', [tid]),
         pool.query('SELECT * FROM shifts WHERE tenant_id = $1 ORDER BY start', [tid]),
         pool.query("SELECT value FROM settings WHERE key = 'shift_roster' AND tenant_id = $1", [tid]),
         pool.query("SELECT value FROM settings WHERE key = 'attendance_data' AND tenant_id = $1", [tid]),
+        pool.query("SELECT value FROM settings WHERE key = 'lubes_products' AND tenant_id = $1", [tid]),
+        pool.query("SELECT value FROM settings WHERE key = 'lubes_sales' AND tenant_id = $1", [tid]),
+        pool.query("SELECT value FROM settings WHERE key = 'advances_data' AND tenant_id = $1", [tid]),
+        pool.query("SELECT value FROM settings WHERE key = $1 AND tenant_id = $2", [payrollKey, tid]),
       ]);
+
       const employees = empRows.rows.map(e => {
         let color = '', permissions = {};
         try { const d = JSON.parse(e.data_json || '{}'); color = d.color || ''; permissions = d.permissions || {}; } catch {}
         return { id: e.id, name: e.name, role: e.role, shift: e.shift || '', phone: e.phone || '', color, permissions };
       });
+
+      const parse = (row, fallback) => { try { return row.rows[0] ? JSON.parse(row.rows[0].value || 'null') || fallback : fallback; } catch { return fallback; } };
+
       res.json({
         employees,
-        shifts: shiftRows.rows,
-        roster: rosterRow.rows[0] ? JSON.parse(rosterRow.rows[0].value || '{}') : {},
-        attendance: attRow.rows[0] ? JSON.parse(attRow.rows[0].value || '{}') : {},
+        shifts:     shiftRows.rows,
+        roster:     parse(rosterRow, {}),
+        attendance: parse(attRow, {}),
+        lubesProducts: parse(lubeProdsRow, []),
+        lubesSales:    parse(lubeSalesRow, []),
+        advances:      parse(advancesRow, []),
+        payroll:       parse(payrollRow, {}),
       });
     } catch (e) {
       console.error('[staff-data]', e.message);
-      res.json({ employees: [], shifts: [], roster: {}, attendance: {} });
+      res.json({ employees: [], shifts: [], roster: {}, attendance: {}, lubesProducts: [], lubesSales: [], advances: [], payroll: {} });
     }
   });
 

@@ -410,11 +410,10 @@ const emp_totalNozzles = () => emp_myNozzleCount();
 // ── Employee sub-page navigation ──
 function emp_go(page) {
   if (page === 'history' && empState.user) {
-    // Load server history in background so employee sees all past shifts
     emp_loadHistoryFromServer().catch(() => {});
   }
-  if (page === 'staff' && empState.user?.role === 'Shift Manager') {
-    // Refresh employees/shifts/roster/attendance from server in background
+  // Shift Manager: refresh all operational data on any manager page
+  if (['staff','payroll','lubes'].includes(page) && empState.user?.role === 'Shift Manager') {
     const tenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
     if (tenant && tenant.id) {
       fetch('/api/public/staff-data/' + encodeURIComponent(tenant.id))
@@ -425,6 +424,10 @@ function emp_go(page) {
           if (Array.isArray(data.shifts)    && data.shifts.length > 0)    APP.data.shifts    = data.shifts;
           if (data.roster     && typeof data.roster     === 'object') window._rosterData     = data.roster;
           if (data.attendance && typeof data.attendance === 'object') window._attendanceData = data.attendance;
+          if (Array.isArray(data.lubesProducts)) window._lubesProducts = data.lubesProducts;
+          if (Array.isArray(data.lubesSales))    window._lubesSales    = data.lubesSales;
+          if (Array.isArray(data.advances))      window._advancesData  = data.advances;
+          if (data.payroll && typeof data.payroll === 'object' && Object.keys(data.payroll).length > 0) window._payrollSaved = data.payroll;
           renderPage();
         })
         .catch(() => {});
@@ -469,20 +472,59 @@ function renderEmployeePortal() {
     </div>`;
   }
 
+  // ── Shift Manager gets full-width admin-style layout ─────────────────────
+  const isManager = isLoggedIn && empState.user?.role === 'Shift Manager';
+  const managerPages = ['staff','payroll','lubes'];
+
+  if (isManager && managerPages.includes(empState.page)) {
+    // Full-width manager nav across the top
+    const D = APP.data;
+    const mgrTabs = [
+      {id:'overview',icon:'📋',l:'Overview'},
+      {id:'staff',   icon:'👥',l:'Staff'},
+      {id:'payroll', icon:'💸',l:'Payroll'},
+      {id:'lubes',   icon:'🛢️',l:'Lubes'},
+      {id:'history', icon:'📊',l:'History'},
+    ];
+    const mgrNav = `<div style="display:flex;gap:4px;background:var(--bg-1);border-radius:var(--radius);padding:5px;margin-bottom:20px;border:1px solid var(--border-light);overflow-x:auto">
+      ${mgrTabs.map(t=>`<button onclick="emp_go('${t.id}')"
+        style="flex:1;min-width:60px;padding:8px 6px;border-radius:var(--radius-sm);border:none;background:${empState.page===t.id?'rgba(212,148,15,0.12)':'transparent'};color:${empState.page===t.id?'var(--accent-light)':'var(--text-3)'};font-family:var(--font);font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;display:flex;flex-direction:column;align-items:center;gap:2px">
+        <span style="font-size:16px">${t.icon}</span>${t.l}
+      </button>`).join('')}
+    </div>`;
+
+    const stationBadge = `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;margin-bottom:16px;background:linear-gradient(135deg,rgba(212,148,15,0.1),rgba(240,180,41,0.05));border-radius:var(--radius);border:1px solid rgba(212,148,15,0.2)">
+      <div><div style="font-size:14px;font-weight:800;color:var(--text-0)">⛽ ${sanitize(APP.tenant?.name||'Fuel Station')}</div>${APP.tenant?.location?`<div style="font-size:11px;color:var(--text-3)">${sanitize(APP.tenant.location)}</div>`:''}</div>
+      <div style="text-align:right"><div style="font-size:11px;font-weight:700;color:var(--accent-light)">👤 ${sanitize(empState.user.name)}</div><div style="font-size:10px;color:var(--text-3)">Shift Manager</div></div>
+    </div>`;
+
+    let pageHTML = '';
+    if (empState.page === 'staff') {
+      pageHTML = D ? renderStaff(D) : '<p style="color:var(--text-3)">Loading...</p>';
+    } else if (empState.page === 'payroll') {
+      pageHTML = D ? renderPayroll(D) : '<p style="color:var(--text-3)">Loading...</p>';
+    } else if (empState.page === 'lubes') {
+      pageHTML = D ? renderLubes(D) : '<p style="color:var(--text-3)">Loading...</p>';
+    }
+    return `<div>${stationBadge}${mgrNav}${pageHTML}</div>`;
+  }
+
+  // ── Standard employee nav ─────────────────────────────────────────────────
   const subNav = isLoggedIn ? `
-    ${emp_myPumps().length === 0 ? '<div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:var(--radius);padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;gap:10px"><span style="font-size:20px">⚠️</span><div><div class="fw-700" style="color:var(--red);font-size:13px">No Nozzles Allocated</div><div style="font-size:11px;color:var(--text-3)">Admin has not assigned any pump nozzles to you yet. Contact your manager.</div></div></div>' : ''}
-    <div style="display:flex;gap:4px;background:var(--bg-1);border-radius:var(--radius);padding:5px;margin-bottom:16px;border:1px solid var(--border-light)">
+    ${(!isManager && emp_myPumps().length === 0) ? '<div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:var(--radius);padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;gap:10px"><span style="font-size:20px">⚠️</span><div><div class="fw-700" style="color:var(--red);font-size:13px">No Nozzles Allocated</div><div style="font-size:11px;color:var(--text-3)">Admin has not assigned any pump nozzles to you yet. Contact your manager.</div></div></div>' : ''}
+    <div style="display:flex;gap:4px;background:var(--bg-1);border-radius:var(--radius);padding:5px;margin-bottom:16px;border:1px solid var(--border-light);overflow-x:auto">
       ${[
         {id:'overview',icon:'📋',l:'Overview', always:true},
-        {id:'readings',icon:'🔢',l:'Readings', always:true},
-        {id:'sales',icon:'💰',l:'Sales',       always:true},
-        {id:'dip',icon:'📏',l:'Dip',           perm:'dip'},
-        {id:'lubes',icon:'🛢️',l:'Lubes',       perm:'lubes'},
-        {id:'expense',icon:'🧾',l:'Expenses',  perm:'expense'},
-        {id:'staff',icon:'👥',l:'Staff',        role:'Shift Manager'},
-        {id:'history',icon:'📊',l:'History',   always:true},
-      ].filter(t => t.always || emp_hasPerm(t.perm) || (t.role && empState.user?.role === t.role)).map(t =>
-        `<button onclick="emp_go('${t.id}')" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 4px;border-radius:var(--radius-sm);border:none;background:${empState.page===t.id?'rgba(212,148,15,0.12)':'transparent'};color:${empState.page===t.id?'var(--accent-light)':'var(--text-3)'};font-family:var(--font);font-size:9px;font-weight:700;cursor:pointer;letter-spacing:0.3px;text-transform:uppercase"><span style="font-size:16px">${t.icon}</span>${t.l}</button>`
+        {id:'readings',icon:'🔢',l:'Readings', always:!isManager},
+        {id:'sales',   icon:'💰',l:'Sales',    always:!isManager},
+        {id:'dip',     icon:'📏',l:'Dip',      perm:'dip'},
+        {id:'lubes',   icon:'🛢️',l:'Lubes',    perm:'lubes', mgrPage:true},
+        {id:'expense', icon:'🧾',l:'Expenses', perm:'expense'},
+        {id:'staff',   icon:'👥',l:'Staff',    mgrPage:true},
+        {id:'payroll', icon:'💸',l:'Payroll',  mgrPage:true},
+        {id:'history', icon:'📊',l:'History',  always:true},
+      ].filter(t => t.always || emp_hasPerm(t.perm) || (t.mgrPage && isManager)).map(t =>
+        `<button onclick="emp_go('${t.id}')" style="flex:1;min-width:42px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 4px;border-radius:var(--radius-sm);border:none;background:${empState.page===t.id?'rgba(212,148,15,0.12)':'transparent'};color:${empState.page===t.id?'var(--accent-light)':'var(--text-3)'};font-family:var(--font);font-size:9px;font-weight:700;cursor:pointer;letter-spacing:0.3px;text-transform:uppercase;white-space:nowrap"><span style="font-size:16px">${t.icon}</span>${t.l}</button>`
       ).join('')}
     </div>` : '';
 
@@ -493,9 +535,10 @@ function renderEmployeePortal() {
     case 'readings': inner = emp_renderReadings(); break;
     case 'sales': inner = emp_renderSales(); break;
     case 'dip':    inner = emp_hasPerm('dip')    ? emp_renderDip()       : emp_renderReadings(); break;
-    case 'lubes':  inner = emp_hasPerm('lubes')  ? emp_renderLubes()     : emp_renderSales();   break;
+    case 'lubes':  inner = isManager ? (APP.data ? renderLubes(APP.data) : '') : (emp_hasPerm('lubes') ? emp_renderLubes() : emp_renderSales()); break;
     case 'expense':inner = emp_hasPerm('expense')? emp_renderExpense()   : emp_renderSales();   break;
-    case 'staff':  inner = (empState.user?.role === 'Shift Manager' || APP.role === 'admin') ? emp_renderStaffView() : emp_renderOverview(); break;
+    case 'staff':  inner = isManager ? emp_renderStaffView() : emp_renderOverview(); break;
+    case 'payroll':inner = isManager && APP.data ? renderPayroll(APP.data) : emp_renderOverview(); break;
     case 'history': inner = emp_renderHistory(); break;
     case 'complete': inner = emp_renderComplete(); break;
     default: inner = emp_renderLogin();
@@ -2745,23 +2788,21 @@ async function doEmpLogin() {
       if (serverCreditCusts && Array.isArray(serverCreditCusts)) {
         APP.data.creditCustomers = serverCreditCusts;
       }
-      // ── Shift Manager: load full staff data (employees, shifts, roster, attendance) ──
+      // ── Shift Manager: load full staff + payroll + lubes data ──────────────
       if (emp.role === 'Shift Manager') {
         try {
           const staffResp = await fetch('/api/public/staff-data/' + tid);
           const staffData = staffResp.ok ? await staffResp.json() : null;
           if (staffData) {
-            if (Array.isArray(staffData.employees) && staffData.employees.length > 0) {
-              APP.data.employees = staffData.employees;
-            }
-            if (Array.isArray(staffData.shifts) && staffData.shifts.length > 0) {
-              APP.data.shifts = staffData.shifts;
-            }
-            if (staffData.roster && typeof staffData.roster === 'object') {
-              window._rosterData = staffData.roster;
-            }
-            if (staffData.attendance && typeof staffData.attendance === 'object') {
-              window._attendanceData = staffData.attendance;
+            if (Array.isArray(staffData.employees) && staffData.employees.length > 0) APP.data.employees = staffData.employees;
+            if (Array.isArray(staffData.shifts)    && staffData.shifts.length > 0)    APP.data.shifts    = staffData.shifts;
+            if (staffData.roster     && typeof staffData.roster     === 'object') window._rosterData     = staffData.roster;
+            if (staffData.attendance && typeof staffData.attendance === 'object') window._attendanceData = staffData.attendance;
+            if (Array.isArray(staffData.lubesProducts)) window._lubesProducts = staffData.lubesProducts;
+            if (Array.isArray(staffData.lubesSales))    window._lubesSales    = staffData.lubesSales;
+            if (Array.isArray(staffData.advances))      window._advancesData  = staffData.advances;
+            if (staffData.payroll && typeof staffData.payroll === 'object' && Object.keys(staffData.payroll).length > 0) {
+              window._payrollSaved = staffData.payroll;
             }
           }
         } catch(staffErr) {
