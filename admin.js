@@ -1077,7 +1077,14 @@ function renderFinance(D) {
     expByCategory[cat] = (expByCategory[cat] || 0) + e.amount;
   });
 
-  const salary = D.employees.reduce((a, e) => a + (e.salary || 0), 0);
+  // ── Salary: only count employees marked paid in payroll for current month ──
+  const _plMonth = window._payMonth || (new Date().getMonth() + 1);
+  const _plYear  = window._payYear  || new Date().getFullYear();
+  const _paidSlips = Object.values(window._payrollSaved || {})
+    .filter(p => p.status === 'paid' && p.month === _plMonth && p.year === _plYear);
+  const salary    = _paidSlips.reduce((a, p) => a + (p.net || 0), 0);
+  const paidCount = _paidSlips.length;
+  const totalEmps = (D.employees || []).length;
   const netProfit = totalRevenue - totalFuelCost - opEx - salary;
 
   // ── Build P&L rows ──
@@ -1147,7 +1154,7 @@ function renderFinance(D) {
   let opExpRows = '';
   if (hasOpEx) {
     const opLines = [];
-    if (salary > 0) opLines.push(`<div class="flex-between" style="padding:7px 0 7px 14px;border-bottom:1px solid var(--border-light)"><span style="color:var(--text-3);font-size:13px">Salaries</span><span style="color:var(--red)" class="mono fw-700">-${cur(salary)}</span></div>`);
+    if (salary > 0) opLines.push(`<div class="flex-between" style="padding:7px 0 7px 14px;border-bottom:1px solid var(--border-light)"><span style="color:var(--text-3);font-size:13px">Salaries <span style="font-size:10px;opacity:0.7">(${paidCount} of ${totalEmps} paid)</span></span><span style="color:var(--red)" class="mono fw-700">-${cur(salary)}</span></div>`);
     Object.entries(expByCategory).forEach(([cat, amt]) => {
       opLines.push(`<div class="flex-between" style="padding:7px 0 7px 14px;border-bottom:1px solid var(--border-light)"><span style="color:var(--text-3);font-size:13px">${cat}</span><span style="color:var(--red)" class="mono fw-700">-${cur(amt)}</span></div>`);
     });
