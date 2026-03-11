@@ -459,9 +459,11 @@ function renderEmployeePortal() {
         {id:'readings',icon:'🔢',l:'Readings', always:true},
         {id:'sales',icon:'💰',l:'Sales',       always:true},
         {id:'dip',icon:'📏',l:'Dip',           perm:'dip'},
+        {id:'lubes',icon:'🛢️',l:'Lubes',       perm:'lubes'},
         {id:'expense',icon:'🧾',l:'Expenses',  perm:'expense'},
+        {id:'staff',icon:'👥',l:'Staff',        role:'Shift Manager'},
         {id:'history',icon:'📊',l:'History',   always:true},
-      ].filter(t => t.always || emp_hasPerm(t.perm)).map(t =>
+      ].filter(t => t.always || emp_hasPerm(t.perm) || (t.role && empState.user?.role === t.role)).map(t =>
         `<button onclick="emp_go('${t.id}')" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 4px;border-radius:var(--radius-sm);border:none;background:${empState.page===t.id?'rgba(212,148,15,0.12)':'transparent'};color:${empState.page===t.id?'var(--accent-light)':'var(--text-3)'};font-family:var(--font);font-size:9px;font-weight:700;cursor:pointer;letter-spacing:0.3px;text-transform:uppercase"><span style="font-size:16px">${t.icon}</span>${t.l}</button>`
       ).join('')}
     </div>` : '';
@@ -472,8 +474,10 @@ function renderEmployeePortal() {
     case 'overview': inner = emp_renderOverview(); break;
     case 'readings': inner = emp_renderReadings(); break;
     case 'sales': inner = emp_renderSales(); break;
-    case 'dip': inner = emp_hasPerm('dip') ? emp_renderDip() : emp_renderReadings(); break;
-    case 'expense': inner = emp_hasPerm('expense') ? emp_renderExpense() : emp_renderSales(); break;
+    case 'dip':    inner = emp_hasPerm('dip')    ? emp_renderDip()       : emp_renderReadings(); break;
+    case 'lubes':  inner = emp_hasPerm('lubes')  ? emp_renderLubes()     : emp_renderSales();   break;
+    case 'expense':inner = emp_hasPerm('expense')? emp_renderExpense()   : emp_renderSales();   break;
+    case 'staff':  inner = (empState.user?.role === 'Shift Manager' || APP.role === 'admin') ? emp_renderStaffView() : emp_renderOverview(); break;
     case 'history': inner = emp_renderHistory(); break;
     case 'complete': inner = emp_renderComplete(); break;
     default: inner = emp_renderLogin();
@@ -3636,6 +3640,253 @@ async function loadData() {
     APP.data = { ...SEED };
   }
 }
+
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ── LUBES SALES — Employee Portal ────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+function emp_renderLubes() {
+  if (!window._lubesProducts) window._lubesProducts = [];
+  const allProds = window._lubesProducts.filter(p => p.active !== false);
+  const myName   = empState.user?.name || '';
+  const today    = emp_today();
+
+  if (allProds.length === 0) {
+    return `<div style="text-align:center;padding:40px 20px;color:var(--text-3)">
+      <div style="font-size:40px;margin-bottom:12px">🛢️</div>
+      <div class="fw-700" style="color:var(--text-1);margin-bottom:6px">No Products Catalogued</div>
+      <div style="font-size:12px">Ask admin to add products in the Lubes section.</div>
+    </div>`;
+  }
+
+  const cards = allProds.map(p => {
+    const isOut = (p.stock||0) <= 0;
+    const isLow = !isOut && (p.stock||0) <= (p.minStock||5);
+    const stockColor = isOut ? 'var(--red)' : isLow ? 'var(--orange)' : 'var(--green)';
+    const stockLabel = isOut ? '❌ Out of Stock' : (isLow ? '⚠️ Low: ' : '✅ ') + p.stock + ' ' + sanitize(p.unit||'');
+    return `<div class="card" style="padding:14px;border:1px solid \${isOut?'rgba(239,68,68,0.3)':isLow?'rgba(249,115,22,0.3)':'var(--border)'};margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+        <div>
+          <div class="fw-800" style="color:var(--text-0);font-size:14px">\${sanitize(p.name)}</div>
+          <div style="font-size:10px;color:var(--text-3);margin-top:2px">\${sanitize(p.brand||'')}\${p.category?' · '+sanitize(p.category):''}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;margin-left:12px">
+          <div class="mono fw-800" style="color:var(--accent-light);font-size:18px">₹\${(p.sellingPrice||0).toFixed(2)}</div>
+          <div style="font-size:9px;color:var(--text-3)">per \${sanitize(p.unit||'unit')}</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-size:11px;font-weight:700;color:\${stockColor}">\${stockLabel}</div>
+        <button \${isOut?'disabled':''} onclick="emp_openLubeSell(\${p.id})"
+          style="padding:9px 18px;background:\${isOut?'var(--bg-2)':'rgba(212,148,15,0.15)'};border:1px solid \${isOut?'var(--border)':'rgba(212,148,15,0.4)'};color:\${isOut?'var(--text-3)':'var(--accent-light)'};border-radius:8px;font-size:12px;font-weight:700;cursor:\${isOut?'not-allowed':'pointer'};transition:all 0.15s">
+          🛒 Sell
+        </button>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Today's sales by this employee
+  const mySales  = (window._lubesSales||[]).filter(s => s.date === today && s.employee === myName);
+  const myRevenue = mySales.reduce((a,s)=>a+s.amount, 0);
+  const modeMap   = {cash:'💵',upi:'📱',card:'💳',credit:'🏢'};
+  const salesRows = mySales.length > 0
+    ? mySales.map(s=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border-light)">
+        <div><div class="fw-700" style="font-size:12px;color:var(--text-0)">\${sanitize(s.productName||'')}</div>
+        <div style="font-size:10px;color:var(--text-3)">\${s.qty} \${sanitize(s.unit||'')} · \${s.time||''} · \${modeMap[s.mode]||s.mode||''} \${sanitize(s.customer||'')}</div></div>
+        <div class="mono fw-800" style="color:var(--green)">₹\${(s.amount||0).toFixed(2)}</div>
+      </div>`).join('')
+    : `<div style="text-align:center;padding:16px;color:var(--text-3);font-size:12px">No lubes sales recorded today</div>`;
+
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <div><h3 class="fw-800" style="color:var(--text-0);font-size:18px">🛢️ Lubes Sales</h3>
+      <p style="font-size:11px;color:var(--text-3);margin-top:2px">\${allProds.length} products · tap Sell to record</p></div>
+    </div>
+    \${cards}
+    <div class="card"><div class="card-head"><h4>📋 My Sales Today</h4>\${myRevenue>0?'<span class=\"mono fw-800\" style=\"color:var(--green)\">₹'+myRevenue.toFixed(2)+'</span>':''}
+    </div><div class="card-body" style="padding:0 16px">\${salesRows}</div></div>
+  `;
+}
+window.emp_renderLubes = emp_renderLubes;
+
+function emp_openLubeSell(productId) {
+  const p = (window._lubesProducts||[]).find(x => x.id === productId);
+  if (!p) return;
+  if ((p.stock||0) <= 0) { toast('Out of stock — please inform admin to restock', 'error'); return; }
+  const modeOpts = ['cash','upi','card','credit'].map(m=>`<option value="${m}">${m.toUpperCase()}</option>`).join('');
+  openModal(`🛒 Sell — ${sanitize(p.name)}`,
+    `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+      <div style="padding:12px;background:var(--bg-0);border-radius:8px;text-align:center">
+        <div class="mono fw-800" style="color:var(--green);font-size:20px">${p.stock||0} ${sanitize(p.unit||'')}</div>
+        <div style="font-size:10px;color:var(--text-3)">In Stock</div>
+      </div>
+      <div style="padding:12px;background:var(--bg-0);border-radius:8px;text-align:center">
+        <div class="mono fw-800" style="color:var(--accent-light);font-size:20px">₹${(p.sellingPrice||0).toFixed(2)}</div>
+        <div style="font-size:10px;color:var(--text-3)">Per ${sanitize(p.unit||'unit')}</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label class="form-label">Qty (${sanitize(p.unit||'unit')}) *</label>
+        <input class="form-input mono" type="number" id="els_qty" placeholder="1" min="0.1" step="0.1" max="${p.stock}"
+          oninput="emp_calcLubeTotal(${p.sellingPrice||0})"
+          style="font-size:20px;font-weight:800;text-align:center;letter-spacing:2px" />
+      </div>
+      <div class="form-group"><label class="form-label">Rate ₹/${sanitize(p.unit||'unit')}</label>
+        <input class="form-input mono" type="number" id="els_rate" value="${p.sellingPrice||0}" step="0.01"
+          oninput="emp_calcLubeTotal()"
+          style="font-size:20px;font-weight:800;text-align:center;letter-spacing:2px" />
+      </div>
+    </div>
+    <div id="els_total" style="padding:14px;background:rgba(212,148,15,0.08);border-radius:8px;text-align:center;margin:10px 0;font-size:11px;color:var(--text-3)">Enter quantity to see total</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label class="form-label">Payment Mode</label><select class="form-input" id="els_mode">${modeOpts}</select></div>
+      <div class="form-group"><label class="form-label">Customer (opt.)</label><input class="form-input" id="els_cust" placeholder="Name / Vehicle" /></div>
+    </div>`,
+    `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-accent" onclick="emp_saveLubeSale(${productId})">💰 Record Sale</button>`
+  );
+}
+window.emp_openLubeSell = emp_openLubeSell;
+
+function emp_calcLubeTotal(defaultRate) {
+  const qty  = parseFloat(document.getElementById('els_qty')?.value) || 0;
+  const rate = parseFloat(document.getElementById('els_rate')?.value || (defaultRate || 0));
+  const el   = document.getElementById('els_total');
+  if (!el) return;
+  if (qty > 0 && rate > 0) {
+    el.innerHTML = `<div class="mono fw-800" style="font-size:26px;color:var(--accent-light)">₹${(qty*rate).toFixed(2)}</div><div style="font-size:10px;color:var(--text-3);margin-top:2px">Total Amount</div>`;
+  }
+}
+window.emp_calcLubeTotal = emp_calcLubeTotal;
+
+async function emp_saveLubeSale(productId) {
+  const qty  = parseFloat(document.getElementById('els_qty')?.value);
+  const rate = parseFloat(document.getElementById('els_rate')?.value);
+  const mode = document.getElementById('els_mode')?.value || 'cash';
+  const cust = (document.getElementById('els_cust')?.value || '').trim();
+  if (isNaN(qty) || qty <= 0)    { toast('Please enter a valid quantity', 'error'); return; }
+  if (isNaN(rate) || rate <= 0)  { toast('Please enter a valid rate', 'error'); return; }
+  const p = (window._lubesProducts||[]).find(x => x.id === productId);
+  if (!p) { toast('Product not found — please refresh', 'error'); return; }
+  if (qty > p.stock)             { toast(`Only ${p.stock} ${p.unit||''} in stock`, 'error'); return; }
+  const amount = +(qty * rate).toFixed(2);
+  const now2   = new Date();
+  if (!window._lubesSales) window._lubesSales = [];
+  window._lubesSales.unshift({
+    id: Date.now(),
+    date: now2.toISOString().slice(0, 10),
+    time: now2.toTimeString().slice(0, 5),
+    productId, productName: p.name,
+    qty, unit: p.unit || '',
+    rate, amount,
+    customer: cust,
+    mode,
+    employee: empState.user?.name || '',
+  });
+  p.stock = +(p.stock - qty).toFixed(3);
+  try {
+    await Promise.all([
+      db.setSetting('lubes_products', window._lubesProducts),
+      db.setSetting('lubes_sales',    window._lubesSales),
+    ]);
+  } catch(e) { console.warn('[emp_saveLubeSale]', e.message); }
+  closeModal();
+  toast(`✅ Sold ${qty} ${p.unit||''} ${p.name} — ₹${amount.toFixed(2)}`, 'success');
+  // Low stock warning
+  if (p.stock <= (p.minStock||5)) toast(`⚠️ Low stock alert: only ${p.stock} ${p.unit||''} left — inform admin`, 'warning');
+  renderPage();
+}
+window.emp_saveLubeSale = emp_saveLubeSale;
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ── STAFF VIEW — Shift Manager Portal ────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+function emp_renderStaffView() {
+  const today  = emp_today();
+  const emps   = EMP_LIST || [];
+  const pumps  = EMP_PUMPS || [];
+
+  // ── Build allocation map for today ────────────────────────────────
+  const empAllocMap = {}; // empId → [{shift, pumpName, nozzle}]
+  Object.entries(allocations).forEach(([dk, shiftAlloc]) => {
+    if (!dk.startsWith(today + '_')) return;
+    if (typeof shiftAlloc !== 'object') return;
+    const shiftName = dk.slice(today.length + 1);
+    Object.entries(shiftAlloc).forEach(([key, empId]) => {
+      if (!empId) return;
+      const [pumpId, nozzle] = key.split('_');
+      const pump = pumps.find(p => String(p.id) === String(pumpId));
+      if (!empAllocMap[empId]) empAllocMap[empId] = [];
+      empAllocMap[empId].push({ shift: shiftName, pumpName: pump?.name || ('P'+pumpId), nozzle });
+    });
+  });
+
+  // ── Roster for today ────────────────────────────────────────────────
+  const todayRosterIds = new Set();
+  if (window._rosterData) {
+    Object.entries(window._rosterData).forEach(([rk, ids]) => {
+      if (rk.startsWith(today + '_') && Array.isArray(ids)) ids.forEach(id => todayRosterIds.add(String(id)));
+    });
+  }
+
+  // ── Shift summary cards ─────────────────────────────────────────────
+  const shiftKeys  = [...new Set(Object.keys(allocations).filter(dk => dk.startsWith(today + '_')).map(dk => dk.slice(today.length+1)))];
+  const shiftCards = shiftKeys.map(shiftName => {
+    const dk = today + '_' + shiftName;
+    const sa = allocations[dk] || {};
+    const assignedIds = [...new Set(Object.values(sa).filter(Boolean).map(String))];
+    const assignedEmps = assignedIds.map(id => emps.find(e => String(e.id) === id)).filter(Boolean);
+    if (assignedEmps.length === 0) return '';
+    const pills = assignedEmps.map(e => {
+      const initials = e.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+      return `<div style="display:flex;align-items:center;gap:6px;padding:5px 0">
+        <div style="width:26px;height:26px;border-radius:6px;background:${e.color||'var(--accent)'};display:grid;place-items:center;color:#fff;font-size:9px;font-weight:800;flex-shrink:0">${initials}</div>
+        <div><div style="font-size:12px;font-weight:700;color:var(--text-0)">${sanitize(e.name)}</div>
+        <div style="font-size:10px;color:var(--text-3)">${(empAllocMap[String(e.id)]||[]).filter(a=>a.shift===shiftName).map(a=>`${a.pumpName} N${a.nozzle}`).join(', ')||'—'}</div></div>
+      </div>`;
+    }).join('');
+    return `<div class="card" style="margin-bottom:10px">
+      <div class="card-head"><h4>⏰ ${sanitize(shiftName)}</h4><span style="font-size:12px;font-weight:700;color:var(--text-2)">${assignedEmps.length} staff</span></div>
+      <div class="card-body" style="padding:4px 16px">${pills}</div>
+    </div>`;
+  }).filter(Boolean).join('');
+
+  // ── Full employee directory ──────────────────────────────────────────
+  const rows = emps.map(e => {
+    const initials = e.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    const myAllocs = empAllocMap[String(e.id)] || empAllocMap[e.id] || [];
+    const allocPills = myAllocs.map(a =>
+      `<span style="font-size:9px;font-weight:700;background:rgba(212,148,15,0.12);border:1px solid rgba(212,148,15,0.25);color:var(--accent-light);padding:2px 7px;border-radius:4px">${sanitize(a.pumpName)} N${a.nozzle}</span>`
+    ).join(' ');
+    const isRostered = todayRosterIds.has(String(e.id));
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border-light)">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:32px;height:32px;border-radius:8px;background:${e.color||'var(--accent)'};display:grid;place-items:center;color:#fff;font-size:10px;font-weight:800;flex-shrink:0">${initials}</div>
+        <div>
+          <div class="fw-700" style="font-size:13px;color:var(--text-0)">${sanitize(e.name)}</div>
+          <div style="font-size:10px;color:var(--text-3)">${sanitize(e.role||'')} · ${sanitize(e.shift||'—')}</div>
+          ${e.phone ? `<div style="font-size:10px;color:var(--text-3)">📞 ${sanitize(e.phone)}</div>` : ''}
+        </div>
+      </div>
+      <div style="text-align:right">
+        ${allocPills ? `<div style="display:flex;gap:3px;flex-wrap:wrap;justify-content:flex-end;margin-bottom:4px">${allocPills}</div>` : ''}
+        ${isRostered ? `<span style="font-size:9px;font-weight:700;background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.25);color:var(--green);padding:2px 7px;border-radius:4px">✅ Rostered</span>` : `<span style="font-size:9px;color:var(--text-3)">Not rostered</span>`}
+      </div>
+    </div>`;
+  }).join('') || `<div style="text-align:center;padding:20px;color:var(--text-3);font-size:12px">No employees found</div>`;
+
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <div><h3 class="fw-800" style="color:var(--text-0);font-size:18px">👥 Staff & Allocation</h3>
+      <p style="font-size:11px;color:var(--text-3);margin-top:2px">${today} · ${emps.length} employees total</p></div>
+    </div>
+    ${shiftCards || `<div class="card" style="padding:16px;margin-bottom:10px;text-align:center;color:var(--text-3);font-size:12px">No allocations set for today yet</div>`}
+    <div class="card"><div class="card-head"><h4>📋 All Staff</h4></div>
+    <div class="card-body" style="padding:0 16px">${rows}</div></div>
+  `;
+}
+window.emp_renderStaffView = emp_renderStaffView;
 
 
 // ── EMPLOYEE window exports ──────────────────────────────

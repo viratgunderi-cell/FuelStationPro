@@ -7506,6 +7506,7 @@ const EMP_OPTIONAL_PERMISSIONS = [
   { id: 'credit',   label: 'Credit Sales',        desc: 'Allow credit/account sales recording', icon: '📋' },
   { id: 'print',    label: 'Print / Share Report',desc: 'Print or WhatsApp share their shift report', icon: '🖨️' },
   { id: 'expense',  label: 'Log Expenses',        desc: 'Record petty cash & daily expenses', icon: '🧾' },
+  { id: 'lubes',    label: 'Lubes Sales',         desc: 'Record lubricant & product sales from the portal', icon: '🛢️' },
 ];
 
 function empFormHTML(shiftOpts, vals) {
@@ -7544,7 +7545,8 @@ function empFormHTML(shiftOpts, vals) {
         🔐 Portal Permissions
       </div>
       <div style="font-size:10px;color:var(--text-3);margin-bottom:10px;padding:6px 10px;background:var(--bg-0);border-radius:6px;border:1px solid var(--border)">
-        ✅ Always ON for all staff: <strong style="color:var(--text-1)">Overview · Readings · Sales · History</strong>
+        ✅ Always ON for all staff: <strong style="color:var(--text-1)">Overview · Readings · Sales · History</strong><br>
+        🔑 Shift Manager auto-gets: <strong style="color:var(--accent-light)">Staff &amp; Allocation tab</strong>
       </div>
       <div style="font-size:10px;color:var(--text-3);margin-bottom:8px;font-weight:600">
         ☑️ Check to GRANT optional access — uncheck to REVOKE:
