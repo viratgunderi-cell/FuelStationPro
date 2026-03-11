@@ -412,7 +412,12 @@ function emp_go(page) {
   if (page === 'history' && empState.user) {
     emp_loadHistoryFromServer().catch(() => {});
   }
-  // Shift Manager: refresh all operational data on any manager page
+  // Navigate immediately (use cached _mgr* data for instant render)
+  empState.page = page;
+  renderPage();
+  if (page === 'sales') { setTimeout(() => { emp_refreshNozzles(); }, 50); }
+
+  // Shift Manager: silently refresh all data in background then re-render
   if (['staff','payroll','lubes'].includes(page) && empState.user?.role === 'Shift Manager') {
     const tenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
     if (tenant && tenant.id) {
@@ -420,20 +425,27 @@ function emp_go(page) {
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           if (!data) return;
-          if (Array.isArray(data.employees) && data.employees.length > 0) APP.data.employees = data.employees;
-          if (Array.isArray(data.shifts)    && data.shifts.length > 0)    APP.data.shifts    = data.shifts;
-          if (data.roster     && typeof data.roster     === 'object') window._rosterData     = data.roster;
-          if (data.attendance && typeof data.attendance === 'object') window._attendanceData = data.attendance;
-          if (Array.isArray(data.lubesProducts)) window._lubesProducts = data.lubesProducts;
-          if (Array.isArray(data.lubesSales))    window._lubesSales    = data.lubesSales;
-          if (Array.isArray(data.advances))      window._advancesData  = data.advances;
-          if (data.payroll && typeof data.payroll === 'object' && Object.keys(data.payroll).length > 0) window._payrollSaved = data.payroll;
-          renderPage();
+          let changed = false;
+          if (Array.isArray(data.employees) && data.employees.length > 0) {
+            window._mgrEmployees = data.employees; APP.data.employees = data.employees; changed = true;
+          }
+          if (Array.isArray(data.shifts) && data.shifts.length > 0) {
+            window._mgrShifts = data.shifts; APP.data.shifts = data.shifts; changed = true;
+          }
+          if (data.roster     && typeof data.roster     === 'object') { window._rosterData     = data.roster;     changed = true; }
+          if (data.attendance && typeof data.attendance === 'object') { window._attendanceData = data.attendance; changed = true; }
+          if (Array.isArray(data.lubesProducts)) { window._lubesProducts = data.lubesProducts; changed = true; }
+          if (Array.isArray(data.lubesSales))    { window._lubesSales    = data.lubesSales;    changed = true; }
+          if (Array.isArray(data.advances))      { window._advancesData  = data.advances;      changed = true; }
+          if (data.payroll && typeof data.payroll === 'object' && Object.keys(data.payroll).length > 0) {
+            window._payrollSaved = data.payroll; changed = true;
+          }
+          if (changed && empState.page === page) renderPage(); // only re-render if still on same page
         })
         .catch(() => {});
     }
   }
-  empState.page = page; renderPage(); if (page === 'sales') { setTimeout(() => { emp_refreshNozzles(); }, 50); } }
+}
 
 // ── MAIN RENDER ──
 function renderEmployeePortal() {
@@ -478,7 +490,6 @@ function renderEmployeePortal() {
 
   if (isManager && managerPages.includes(empState.page)) {
     // Full-width manager nav across the top
-    const D = APP.data;
     const mgrTabs = [
       {id:'overview',icon:'📋',l:'Overview'},
       {id:'staff',   icon:'👥',l:'Staff'},
@@ -497,6 +508,13 @@ function renderEmployeePortal() {
       <div><div style="font-size:14px;font-weight:800;color:var(--text-0)">⛽ ${sanitize(APP.tenant?.name||'Fuel Station')}</div>${APP.tenant?.location?`<div style="font-size:11px;color:var(--text-3)">${sanitize(APP.tenant.location)}</div>`:''}</div>
       <div style="text-align:right"><div style="font-size:11px;font-weight:700;color:var(--accent-light)">👤 ${sanitize(empState.user.name)}</div><div style="font-size:10px;color:var(--text-3)">Shift Manager</div></div>
     </div>`;
+
+    // Build a merged D: start with APP.data, then overlay stable mgr vars
+    // This ensures employees/shifts are always present even if loadData() ran after login
+    const D = APP.data ? Object.assign({}, APP.data, {
+      employees: (window._mgrEmployees && window._mgrEmployees.length > 0) ? window._mgrEmployees : (APP.data.employees || []),
+      shifts:    (window._mgrShifts    && window._mgrShifts.length    > 0) ? window._mgrShifts    : (APP.data.shifts    || []),
+    }) : null;
 
     let pageHTML = '';
     if (empState.page === 'staff') {
@@ -535,10 +553,10 @@ function renderEmployeePortal() {
     case 'readings': inner = emp_renderReadings(); break;
     case 'sales': inner = emp_renderSales(); break;
     case 'dip':    inner = emp_hasPerm('dip')    ? emp_renderDip()       : emp_renderReadings(); break;
-    case 'lubes':  inner = isManager ? (APP.data ? renderLubes(APP.data) : '') : (emp_hasPerm('lubes') ? emp_renderLubes() : emp_renderSales()); break;
+    case 'lubes':  inner = isManager ? (APP.data ? renderLubes(Object.assign({}, APP.data, { employees: window._mgrEmployees || APP.data.employees, shifts: window._mgrShifts || APP.data.shifts })) : '<div style="text-align:center;padding:40px;color:var(--text-3)">⏳ Loading…</div>') : (emp_hasPerm('lubes') ? emp_renderLubes() : emp_renderSales()); break;
     case 'expense':inner = emp_hasPerm('expense')? emp_renderExpense()   : emp_renderSales();   break;
-    case 'staff':  inner = isManager ? emp_renderStaffView() : emp_renderOverview(); break;
-    case 'payroll':inner = isManager && APP.data ? renderPayroll(APP.data) : emp_renderOverview(); break;
+    case 'staff':  inner = isManager ? '<div style="text-align:center;padding:40px;color:var(--text-3)">⏳ Loading…</div>' : emp_renderOverview(); break;
+    case 'payroll':inner = isManager && APP.data ? renderPayroll(Object.assign({}, APP.data, { employees: window._mgrEmployees || APP.data.employees, shifts: window._mgrShifts || APP.data.shifts })) : emp_renderOverview(); break;
     case 'history': inner = emp_renderHistory(); break;
     case 'complete': inner = emp_renderComplete(); break;
     default: inner = emp_renderLogin();
@@ -2794,8 +2812,16 @@ async function doEmpLogin() {
           const staffResp = await fetch('/api/public/staff-data/' + tid);
           const staffData = staffResp.ok ? await staffResp.json() : null;
           if (staffData) {
-            if (Array.isArray(staffData.employees) && staffData.employees.length > 0) APP.data.employees = staffData.employees;
-            if (Array.isArray(staffData.shifts)    && staffData.shifts.length > 0)    APP.data.shifts    = staffData.shifts;
+            // Store in stable window._mgr* vars — these are NEVER overwritten by loadData()
+            // loadData() replaces APP.data entirely (line 3520), so we can't rely on APP.data.employees
+            if (Array.isArray(staffData.employees) && staffData.employees.length > 0) {
+              window._mgrEmployees   = staffData.employees;
+              APP.data.employees     = staffData.employees;
+            }
+            if (Array.isArray(staffData.shifts) && staffData.shifts.length > 0) {
+              window._mgrShifts      = staffData.shifts;
+              APP.data.shifts        = staffData.shifts;
+            }
             if (staffData.roster     && typeof staffData.roster     === 'object') window._rosterData     = staffData.roster;
             if (staffData.attendance && typeof staffData.attendance === 'object') window._attendanceData = staffData.attendance;
             if (Array.isArray(staffData.lubesProducts)) window._lubesProducts = staffData.lubesProducts;
@@ -3717,6 +3743,16 @@ async function loadData() {
         localStorage.setItem('fb_emp_cache', JSON.stringify(empCacheData));
       }
     } catch {}
+    // ── Restore Shift Manager data if loadData() overwrote it ────────────────
+    // loadData() replaces APP.data entirely. If a Shift Manager was already
+    // logged in and had employees/shifts fetched, we restore them here so
+    // renderStaff/renderPayroll/renderLubes get real data.
+    if (window._mgrEmployees && window._mgrEmployees.length > 0) {
+      APP.data.employees = window._mgrEmployees;
+    }
+    if (window._mgrShifts && window._mgrShifts.length > 0) {
+      APP.data.shifts = window._mgrShifts;
+    }
   } catch (e) {
     console.error('Data load failed, using seed data:', e);
     APP.data = { ...SEED };
@@ -4248,3 +4284,11 @@ window.emp_completeLogin = emp_completeLogin;
 // ── mt_switchStation exports (functions defined in employee.js) ──
 window.mt_switchStation = mt_switchStation;
 window.mt_doSwitchStation = mt_doSwitchStation;
+
+// ── Credit management (used by renderCredit in admin portal) ──
+window.openCreditCustomerModal = openCreditCustomerModal;
+window.saveCreditCustomer      = saveCreditCustomer;
+window.openEditCreditModal     = openEditCreditModal;
+window.saveEditCredit          = saveEditCredit;
+window.confirmDeleteCredit     = confirmDeleteCredit;
+window.deleteCredit            = deleteCredit;

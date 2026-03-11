@@ -7946,6 +7946,9 @@ window.doClearAlloc          = doClearAlloc;
 window.copyAllocModal        = copyAllocModal;
 window.doCopyAlloc           = doCopyAlloc;
 window.attSetNote            = attSetNote;
+// Shift Manager employee portal — employee CRUD modals
+window.openEmployeeModal     = openEmployeeModal;
+window.addEmployee           = addEmployee;
 // Expose allocShift / allocDate as getters+setters so employee.js can read/write them
 Object.defineProperty(window, 'allocShift', {
   get: () => allocShift,
