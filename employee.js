@@ -419,11 +419,14 @@ async function _fetchMgrData() {
     // Always update ALL fields from the response
     if (Array.isArray(data.employees)) {
       window._mgrEmployees = data.employees;
-      if (APP.data) APP.data.employees = data.employees;
+      // FIX: Initialize APP.data if null rather than skipping — spinner never clears otherwise
+      if (!APP.data) APP.data = {};
+      APP.data.employees = data.employees;
     }
     if (Array.isArray(data.shifts)) {
       window._mgrShifts = data.shifts;
-      if (APP.data) APP.data.shifts = data.shifts;
+      if (!APP.data) APP.data = {};
+      APP.data.shifts = data.shifts;
     }
     if (data.roster     && typeof data.roster     === 'object') window._rosterData     = data.roster;
     if (data.attendance && typeof data.attendance === 'object') window._attendanceData = data.attendance;
@@ -525,14 +528,22 @@ function renderEmployeePortal() {
     </div>`;
 
     // Build a merged D: start with APP.data, then overlay stable mgr vars
-    const D = APP.data ? Object.assign({}, APP.data, {
-      employees: (window._mgrEmployees && window._mgrEmployees.length > 0) ? window._mgrEmployees : (APP.data.employees || []),
-      shifts:    (window._mgrShifts    && window._mgrShifts.length    > 0) ? window._mgrShifts    : (APP.data.shifts    || []),
-    }) : null;
+    // Build D: use _mgrEmployees/_mgrShifts as primary source; fall back to APP.data.
+    // FIX: If APP.data is null but _mgrEmployees is already loaded, still render.
+    const mgrEmps   = (window._mgrEmployees && window._mgrEmployees.length > 0) ? window._mgrEmployees : (APP.data?.employees || []);
+    const mgrShifts = (window._mgrShifts    && window._mgrShifts.length    > 0) ? window._mgrShifts    : (APP.data?.shifts    || []);
+    const D = APP.data
+      ? Object.assign({}, APP.data, { employees: mgrEmps, shifts: mgrShifts })
+      : (mgrEmps.length > 0 ? { employees: mgrEmps, shifts: mgrShifts, tanks: [], pumps: [], sales: [], expenses: [], creditCustomers: [], fuelPurchases: [], dipReadings: [], creditTransactions: [] } : null);
 
-    // Pure spinner — no side effects. emp_go already has the fetch in-flight.
-    if (!D || D.employees.length === 0) {
+    // Show spinner only while fetch is truly in-flight (no data at all yet)
+    // FIX: If _mgrEmployees was fetched but is empty (no staff added), show empty state — not spinner
+    const fetchDone = window._mgrEmployees !== undefined; // undefined = never fetched; [] = fetched but empty
+    if (!D || (D.employees.length === 0 && !fetchDone)) {
       return `<div>${stationBadge}${mgrNav}<div style="text-align:center;padding:40px 20px;color:var(--text-3)"><div style="font-size:32px;margin-bottom:12px">⏳</div><div class="fw-700" style="font-size:13px">Loading staff data…</div></div></div>`;
+    }
+    if (!D || D.employees.length === 0) {
+      return `<div>${stationBadge}${mgrNav}<div style="text-align:center;padding:40px 20px;color:var(--text-3)"><div style="font-size:40px;margin-bottom:12px">👥</div><div class="fw-700" style="font-size:14px;color:var(--text-1)">No staff added yet</div><div style="font-size:12px;margin-top:6px">Ask admin to add employees in Staff & Allocation.</div></div></div>`;
     }
 
     let pageHTML = '';
