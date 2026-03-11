@@ -516,6 +516,36 @@ function renderEmployeePortal() {
       shifts:    (window._mgrShifts    && window._mgrShifts.length    > 0) ? window._mgrShifts    : (APP.data.shifts    || []),
     }) : null;
 
+    // ── Auto-fetch if we have no employee data yet (page refresh / first nav) ──
+    if (!D || D.employees.length === 0) {
+      // Kick off a background fetch then re-render when done
+      (function _mgrAutoFetch() {
+        const _t = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
+        if (!_t || !_t.id) return;
+        fetch('/api/public/staff-data/' + encodeURIComponent(_t.id))
+          .then(r => r.ok ? r.json() : null)
+          .then(data => {
+            if (!data) return;
+            if (Array.isArray(data.employees) && data.employees.length > 0) {
+              window._mgrEmployees = data.employees;
+              if (APP.data) APP.data.employees = data.employees;
+            }
+            if (Array.isArray(data.shifts) && data.shifts.length > 0) {
+              window._mgrShifts = data.shifts;
+              if (APP.data) APP.data.shifts = data.shifts;
+            }
+            if (data.roster     && typeof data.roster     === 'object') window._rosterData     = data.roster;
+            if (data.attendance && typeof data.attendance === 'object') window._attendanceData = data.attendance;
+            if (Array.isArray(data.lubesProducts)) window._lubesProducts = data.lubesProducts;
+            if (Array.isArray(data.lubesSales))    window._lubesSales    = data.lubesSales;
+            if (Array.isArray(data.advances))      window._advancesData  = data.advances;
+            if (data.payroll && typeof data.payroll === 'object' && Object.keys(data.payroll).length > 0) window._payrollSaved = data.payroll;
+            try { renderPage(); } catch(e) {}
+          }).catch(() => {});
+      })();
+      return `<div>${stationBadge}${mgrNav}<div style="text-align:center;padding:40px 20px;color:var(--text-3)"><div style="font-size:32px;margin-bottom:12px">⏳</div><div class="fw-700" style="font-size:13px">Loading staff data…</div></div></div>`;
+    }
+
     let pageHTML = '';
     if (empState.page === 'staff') {
       pageHTML = D ? renderStaff(D) : '<p style="color:var(--text-3)">Loading...</p>';
@@ -3752,14 +3782,40 @@ async function loadData() {
       }
     } catch {}
     // ── Restore Shift Manager data if loadData() overwrote it ────────────────
-    // loadData() replaces APP.data entirely. If a Shift Manager was already
-    // logged in and had employees/shifts fetched, we restore them here so
-    // renderStaff/renderPayroll/renderLubes get real data.
     if (window._mgrEmployees && window._mgrEmployees.length > 0) {
       APP.data.employees = window._mgrEmployees;
     }
     if (window._mgrShifts && window._mgrShifts.length > 0) {
       APP.data.shifts = window._mgrShifts;
+    }
+
+    // ── If employee token got empty arrays (expected), fetch staff-data for Shift Manager ──
+    // This covers the case where loadData runs BEFORE doEmpLogin sets _mgrEmployees
+    // (e.g. the background preload started before login, finishes after)
+    if (APP.role === 'employee' && empState.active && empState.user?.role === 'Shift Manager'
+        && (!APP.data.employees || APP.data.employees.length === 0)) {
+      (async () => {
+        try {
+          const _t = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
+          if (!_t || !_t.id) return;
+          const _r = await fetch('/api/public/staff-data/' + encodeURIComponent(_t.id));
+          if (!_r.ok) return;
+          const _d = await _r.json();
+          if (Array.isArray(_d.employees) && _d.employees.length > 0) {
+            window._mgrEmployees = _d.employees; APP.data.employees = _d.employees;
+          }
+          if (Array.isArray(_d.shifts) && _d.shifts.length > 0) {
+            window._mgrShifts = _d.shifts; APP.data.shifts = _d.shifts;
+          }
+          if (_d.roster     && typeof _d.roster     === 'object') window._rosterData     = _d.roster;
+          if (_d.attendance && typeof _d.attendance === 'object') window._attendanceData = _d.attendance;
+          if (Array.isArray(_d.lubesProducts)) window._lubesProducts = _d.lubesProducts;
+          if (Array.isArray(_d.lubesSales))    window._lubesSales    = _d.lubesSales;
+          if (Array.isArray(_d.advances))      window._advancesData  = _d.advances;
+          if (_d.payroll && typeof _d.payroll === 'object' && Object.keys(_d.payroll).length > 0) window._payrollSaved = _d.payroll;
+          if (typeof renderPage === 'function') try { renderPage(); } catch(e) {}
+        } catch(e) { console.warn('[loadData] mgr staff-data fallback:', e.message); }
+      })();
     }
 
     // If employee is already in the app when loadData finishes (background preload),
