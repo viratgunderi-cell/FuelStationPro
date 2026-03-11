@@ -352,10 +352,13 @@ async function initDatabase() {
       salary REAL DEFAULT 0,
       join_date TEXT DEFAULT '',
       color TEXT DEFAULT '',
+      emp_id TEXT DEFAULT '',
+      aadhar TEXT DEFAULT '',
       data_json TEXT DEFAULT '{}',
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_empid ON employees(tenant_id, emp_id) WHERE emp_id != ''`,
     `CREATE TABLE IF NOT EXISTS shifts (
       id TEXT NOT NULL,
       tenant_id TEXT NOT NULL,
@@ -474,6 +477,9 @@ async function initDatabase() {
     `ALTER TABLE credit_customers ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'individual'`,
     `ALTER TABLE employees ADD COLUMN IF NOT EXISTS color TEXT DEFAULT ''`,
     `ALTER TABLE employees ADD COLUMN IF NOT EXISTS shift TEXT DEFAULT ''`,
+    `ALTER TABLE employees ADD COLUMN IF NOT EXISTS emp_id TEXT DEFAULT ''`,
+    `ALTER TABLE employees ADD COLUMN IF NOT EXISTS aadhar TEXT DEFAULT ''`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_empid ON employees(tenant_id, emp_id) WHERE emp_id != ''`,
     `ALTER TABLE pumps ADD COLUMN IF NOT EXISTS open_reading REAL DEFAULT 0`,
     `ALTER TABLE pumps ADD COLUMN IF NOT EXISTS nozzle_readings TEXT DEFAULT '{}'`,
     `ALTER TABLE pumps ADD COLUMN IF NOT EXISTS nozzle_open TEXT DEFAULT '{}'`,

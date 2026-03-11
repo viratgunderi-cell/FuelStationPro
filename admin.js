@@ -1559,7 +1559,7 @@ function renderSettings(D) {
           <div class="fw-700" style="color:var(--text-1);margin-bottom:6px">Role Permissions</div>
           ${[
             { role:'Owner',      color:'var(--accent-light)', desc:'Full access — all pages, all actions' },
-            { role:'Manager',    color:'var(--blue)',          desc:'Operations — no payroll disbursement, no user management' },
+            { role:'Manager',    color:'var(--blue)',          desc:'Operations — Staff, Allocation & Roster access. No payroll disbursement, no user management' },
             { role:'Accountant', color:'#a855f7',             desc:'Finance & reports only — no operations' },
             { role:'Cashier',    color:'var(--green)',         desc:'Dashboard, tanks, pumps, sales, lubes only' },
           ].map(r=>`<div class="flex-between" style="padding:5px 0;border-bottom:1px solid var(--border-light)">
@@ -2866,7 +2866,7 @@ function saveAdvance() {
   const reason = (document.getElementById('advReason')?.value||'').trim();
   const repayMonths = parseInt(document.getElementById('advMonths')?.value||1);
   const date = document.getElementById('advDate')?.value || (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
-  if (!empId || isNaN(amount) || amount <= 0) { toast('Enter valid amount', 'error'); return; }
+  if (!empId || isNaN(amount) || amount <= 0) { toast('Please enter a valid amount', 'error'); return; }
   const monthlyEmi = Math.ceil(amount / repayMonths);
   const emp = APP.data.employees.find(e => e.id === empId);
   if (!window._advancesData) window._advancesData = [];
@@ -3098,7 +3098,7 @@ function saveNozzleMeterEntry(pumpId) {
   const empName  = document.getElementById('nm_emp')?.value || 'Admin';
   const open     = parseFloat(document.getElementById('nm_open')?.value);
   const close    = parseFloat(document.getElementById('nm_close')?.value);
-  if (!date || !nozzle || isNaN(open) || isNaN(close)) { toast('Fill all required fields', 'error'); return; }
+  if (!date || !nozzle || isNaN(open) || isNaN(close)) { toast('Please fill all required fields', 'error'); return; }
   if (close < open) { toast('Closing reading must be ≥ opening reading', 'error'); return; }
 
   const pump = APP.data.pumps.find(p => String(p.id) === String(pumpId));
@@ -3620,7 +3620,7 @@ window.openRestockModal = openRestockModal;
 function saveRestock(id) {
   const qty  = parseFloat(document.getElementById('rs_qty')?.value);
   const cost = parseFloat(document.getElementById('rs_cost')?.value);
-  if (isNaN(qty) || qty <= 0) { toast('Enter quantity', 'error'); return; }
+  if (isNaN(qty) || qty <= 0) { toast('Quantity is required', 'error'); return; }
   const p = (window._lubesProducts||[]).find(x=>x.id===id);
   if (!p) return;
   p.stock = (p.stock||0) + qty;
@@ -5151,8 +5151,8 @@ function saveTaxRate(editIdx) {
   const fuelType = document.getElementById('trFuelType').value;
   const taxName  = (document.getElementById('trTaxName').value || '').trim();
   const rate     = parseFloat(document.getElementById('trTaxRate').value);
-  if (!fuelType) { toast('Select fuel type', 'error'); return; }
-  if (!taxName)  { toast('Enter tax name', 'error'); return; }
+  if (!fuelType) { toast('Please select a fuel type', 'error'); return; }
+  if (!taxName)  { toast('Tax name is required', 'error'); return; }
   if (isNaN(rate) || rate < 0) { toast('Enter valid rate %', 'error'); return; }
   if (!APP.data.fuelTaxRates) APP.data.fuelTaxRates = [];
   if (editIdx !== undefined && editIdx >= 0) {
@@ -5240,7 +5240,7 @@ const PAGES = [
 function navigate(pageId) {
   // RBAC: block pages the current role can't see
   if (APP.loggedIn && APP.role === 'admin' && !rbac_canPage(pageId)) {
-    toast('Access restricted for your role', 'error');
+    toast('Access denied — your role does not have permission for this', 'error');
     return;
   }
   APP.page = pageId;
@@ -5586,8 +5586,8 @@ async function saveNewTank() {
   const capacity = parseInt(document.querySelector('input[name="newTankCapR"]:checked')?.value || '0');
   const current  = parseFloat(document.getElementById('newTankCurrent')?.value) || 0;
 
-  if (!fuelType) { toast('Select a fuel type', 'error'); return; }
-  if (!capacity) { toast('Select capacity', 'error'); return; }
+  if (!fuelType) { toast('Please select a fuel type', 'error'); return; }
+  if (!capacity) { toast('Please select a tank capacity', 'error'); return; }
   if (current > capacity) { toast(`Current level (${fmt(current)}L) cannot exceed capacity (${fmt(capacity)}L)`, 'error'); return; }
 
   try {
@@ -5703,8 +5703,8 @@ async function saveEditTank(tankId) {
   const capacity = parseInt(document.querySelector('input[name="editTankCapR"]:checked')?.value || '0');
   const current  = parseFloat(document.getElementById('editTankCurrent')?.value) || 0;
 
-  if (!fuelType) { toast('Select a fuel type', 'error'); return; }
-  if (!capacity) { toast('Select capacity', 'error'); return; }
+  if (!fuelType) { toast('Please select a fuel type', 'error'); return; }
+  if (!capacity) { toast('Please select a tank capacity', 'error'); return; }
   if (current > capacity) { toast(`Current level (${fmt(current)}L) exceeds new capacity (${fmt(capacity)}L). Reduce current level first.`, 'error'); return; }
 
   const updatedTank = { id: parseInt(tankId), fuelType, capacity, current, lastDip: APP.data.tanks.find(t=>parseInt(t.id)===parseInt(tankId))?.lastDip || '' };
@@ -6036,7 +6036,7 @@ async function saveDip() {
 
   } else {
     reading = parseFloat(document.getElementById('dipReading')?.value);
-    if (isNaN(reading) || reading < 0) { toast('Enter valid dip reading', 'error'); return; }
+    if (isNaN(reading) || reading < 0) { toast('Please enter a valid dip reading', 'error'); return; }
     if (tank && reading > parseInt(tank.capacity)) { toast('Reading exceeds tank capacity (' + fmt(tank.capacity) + 'L)', 'error'); return; }
   }
 
@@ -6292,8 +6292,8 @@ async function saveExpense() {
   const category = document.getElementById('expCategory').value;
   const amount   = parseFloat(document.getElementById('expAmount').value);
   const desc     = (document.getElementById('expDesc').value || '').trim();
-  if (!category) { toast('Select a category', 'error'); return; }
-  if (isNaN(amount) || amount <= 0) { toast('Enter a valid amount', 'error'); return; }
+  if (!category) { toast('Please select a category', 'error'); return; }
+  if (isNaN(amount) || amount <= 0) { toast('Please enter a valid amount', 'error'); return; }
   if (amount > 500000) { toast('Amount exceeds ₹5,00,000 limit', 'error'); return; }
 
   const isTax = category === 'Local Sales Tax (Bill)';
@@ -6481,10 +6481,10 @@ async function savePurchase() {
   const supplier  = sanitize((document.getElementById('purchSupplier')?.value || '').trim());
   const taxName   = document.getElementById('purchTaxLabel')?.textContent || 'Tax';
   const validFuels = FUEL_TYPES.map(f => f.id);
-  if (!fuelType || !validFuels.includes(fuelType)) { toast('Select a valid fuel type', 'error'); return; }
-  if (isNaN(liters) || liters <= 0) { toast('Enter quantity in litres', 'error'); return; }
+  if (!fuelType || !validFuels.includes(fuelType)) { toast('Please select a valid fuel type', 'error'); return; }
+  if (isNaN(liters) || liters <= 0) { toast('Quantity in litres is required', 'error'); return; }
   if (liters > 50000) { toast('Purchase cannot exceed 50,000 litres', 'error'); return; }
-  if (isNaN(basicKL) || basicKL <= 0) { toast('Enter basic price per KL from invoice', 'error'); return; }
+  if (isNaN(basicKL) || basicKL <= 0) { toast('Enter basic price per KL from invoice (required)', 'error'); return; }
   // Calculate effective rate: basicKL/1000 × (1 + taxPct/100)
   const basicPerL = basicKL / 1000;
   const taxPerL   = basicPerL * (taxPct / 100);
@@ -6588,7 +6588,7 @@ async function saveEditPump(pumpId) {
 
   const name   = (document.getElementById('editPumpName')?.value || '').trim();
   const status = document.getElementById('editPumpStatus')?.value || 'active';
-  if (!name) { toast('Enter pump name', 'error'); return; }
+  if (!name) { toast('Pump name is required', 'error'); return; }
 
   const nozzleLabels = pump.nozzleLabels || (pump.nozzles === 1 ? ['A'] : pump.nozzles === 2 ? ['A','B'] : ['A','B','C'].slice(0, pump.nozzles));
   const nozzleFuels  = {};
@@ -6666,7 +6666,7 @@ function saveAddPump() {
   const name = (document.getElementById('addPumpName')?.value || '').trim();
   const status = document.getElementById('addPumpStatus')?.value || 'active';
   const count = parseInt(document.getElementById('addPumpNozzles')?.value) || 2;
-  if (!name || name.length < 1) { toast('Enter a pump name', 'error'); return; }
+  if (!name || name.length < 1) { toast('Pump name is required', 'error'); return; }
 
   const nozzleLabels = count === 1 ? ['A'] : count === 2 ? ['A','B'] : ['A','B','C'];
   const nozzleFuels = {};
@@ -6812,7 +6812,7 @@ function updateNozzlePreview(pumpId, nozzle) {
 
 function saveReading(pumpId) {
   const pump = APP.data.pumps.find(p => String(p.id) === String(pumpId));
-  if (!pump) { toast('Pump not found', 'error'); return; }
+  if (!pump) { toast('Pump not found — please refresh and try again', 'error'); return; }
   const labels = _nozzleLabels(pump);
   const nozzleReadings = pump.nozzleReadings ? { ...pump.nozzleReadings } : {};
 
@@ -6893,7 +6893,7 @@ function openPaymentModal(customerId) {
 async function savePayment(customerId) {
   const amount = parseFloat(document.getElementById('payAmount').value);
   const mode = document.getElementById('payMode').value;
-  if (isNaN(amount) || amount <= 0) { toast('Enter valid payment amount', 'error'); return; }
+  if (isNaN(amount) || amount <= 0) { toast('Please enter a valid payment amount', 'error'); return; }
   if (amount > 1000000) { toast('Amount exceeds ₹10,00,000 limit', 'error'); return; }
   const c = APP.data.creditCustomers.find(x => parseInt(x.id) === parseInt(customerId));
   if (!c) return;
@@ -7531,9 +7531,9 @@ function empFormHTML(shiftOpts, vals) {
           <option ${vals.role==='Shift Manager'?'selected':''}>Shift Manager</option>
         </select>
       </div>
-      <div class="form-group"><label class="form-label">Shift <span style="font-size:9px;color:var(--text-3);font-weight:400">(Ctrl/Cmd+click for multiple)</span></label>
-        <select class="form-input" id="empShift" multiple size="3" style="height:auto;padding:4px">${shiftOpts}</select>
-      </div>
+    </div>
+    <div class="form-group"><label class="form-label">Shift <span style="font-size:9px;color:var(--text-3);font-weight:400">(Ctrl/Cmd+click for multiple)</span></label>
+      <select class="form-input" id="empShift" multiple size="3" style="height:auto;padding:4px">${shiftOpts}</select>
     </div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="empPhone" placeholder="10-digit mobile" value="${vals.phone||''}" /></div>
@@ -7577,10 +7577,17 @@ async function addEmployee() {
     : '';
   const phone = document.getElementById('empPhone')?.value?.trim();
   const salary = parseInt(document.getElementById('empSalary')?.value) || 12000;
-  if (!name || name.length < 2) { toast('Enter a valid employee name', 'error'); return; }
+  const empId  = (document.getElementById('empEmpId')?.value || '').trim().toUpperCase();
+  const aadhar = (document.getElementById('empAadhar')?.value || '').trim().replace(/\s/g, '');
+  if (!name || name.length < 2) { toast('Employee name must be at least 2 characters', 'error'); return; }
+  if (empId && APP.data.employees.some(e => e.empId && e.empId.toUpperCase() === empId)) {
+    toast('Employee ID "' + empId + '" is already taken — use a unique ID', 'error'); return;
+  }
+  if (aadhar && !/^\d{12}$/.test(aadhar)) { toast('Aadhar must be exactly 12 digits', 'error'); return; }
   const permissions = readEmpPermissions();
   const newEmp = {
     id: Date.now(), name, role, shift, phone: phone || '', salary,
+    empId: empId || '', aadhar: aadhar || '',
     permissions,
     color: EMP_COLORS[APP.data.employees.length % EMP_COLORS.length]
   };
@@ -7600,7 +7607,7 @@ async function addEmployee() {
 function openEditEmployeeModal(empId) {
   const D = APP.data;
   const e = D.employees.find(x => x.id === empId);
-  if (!e) { toast('Employee not found', 'error'); return; }
+  if (!e) { toast('Employee not found — please refresh and try again', 'error'); return; }
   const empShifts = (e.shift || '').split(',').map(s => s.trim()).filter(Boolean);
   const shiftOpts = D.shifts.map(s =>
     `<option value="${s.name}" ${empShifts.includes(s.name)?'selected':''}>${s.name} (${s.start}–${s.end})</option>`
@@ -7617,10 +7624,17 @@ async function saveEditEmployee() {
   const role = document.getElementById('empRole')?.value;
   const phone = document.getElementById('empPhone')?.value?.trim();
   const salary = parseInt(document.getElementById('empSalary')?.value) || 12000;
-  if (!name || name.length < 2) { toast('Enter a valid name', 'error'); return; }
+  const empEmpId = (document.getElementById('empEmpId')?.value || '').trim().toUpperCase();
+  const empAadhar = (document.getElementById('empAadhar')?.value || '').trim().replace(/\s/g, '');
+  if (!name || name.length < 2) { toast('Name must be at least 2 characters', 'error'); return; }
+  if (empEmpId && APP.data.employees.some(e => parseInt(e.id) !== empId && e.empId && e.empId.toUpperCase() === empEmpId)) {
+    toast('Employee ID "' + empEmpId + '" is already taken — use a unique ID', 'error'); return;
+  }
+  if (empAadhar && !/^\d{12}$/.test(empAadhar)) { toast('Aadhar must be exactly 12 digits', 'error'); return; }
+  if (!name || name.length < 2) { toast('Name must be at least 2 characters', 'error'); return; }
   const D = APP.data;
   const idx = D.employees.findIndex(x => parseInt(x.id) === parseInt(empId));
-  if (idx === -1) { toast('Employee not found', 'error'); return; }
+  if (idx === -1) { toast('Employee not found — please refresh and try again', 'error'); return; }
   const permissions = readEmpPermissions();
   const oldEmp = D.employees[idx];
   const oldName = oldEmp.name;
@@ -7633,7 +7647,7 @@ async function saveEditEmployee() {
     : (oldShift ? [oldShift] : []);
   const newShift = selectedShifts.join(',');
 
-  D.employees[idx] = { ...oldEmp, name, role, shift: newShift, phone: phone||'', salary, permissions };
+  D.employees[idx] = { ...oldEmp, name, role, shift: newShift, phone: phone||'', salary, empId: empEmpId||oldEmp.empId||'', aadhar: empAadhar||oldEmp.aadhar||'', permissions };
   try { await db.put('employees', D.employees[idx]); } catch(e) { console.warn('[EditEmployee]', e.message); }
 
   // FIX 4: propagate name change everywhere
@@ -7680,7 +7694,7 @@ async function saveEditEmployee() {
 
 function openSetPINModal(empId) {
   const emp = APP.data.employees.find(e => parseInt(e.id) === parseInt(empId));
-  if (!emp) { toast('Employee not found', 'error'); return; }
+  if (!emp) { toast('Employee not found — please refresh and try again', 'error'); return; }
   const hasPIN = !!getEmpPinHash(empId);
   const bioAlreadyReg = emp_bioIsRegistered(empId);
   const bioSection = window.PublicKeyCredential
@@ -7706,7 +7720,7 @@ function openSetPINModal(empId) {
 
 async function emp_bioRegisterFromModal() {
   const empId = parseInt(document.getElementById('setPINEmpId')?.value);
-  if (!empId) { toast('Save PIN first', 'error'); return; }
+  if (!empId) { toast('Set and save a PIN before registering biometrics', 'error'); return; }
   const btn = document.getElementById('bioRegBtn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Waiting for biometric…'; }
   const ok = await emp_bioRegister(empId);
@@ -7719,10 +7733,10 @@ async function saveEmployeePIN() {
   const empId = parseInt(document.getElementById('setPINEmpId')?.value);
   const pin = document.getElementById('newPIN')?.value?.trim();
   const confirm = document.getElementById('confirmPIN')?.value?.trim();
-  if (!pin || pin.length !== 4 || !/^\d{4}$/.test(pin)) { toast('PIN must be exactly 4 digits', 'error'); return; }
-  if (pin !== confirm) { toast('PINs do not match', 'error'); return; }
+  if (!pin || pin.length !== 4 || !/^\d{4}$/.test(pin)) { toast('PIN must be exactly 4 digits (numbers only)', 'error'); return; }
+  if (pin !== confirm) { toast('PIN MISMATCH — both entries must be identical', 'error'); return; }
   const emp = APP.data.employees.find(e => parseInt(e.id) === parseInt(empId));
-  if (!emp) { toast('Employee not found', 'error'); return; }
+  if (!emp) { toast('Employee not found — please refresh and try again', 'error'); return; }
   try {
     const hash = await sha256(pin);
     emp.pinHash = hash;
@@ -7823,8 +7837,8 @@ function saveNewShift() {
   const managerId = parseInt(managerRaw) || null;
   const managerEmp = managerId ? D.employees.find(e => e.id === managerId) : null;
   const manager = managerEmp ? managerEmp.name : (managerRaw || '');
-  if (!name || name.length < 2) { toast('Enter a shift name', 'error'); return; }
-  if (!start || !end)            { toast('Enter start and end times', 'error'); return; }
+  if (!name || name.length < 2) { toast('Shift name is required', 'error'); return; }
+  if (!start || !end)            { toast('Start and end times are required', 'error'); return; }
   if (D.shifts.find(s => s.name.toLowerCase() === name.toLowerCase())) {
     toast('A shift with this name already exists', 'error'); return;
   }
@@ -7839,7 +7853,7 @@ function saveNewShift() {
 function openEditShiftModal(shiftId) {
   const D = APP.data;
   const s = D.shifts.find(x => String(x.id) === String(shiftId));
-  if (!s) { toast('Shift not found', 'error'); return; }
+  if (!s) { toast('Shift not found — please refresh and try again', 'error'); return; }
   openModal(`✏️ Edit — ${sanitize(s.name)} Shift`,
     `<input type="hidden" id="editShiftId" value="${shiftId}" />` + shiftFormHTML(s),
     `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -7855,11 +7869,11 @@ function saveEditShift() {
   const managerId = parseInt(managerRaw) || null;
   const managerEmp = managerId ? D.employees.find(e => e.id === managerId) : null;
   const manager = managerEmp ? managerEmp.name : (managerRaw || '');
-  if (!name || name.length < 2) { toast('Enter a shift name', 'error'); return; }
-  if (!start || !end)            { toast('Enter start and end times', 'error'); return; }
+  if (!name || name.length < 2) { toast('Shift name is required', 'error'); return; }
+  if (!start || !end)            { toast('Start and end times are required', 'error'); return; }
   const D = APP.data;
   const idx = D.shifts.findIndex(x => String(x.id) === String(shiftId));
-  if (idx === -1) { toast('Shift not found', 'error'); return; }
+  if (idx === -1) { toast('Shift not found — please refresh and try again', 'error'); return; }
   const oldName = D.shifts[idx].name;
   D.shifts[idx] = { ...D.shifts[idx], name, start, end, manager };
   // Update employees who were assigned to old shift name
