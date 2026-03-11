@@ -372,10 +372,42 @@
   // ═══════════════════════════════════════════
   // AUTO-REFRESH TENANTS ON PAGE LOAD
   // ═══════════════════════════════════════════
+  // ── Super session heartbeat ─────────────────────────────────────────────
+  // Polls the server every 30s while a super token is active.
+  // If the server returns 401 (i.e. another device logged in and killed this session),
+  // apiFetch's existing 401 handler calls appLogout() automatically.
+  let _superHeartbeatTimer = null;
+  function startSuperSessionHeartbeat() {
+    stopSuperSessionHeartbeat(); // clear any existing timer first
+    _superHeartbeatTimer = setInterval(async function() {
+      const token = sessionStorage.getItem('fb_super_token');
+      if (!token) { stopSuperSessionHeartbeat(); return; }
+      try {
+        // checkSession hits /api/auth/session with the current Bearer token.
+        // If session was deleted server-side, this throws 401 → apiFetch calls appLogout().
+        setAuthToken(token);
+        await AuthAPI.checkSession();
+      } catch (e) {
+        // 401 is already handled by apiFetch → appLogout() → page reload.
+        // Any other error (network offline etc.) — stay logged in, try again next tick.
+      }
+    }, 30000); // 30 seconds
+  }
+  function stopSuperSessionHeartbeat() {
+    if (_superHeartbeatTimer) {
+      clearInterval(_superHeartbeatTimer);
+      _superHeartbeatTimer = null;
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', function() {
     // ── 1. Restore super token from sessionStorage only ───────────────────
     const savedToken = sessionStorage.getItem('fb_super_token');
-    if (savedToken) setAuthToken(savedToken);
+    if (savedToken) {
+      setAuthToken(savedToken);
+      // Restore heartbeat after page reload — still need to watch for takeover
+      startSuperSessionHeartbeat();
+    }
 
     // ── 2. Fetch tenants from server; show selector if no active tenant ───
     const activeTenant = (typeof mt_getActiveTenant === 'function') ? mt_getActiveTenant() : null;
@@ -412,6 +444,8 @@
           sessionStorage.setItem('fb_super_session', JSON.stringify({ loggedIn: true, at: Date.now() }));
           setAuthToken(result.token);
           if (typeof mt_toast === 'function') mt_toast('Super Admin logged in', 'success');
+          // ── Start session heartbeat — kicks this tab out if another device logs in ──
+          startSuperSessionHeartbeat();
           await mt_getTenants_async();
           if (typeof mt_showSelector === 'function') mt_showSelector();
         }
@@ -422,6 +456,7 @@
 
     // ── Super admin logout ────────────────────────────────────────────────
     window.mt_superLogout = async function() {
+      stopSuperSessionHeartbeat();
       try { await AuthAPI.logout(); } catch {}
       sessionStorage.removeItem('fb_super_token');
       sessionStorage.removeItem('fb_super_session');
