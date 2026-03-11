@@ -277,8 +277,18 @@ window.loadDataSnapshot = loadDataSnapshot;
 // Wraps the original apiFetch:
 //   GET  — try network, cache success, fall back to cache when offline
 //   POST/PUT/DELETE — when offline, queue and return fake optimistic response
+//
+// ROOT CAUSE FIX: The original code used `async function apiFetch()` (a function DECLARATION).
+// JavaScript HOISTS all function declarations to the top of the scope. Since there are
+// two `async function apiFetch` declarations in this file, the SECOND wins at hoist time.
+// This means `const _apiFetch_orig = apiFetch` captured the SECOND (offline wrapper) itself —
+// not the first (real fetch). Calling _apiFetch_orig() called itself → infinite recursion
+// → "Maximum call stack size exceeded".
+//
+// FIX: Use an assignment expression instead of a function declaration.
+// Assignments are NOT hoisted, so _apiFetch_orig correctly captures the first apiFetch.
 const _apiFetch_orig = apiFetch;
-async function apiFetch(path, options = {}) {
+apiFetch = async function apiFetchOffline(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
   const online = navigator.onLine;
 
@@ -318,7 +328,9 @@ async function apiFetch(path, options = {}) {
 
   // Online mutation — execute normally
   return _apiFetch_orig(path, options);
-}
+};
+// Update the global window reference so all callers use the offline-aware version
+window.apiFetch = apiFetch;
 
 // ── Flush offline queue when connectivity restores ────────────────────────────
 window._offlineFlushing = false;
