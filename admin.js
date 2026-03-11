@@ -46,7 +46,7 @@ function renderDashboard(D) {
   });
 
   // Tank gauges
-  let tanksHtml = D.tanks.map(t => {
+  let tanksHtml = [...D.tanks].sort((a, b) => (parseInt(a.id)||0) - (parseInt(b.id)||0)).map(t => {
     const fuel = getFuel(t.fuelType);
     const pct = t.capacity > 0 ? (t.current / t.capacity) * 100 : 0;
     const isLow = pct < 25;
@@ -240,7 +240,10 @@ function renderDashboard(D) {
 
 // ── TANKS & INVENTORY ────────────────────────────────────────
 function renderTanks(D) {
-  const tanksHtml = D.tanks.map(t => {
+  const tanksHtml = [...D.tanks].sort((a, b) => {
+    const ai = parseInt(a.id) || 0, bi = parseInt(b.id) || 0;
+    return ai - bi; // ascending: Tank 1 first
+  }).map(t => {
     const fuel = getFuel(t.fuelType);
     const pct = t.capacity > 0 ? Math.min(100, (t.current / t.capacity) * 100) : 0;
     const barColor = pct < 20 ? '#ef4444' : pct < 40 ? '#f97316' : fuel.color;
@@ -318,7 +321,10 @@ function renderTanks(D) {
 
 // ── PUMPS & METERS ───────────────────────────────────────────
 function renderPumps(D) {
-  const pumpCards = D.pumps.map(p => {
+  const pumpCards = [...D.pumps].sort((a, b) => {
+    const ai = parseInt(a.id) || 0, bi = parseInt(b.id) || 0;
+    return ai - bi; // ascending: Pump 1 first
+  }).map(p => {
     const fuel = getFuel(p.fuelType);
     const _nOpen = (p.openReading || 0);
     const _nCur  = (p.currentReading || 0);
@@ -738,8 +744,17 @@ function renderStaff(D) {
   const empOptions = shiftEmps.map(e => `<option value="${e.id}">${e.name} (${e.role})</option>`).join('')
     || `<option value="" disabled>No employees rostered for this shift</option>`;
 
+  // Shift sort helper: Morning → Noon/Afternoon → Evening → Night (ascending time-of-day order)
+  const SHIFT_ORDER = ['morning','noon','afternoon','evening','night'];
+  function shiftSortKey(s) {
+    const n = (s.name || '').toLowerCase();
+    const idx = SHIFT_ORDER.findIndex(k => n.includes(k));
+    return idx >= 0 ? idx : 99;
+  }
+  const sortedShifts = [...D.shifts].sort((a, b) => shiftSortKey(a) - shiftSortKey(b));
+
   // Shift tabs
-  const shiftTabs = D.shifts.map(s =>
+  const shiftTabs = sortedShifts.map(s =>
     `<button class="shift-tab ${allocShift === s.name ? 'active' : ''}" onclick="allocShift='${s.name}'; renderPage()">${s.name} <span style="font-size:10px;opacity:0.6;margin-left:3px">${s.start}–${s.end}</span></button>`
   ).join('');
   // Date navigation for allocation
@@ -804,9 +819,13 @@ function renderStaff(D) {
     </th>`;
   }).join('');
 
-  // Build rows: one per pump-nozzle combination
+  // Build rows: one per pump-nozzle combination (sorted ascending: Pump 1 first)
   const allocTableRows = [];
-  D.pumps.forEach(p => {
+  [...D.pumps].sort((a, b) => {
+    const ai = parseInt(a.id) || parseInt(a.name?.replace(/\D/g,'')) || 0;
+    const bi = parseInt(b.id) || parseInt(b.name?.replace(/\D/g,'')) || 0;
+    return ai - bi;
+  }).forEach(p => {
     const pNozzleFuels = p.nozzleFuels || {};
     const nLabels = p.nozzleLabels || (p.nozzles === 1 ? ['A'] : ['A','B']);
     nLabels.forEach(n => {
@@ -891,7 +910,7 @@ function renderStaff(D) {
 
   // ═══ SHIFT SCHEDULE ═══
   const h = new Date().getHours();
-  const shiftCards = D.shifts.map(s => {
+  const shiftCards = sortedShifts.map(s => {
     const emps = D.employees.filter(e => (e.shift||'').split(',').map(x=>x.trim()).includes(s.name));
     const [sh] = s.start.split(':').map(Number);
     const [eh] = s.end.split(':').map(Number);
@@ -1819,7 +1838,13 @@ function renderRoster(D) {
   const thisMonday = new Date(today); thisMonday.setDate(today.getDate() - dayOfWeek); thisMonday.setHours(0,0,0,0);
   const isPastWeek = weekStart < thisMonday;
 
-  const shifts = D.shifts && D.shifts.length ? D.shifts : [{name:'Morning',start:'06:00',end:'14:00'},{name:'Afternoon',start:'14:00',end:'22:00'},{name:'Night',start:'22:00',end:'06:00'}];
+  const SHIFT_ORDER_ROSTER = ['morning','noon','afternoon','evening','night'];
+  const rawShifts = D.shifts && D.shifts.length ? D.shifts : [{name:'Morning',start:'06:00',end:'14:00'},{name:'Afternoon',start:'14:00',end:'22:00'},{name:'Night',start:'22:00',end:'06:00'}];
+  const shifts = [...rawShifts].sort((a, b) => {
+    const ai = SHIFT_ORDER_ROSTER.findIndex(k => (a.name||'').toLowerCase().includes(k));
+    const bi = SHIFT_ORDER_ROSTER.findIndex(k => (b.name||'').toLowerCase().includes(k));
+    return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+  });
   const emps = D.employees || [];
 
   // Load saved roster from settings (in-memory for now, persisted via db.setSetting)
