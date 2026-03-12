@@ -112,8 +112,10 @@ class FuelDB {
     this._dbName = dbName;
   }
 
-  async getAll(storeName) {
-    try { return await apiFetch('/data/' + storeName); }
+  async getAll(storeName, opts = {}) {
+    // Fix 01B: forward optional ?from=date query param for date-filterable stores
+    const qs = opts.from ? '?from=' + encodeURIComponent(opts.from) : '';
+    try { return await apiFetch('/data/' + storeName + qs); }
     catch (e) { console.warn('[FuelDB] getAll', storeName, e.message); return []; }
   }
 

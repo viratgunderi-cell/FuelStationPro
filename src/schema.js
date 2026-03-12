@@ -34,7 +34,7 @@ if (dbUrl) {
   poolConfig = {
     connectionString: dbUrl,
     ssl: isInternal ? false : { rejectUnauthorized: false },
-    max: 10,
+    max: 25,                      // raised from 10 — handles peak shift-change concurrency
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
   };
@@ -47,7 +47,7 @@ if (dbUrl) {
     user: process.env.PGUSER,
     password: process.env.PGPASSWORD,
     ssl: false,
-    max: 10,
+    max: 25,                      // raised from 10 — both branches must match
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
   };
@@ -447,6 +447,11 @@ async function initDatabase() {
     `CREATE INDEX IF NOT EXISTS idx_audit_log_tenant ON audit_log(tenant_id, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_credit_tx_customer ON credit_transactions(customer_id, tenant_id)`,
     `CREATE INDEX IF NOT EXISTS idx_employees_tenant ON employees(tenant_id, active)`,
+    // ── Fix 02: indexes missing from supporting tables ──────────────────────
+    `CREATE INDEX IF NOT EXISTS idx_shifts_tenant_date    ON shifts(tenant_id, date DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_expenses_tenant_date  ON expenses(tenant_id, date DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_dip_tenant_date       ON dip_readings(tenant_id, date DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_purchases_tenant_date ON fuel_purchases(tenant_id, date DESC)`,
   ];
 
   for (const stmt of TABLES) {

@@ -323,16 +323,22 @@ function dataRoutes(db) {
   });
 
   // ── Generic store GET all ──────────────────────────────────────────────────
+  // Fix 01A: date-heavy stores accept ?from=YYYY-MM-DD to limit rows returned.
+  // Tanks, pumps, employees, shifts etc. are small/static — always returned in full.
+  const DATE_FILTERABLE = new Set(['sales', 'expenses', 'dipReadings', 'fuelPurchases', 'creditTransactions']);
   router.get('/:store', async (req, res) => {
     const meta = STORE_MAP[req.params.store];
     if (!meta) return res.status(404).json({ error: `Unknown store: ${req.params.store}` });
     try {
       const COMPOSITE = new Set(['tanks', 'pumps', 'shifts']);
       const orderBy = (!meta.hasAutoId || COMPOSITE.has(meta.table)) ? 'updated_at DESC NULLS LAST' : 'id DESC';
-      const r = await pool.query(
-        `SELECT * FROM ${meta.table} WHERE tenant_id = $1 ORDER BY ${orderBy}`,
-        [req.tenantId]
-      );
+      const fromDate = req.query.from;
+      const useFilter = fromDate && DATE_FILTERABLE.has(req.params.store);
+      const sql = useFilter
+        ? `SELECT * FROM ${meta.table} WHERE tenant_id = $1 AND date >= $2 ORDER BY ${orderBy}`
+        : `SELECT * FROM ${meta.table} WHERE tenant_id = $1 ORDER BY ${orderBy}`;
+      const params = useFilter ? [req.tenantId, fromDate] : [req.tenantId];
+      const r = await pool.query(sql, params);
       res.json(r.rows.map(parseRow));
     } catch (e) { res.status(500).json({ error: e.message }); }
   });

@@ -3503,6 +3503,9 @@ async function loadData() {
 
   // ── PARALLEL FETCH: fire all requests simultaneously ─────────────────────
   // Previously sequential (~18 round-trips × 300ms = 6s). Now one wave.
+  // Fix 01C: limit date-heavy stores to last 60 days on dashboard load.
+  // Reports tab uses its own date-range queries — completely unaffected.
+  const from60 = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const [
     seeded,
     razorpayKey,
@@ -3520,12 +3523,12 @@ async function loadData() {
     db.getAll('pumps').catch(() => []),
     db.getAll('shifts').catch(() => []),
     db.getAll('employees').catch(() => []),
-    db.getAll('sales').catch(() => []),
+    db.getAll('sales',          { from: from60 }).catch(() => []),
     db.getAll('creditCustomers').catch(() => []),
     db.getAll('creditTransactions').catch(() => []),
-    db.getAll('expenses').catch(() => []),
-    db.getAll('fuelPurchases').catch(() => []),
-    db.getAll('dipReadings').catch(() => []),
+    db.getAll('expenses',       { from: from60 }).catch(() => []),
+    db.getAll('fuelPurchases',  { from: from60 }).catch(() => []),
+    db.getAll('dipReadings',    { from: from60 }).catch(() => []),
     db.getSetting('prices').catch(() => null),
     db.getSetting('purchasePrices').catch(() => null),
     db.getSetting('price_history').catch(() => []),
