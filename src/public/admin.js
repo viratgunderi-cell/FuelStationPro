@@ -5807,6 +5807,17 @@ const PAGES = [
   { id: 'settings', label: 'Settings', icon: '⚙️', group: 'reports' },
 ];
 
+function updateStationBreadcrumb() {
+  const _tb = APP.tenant;
+  const _bc = document.getElementById('breadcrumb');
+  if (!_bc) return;
+  if (_tb && _tb.name) {
+    _bc.innerHTML = '⛽ ' + sanitize(_tb.name) + (_tb.location ? '<span class="topbar-station-loc">' + sanitize(_tb.location) + '</span>' : '');
+  } else {
+    _bc.textContent = '⛽ FuelBunk Pro';
+  }
+}
+
 function navigate(pageId) {
   // RBAC: block pages the current role can't see
   if (APP.loggedIn && APP.role === 'admin' && !rbac_canPage(pageId)) {
@@ -5819,15 +5830,7 @@ function navigate(pageId) {
   APP.salesEmpFilter = 'all';
   window.location.hash = pageId;
   document.getElementById('pageTitle').textContent = PAGES.find(p => p.id === pageId)?.label || 'Dashboard';
-  const _tb = APP.tenant;
-  const _bc = document.getElementById('breadcrumb');
-  if (_bc) {
-    if (_tb) {
-      _bc.innerHTML = '⛽ <strong style="color:var(--accent-light);font-weight:900;letter-spacing:-0.2px">' + sanitize(_tb.name) + '</strong>' + (_tb.location ? '<span class="topbar-station-loc"> · ' + sanitize(_tb.location) + '</span>' : '');
-    } else {
-      _bc.textContent = '⛽ FuelBunk Pro';
-    }
-  }
+  updateStationBreadcrumb();
   buildNav();
   renderPage();
   // Close mobile sidebar
