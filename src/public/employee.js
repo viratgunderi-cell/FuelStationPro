@@ -3002,7 +3002,7 @@ function openCreditCustomerModal() {
       <div class="form-group"><label class="form-label">Type</label><select class="form-input" id="ccType"><option value="Fleet">Fleet</option><option value="Government">Government</option><option value="Individual">Individual</option></select></div>
       <div class="form-group"><label class="form-label">Credit Limit (₹)</label><input class="form-input" id="ccLimit" type="number" placeholder="500000" /></div>
     </div>
-    <div class="form-group"><label class="form-label">Phone</label><div style="display:flex;gap:8px"><input class="form-input" id="ccPhoneCC" type="tel" inputmode="numeric" maxlength="4" placeholder="+91" value="+91" style="width:72px;flex-shrink:0" /><input class="form-input" id="ccPhone" type="tel" inputmode="numeric" maxlength="10" minlength="10" placeholder="10-digit number" style="flex:1" /></div></div>
+    <div class="form-group"><label class="form-label">Phone</label><div style="display:flex;gap:8px"><input class="form-input" id="ccPhoneCC" type="tel" inputmode="numeric" maxlength="4" placeholder="+91" value="+91" style="width:72px;flex-shrink:0" /><input class="form-input" id="ccPhone" type="tel" inputmode="numeric" maxlength="10" minlength="10" oninput="this.value=this.value.replace(/[^0-9]/g,'')" placeholder="10-digit number" style="flex:1" /></div></div>
   `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-accent" onclick="saveCreditCustomer()">💾 Save Customer</button>`);
 }
 
@@ -3012,6 +3012,7 @@ async function saveCreditCustomer() {
   const limit = parseFloat(document.getElementById('ccLimit').value);
   const phone = (document.getElementById('ccPhone').value || '').trim();
   if (!name || name.length < 2) { toast('Enter customer name (min 2 chars)', 'error'); return; }
+  if (!phone || phone.length !== 10 || !/^\d{10}$/.test(phone)) { toast('Phone number must be exactly 10 digits', 'error'); return; }
   if (isNaN(limit) || limit <= 0) { toast('Enter valid credit limit', 'error'); return; }
   if (limit > 10000000) { toast('Credit limit exceeds ₹1,00,00,000', 'error'); return; }
   const customer = {
@@ -3043,7 +3044,7 @@ function openEditCreditModal(customerId) {
         <input class="form-input" id="ecLimit" type="number" value="${c.limit||0}" /></div>
     </div>
     <div class="form-group"><label class="form-label">Phone</label>
-      <div style="display:flex;gap:8px"><input class="form-input" id="ecPhoneCC" type="tel" inputmode="numeric" maxlength="4" placeholder="+91" value="${sanitize(c.phoneCC||'+91')}" style="width:72px;flex-shrink:0" /><input class="form-input" id="ecPhone" type="tel" inputmode="numeric" maxlength="10" minlength="10" placeholder="10-digit number" value="${sanitize(c.phone||'')}" style="flex:1" /></div></div>`,
+      <div style="display:flex;gap:8px"><input class="form-input" id="ecPhoneCC" type="tel" inputmode="numeric" maxlength="4" placeholder="+91" value="${sanitize(c.phoneCC||'+91')}" style="width:72px;flex-shrink:0" /><input class="form-input" id="ecPhone" type="tel" inputmode="numeric" maxlength="10" minlength="10" oninput="this.value=this.value.replace(/[^0-9]/g,'')" placeholder="10-digit number" value="${sanitize(c.phone||'')}" style="flex:1" /></div></div>`,
     `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn btn-accent" onclick="saveEditCredit(${customerId})">💾 Save</button>`
   );
@@ -3055,6 +3056,7 @@ async function saveEditCredit(customerId) {
   const limit = parseFloat(document.getElementById('ecLimit')?.value) || 0;
   const phone = (document.getElementById('ecPhone')?.value || '').trim();
   if (!name || name.length < 2) { toast('Enter valid name', 'error'); return; }
+  if (!phone || phone.length !== 10 || !/^\d{10}$/.test(phone)) { toast('Phone number must be exactly 10 digits', 'error'); return; }
   if (isNaN(limit) || limit <= 0) { toast('Enter valid credit limit', 'error'); return; }
   const c = APP.data.creditCustomers.find(x => parseInt(x.id) === parseInt(customerId));
   if (!c) { toast('Customer not found', 'error'); return; }
