@@ -605,19 +605,29 @@ async function mt_openCompareStations() {
       return;
     }
 
-    const cards = stations.map(s => {
-      const tankBars = (s.tanks||[]).map(t => {
-        const p = pct((t.current / Math.max(t.capacity,1)) * 100);
-        const c = p<20 ? '#ef4444' : p<40 ? '#f59e0b' : '#4ade80';
-        return `<div style="margin-bottom:6px">
-          <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">
-            <span style="color:#aaa">${t.fuelType}</span>
-            <span style="color:${c};font-weight:700">${p}%</span>
-          </div>
-          <div style="height:5px;background:#1e1e1e;border-radius:3px">
-            <div style="height:100%;width:${p}%;background:${c};border-radius:3px"></div>
-          </div></div>`;
-      }).join('');
+    const fuelLabel = ft => ({ petrol:'Petrol', diesel:'Diesel', premium_petrol:'Premium', premium:'Premium' }[ft] || ft);
+      const fuelColor = ft => ({ petrol:'#ef4444', diesel:'#f97316', premium_petrol:'#a855f7', premium:'#a855f7' }[ft] || '#4ade80');
+
+      const cards = stations.map(s => {
+        const tankBars = (s.tanks||[]).map((t, i) => {
+          const p = pct((t.current / Math.max(t.capacity,1)) * 100);
+          const c = p<20 ? '#ef4444' : p<40 ? '#f59e0b' : '#4ade80';
+          const fc = fuelColor(t.fuelType);
+          const tankName = t.name || `Tank ${i+1}`;
+          const fl = fuelLabel(t.fuelType);
+          return `<div style="margin-bottom:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:4px">
+              <span style="color:#fff;font-weight:700">${tankName} <span style="color:${fc};font-size:10px;font-weight:600">— ${fl}</span></span>
+              <span style="color:${c};font-weight:800">${p}%</span>
+            </div>
+            <div style="height:6px;background:#1e1e1e;border-radius:3px;margin-bottom:4px">
+              <div style="height:100%;width:${p}%;background:${c};border-radius:3px"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:#555">
+              <span>${t.current.toLocaleString('en-IN',{maximumFractionDigits:0})} L available</span>
+              <span>/ ${t.capacity.toLocaleString('en-IN',{maximumFractionDigits:0})} L capacity</span>
+            </div></div>`;
+        }).join('');
 
       const revVsAvg = benchmark.avgRevenue > 0
         ? ((s.today.revenue - benchmark.avgRevenue) / benchmark.avgRevenue * 100).toFixed(1)
