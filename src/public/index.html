@@ -91,9 +91,13 @@
   </aside>
   <main class="main-area" style="display:none">
     <header class="topbar">
-      <!-- Row 1: Station name + clock + avatar + online -->
       <div class="topbar-station-row">
-        <div class="topbar-station-name" id="breadcrumb">⛽ FuelBunk Pro</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <button class="btn btn-icon mobile-menu-btn" onclick="toggleSidebar()" style="display:none;background:var(--bg-2);border:1px solid var(--border);padding:8px">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+          <div class="topbar-station-name" id="breadcrumb">⛽ FuelBunk Pro</div>
+        </div>
         <div class="topbar-right">
           <div class="topbar-clock">
             <div class="time" id="clock">--:--:--</div>
@@ -108,17 +112,7 @@
           <button class="btn btn-ghost btn-sm" onclick="appLogout()" title="Logout" style="padding:6px 10px;font-size:14px;color:var(--text-3)">⏻</button>
         </div>
       </div>
-      <!-- Row 2: Page title only -->
-      <div class="topbar-page-row">
-        <div style="display:flex;align-items:center;gap:12px">
-          <button class="btn btn-icon mobile-menu-btn" onclick="toggleSidebar()" style="display:none;background:var(--bg-2);border:1px solid var(--border);padding:8px">
-            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-          </button>
-          <div class="topbar-left">
-            <h2 id="pageTitle">Dashboard</h2>
-          </div>
-        </div>
-      </div>
+      <div class="topbar-accent"></div>
     </header>
     <div class="content" id="content"></div>
   </main>
@@ -254,7 +248,7 @@
   --font: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --mono: 'JetBrains Mono', 'Courier New', 'SF Mono', Consolas, monospace;
   --sidebar-w: 240px;
-  --topbar-h: 96px;
+  --topbar-h: 56px;
 }
 
 html, body { height: 100%; overflow: hidden; }
@@ -337,23 +331,18 @@ body {
 /* Main area */
 .main-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
 .topbar {
-  height: var(--topbar-h); border-bottom: 1px solid var(--border-light);
-  display: flex; flex-direction: column;
-  background: var(--bg-1); flex-shrink: 0;
+  flex-shrink: 0; display: flex; flex-direction: column;
+  background: var(--bg-1);
 }
 .topbar-station-row {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0 24px; height: 52px;
-  background: rgba(212,148,15,0.05); border-bottom: 1px solid rgba(212,148,15,0.15);
-  flex-shrink: 0;
+  padding: 0 24px; height: 53px;
+  background: rgba(212,148,15,0.05);
 }
-.topbar-station-name { font-size: 21px; font-weight: 900; color: var(--accent-light); letter-spacing: -0.5px; display: flex; align-items: center; gap: 8px; }
+.topbar-accent { height: 3px; background: linear-gradient(90deg, var(--accent) 0%, rgba(212,148,15,0.12) 55%, transparent 100%); }
+.topbar-station-name { font-size: 20px; font-weight: 900; color: var(--accent-light); letter-spacing: -0.4px; display: flex; align-items: center; gap: 8px; }
 .topbar-station-loc { font-size: 12px; color: var(--text-3); font-weight: 500; margin-left: 6px; }
-.topbar-page-row {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 24px; flex: 1;
-}
-.topbar-left h2 { font-size: 15px; font-weight: 700; color: var(--text-2); letter-spacing: -0.2px; }
+.topbar-page-row { display: none; }
 .topbar-left .breadcrumb { display: none; }
 .topbar-right { display: flex; align-items: center; gap: 14px; }
 .topbar-clock { text-align: right; }
@@ -703,11 +692,8 @@ body { padding-bottom: var(--safe-bottom); }
   .sidebar.mobile-open ~ .mobile-overlay { display: block; }
   .g-2, .g-3, .g-4 { grid-template-columns: 1fr; }
   .content { padding: 12px 14px; }
-  .topbar { }
   .topbar-station-row { padding: 0 14px; }
-  .topbar-page-row { padding: 0 14px; }
-  .topbar-station-name { font-size: 16px; }
-  .topbar-station-loc { font-size: 11px; }
+  .topbar-station-name { font-size: 15px; }
   .mobile-menu-btn { display: flex !important; }
   .status-pills { display: none; }
   /* Cards breathe more on small screens */
