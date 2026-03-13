@@ -2961,6 +2961,7 @@ function enterApp() {
     // Always start at dashboard on admin login — ignore any stale hash/page from employee session
     APP.page = 'dashboard';
     window.location.hash = '';
+    if (typeof updateStationBreadcrumb === 'function') updateStationBreadcrumb();
     buildNav(); renderPage();
     // Check backup reminder for admin
     checkBackupReminder();
