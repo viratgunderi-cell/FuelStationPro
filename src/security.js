@@ -120,18 +120,29 @@ function bruteForceCheck(db) {
   return async (req, res, next) => {
     const ip = (req.headers['x-forwarded-for'] || req.ip || 'unknown')
       .split(',')[0].trim();
+    const username = (req.body?.username || '').toLowerCase().trim();
     try {
-      // BUG FIX: cast COUNT to integer to avoid string comparison bug
-      const result = await db.prepare(
+      // Rate limit by USERNAME — handles Railway shared proxy where all users share same IP
+      if (username) {
+        const byUser = await db.prepare(
+          `SELECT COUNT(*)::int AS cnt FROM login_attempts
+           WHERE username = $1 AND success = 0
+           AND attempted_at > NOW() - INTERVAL '10 minutes'`
+        ).get(username);
+        if (byUser && byUser.cnt >= 5) {
+          return res.status(429).json({ error: 'Too many failed attempts for this username. Please wait 10 minutes.' });
+        }
+      }
+      // IP check with high threshold (50) since Railway proxies share IPs
+      const byIp = await db.prepare(
         `SELECT COUNT(*)::int AS cnt FROM login_attempts
          WHERE ip_address = $1 AND success = 0
          AND attempted_at > NOW() - INTERVAL '5 minutes'`
       ).get(ip);
-      if (result && result.cnt >= 10) {
-        return res.status(429).json({ error: 'Too many login attempts. Try again in 15 minutes.' });
+      if (byIp && byIp.cnt >= 50) {
+        return res.status(429).json({ error: 'Too many login attempts. Please wait a few minutes and try again.' });
       }
     } catch (e) {
-      // Don't block login if brute-force check fails
       console.warn('[BruteForce]', e.message);
     }
     req._bruteForceIp = ip;
