@@ -319,10 +319,20 @@ async function mt_deleteTenant(id) {
 }
 
 // ── Super Admin: Manage Station Admin Users ──
-function mt_manageStationAdmins(id) {
+async function mt_manageStationAdmins(id) {
   const tenants = mt_getTenants();
   const t = tenants.find(x => x.id === id);
   if (!t) return;
+
+  // Load fresh admin list from server
+  try {
+    const res = await apiFetch(`/data/tenants/${id}/admins`);
+    if (res.ok) {
+      const serverAdmins = await res.json();
+      const idx = tenants.findIndex(x => x.id === id);
+      if (idx !== -1) { tenants[idx].adminUsers = serverAdmins; mt_saveTenants(tenants); t.adminUsers = serverAdmins; }
+    }
+  } catch(e) { /* use cached */ }
 
   function renderAdminList() {
     const admins = t.adminUsers || [];
@@ -389,23 +399,27 @@ async function mt_addStationAdmin(tenantId) {
   if (!username || username.length < 2) { mt_toast('Enter username', 'error'); return; }
   if (pass.length < 6) { mt_toast('Password must be at least 6 characters', 'error'); return; }
 
-  const tenants = mt_getTenants();
-  const idx = tenants.findIndex(t => t.id === tenantId);
-  if (idx === -1) return;
-
-  if ((tenants[idx].adminUsers||[]).find(u => u.username === username)) {
-    mt_toast('Username already exists for this station', 'error'); return;
-  }
-
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pass));
-  const passHash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
-  const newUser = { id: Date.now(), name, username, passHash, role };
-  tenants[idx].adminUsers = [...(tenants[idx].adminUsers||[]), newUser];
-  mt_saveTenants(tenants);
-  mt_toast(`${name} added as admin`, 'success');
-  // Refresh overlay
-  document.getElementById('adminMgrOverlay').remove();
-  mt_manageStationAdmins(tenantId);
+  try {
+    const res = await apiFetch(`/data/tenants/${tenantId}/admins`, {
+      method: 'POST',
+      body: JSON.stringify({ name, username, password: pass, role })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      mt_toast(err.error || 'Failed to add admin', 'error'); return;
+    }
+    // Sync local cache
+    const tenants = mt_getTenants();
+    const idx = tenants.findIndex(t => t.id === tenantId);
+    if (idx !== -1) {
+      const data = await res.json().catch(() => ({}));
+      tenants[idx].adminUsers = [...(tenants[idx].adminUsers||[]), { id: data.id || Date.now(), name, username, role }];
+      mt_saveTenants(tenants);
+    }
+    mt_toast(`${name} added as admin`, 'success');
+    document.getElementById('adminMgrOverlay').remove();
+    mt_manageStationAdmins(tenantId);
+  } catch(e) { mt_toast('Network error adding admin', 'error'); }
 }
 
 async function mt_resetStationAdminPass(tenantId, userIdx) {
@@ -415,25 +429,39 @@ async function mt_resetStationAdminPass(tenantId, userIdx) {
   const tenants = mt_getTenants();
   const idx = tenants.findIndex(t => t.id === tenantId);
   if (idx === -1) return;
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(newPass));
-  const passHash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
-  tenants[idx].adminUsers[userIdx].passHash = passHash;
-  mt_saveTenants(tenants);
-  mt_toast('Password reset successfully', 'success');
-  document.getElementById('adminMgrOverlay').remove();
-  mt_manageStationAdmins(tenantId);
+  const user = tenants[idx].adminUsers?.[userIdx];
+  if (!user) { mt_toast('User not found', 'error'); return; }
+  try {
+    const res = await apiFetch(`/data/tenants/${tenantId}/admins/${user.id}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({ newPassword: newPass })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      mt_toast(err.error || 'Failed to reset password', 'error'); return;
+    }
+    mt_toast('Password reset successfully', 'success');
+    document.getElementById('adminMgrOverlay').remove();
+    mt_manageStationAdmins(tenantId);
+  } catch(e) { mt_toast('Network error resetting password', 'error'); }
 }
 
-function mt_deleteStationAdmin(tenantId, userIdx) {
+async function mt_deleteStationAdmin(tenantId, userIdx) {
   if (!confirm('Remove this admin user?')) return;
   const tenants = mt_getTenants();
   const idx = tenants.findIndex(t => t.id === tenantId);
   if (idx === -1) return;
-  tenants[idx].adminUsers = tenants[idx].adminUsers.filter((_, i) => i !== userIdx);
-  mt_saveTenants(tenants);
-  mt_toast('Admin removed', 'success');
-  document.getElementById('adminMgrOverlay').remove();
-  mt_manageStationAdmins(tenantId);
+  const user = tenants[idx].adminUsers?.[userIdx];
+  if (!user) return;
+  try {
+    const res = await apiFetch(`/data/tenants/${tenantId}/admins/${user.id}`, { method: 'DELETE' });
+    if (!res.ok) { mt_toast('Failed to remove admin', 'error'); return; }
+    tenants[idx].adminUsers = tenants[idx].adminUsers.filter((_, i) => i !== userIdx);
+    mt_saveTenants(tenants);
+    mt_toast('Admin removed', 'success');
+    document.getElementById('adminMgrOverlay').remove();
+    mt_manageStationAdmins(tenantId);
+  } catch(e) { mt_toast('Network error removing admin', 'error'); }
 }
 
 // ── Change Super Admin Credentials ──
