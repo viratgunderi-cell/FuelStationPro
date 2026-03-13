@@ -2653,7 +2653,7 @@ function showLoginScreen() {
     '<div class="login-hero">' +
       '<div class="login-logo">\u26FD</div>' +
       '<h1 class="login-title">FuelBunk Pro</h1>' +
-      '<p class="login-sub">' + (APP.tenant ? sanitize(APP.tenant.name) + (APP.tenant.location ? ', ' + sanitize(APP.tenant.location) : '') : 'FuelBunk Pro') + '</p>' +
+      '<div style="margin-top:10px">' +(APP.tenant ?   '<span class="login-station-name">🏪 ' + sanitize(APP.tenant.name) + '</span>' +  (APP.tenant.location ? '<span class="login-station-loc">' + sanitize(APP.tenant.location) + '</span>' : '') : '<p class="login-sub">FuelBunk Pro</p>') +'</div>' +
     '</div>' +
     '<div class="login-tabs">' +
       '<button class="login-tab active" id="ltAdmin" onclick="switchLoginTab(\'admin\')">\uD83D\uDD11 Admin Login</button>' +
