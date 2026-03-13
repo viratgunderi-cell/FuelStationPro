@@ -122,9 +122,6 @@ function renderDashboard(D) {
     : '';
 
   return `
-    <div class="flex-between mb-20">
-      <h2 style="font-size:18px;font-weight:800;color:var(--text-0);display:flex;align-items:center;gap:8px">📊 Dashboard</h2>
-    </div>
     ${nmlAlert}
     <div class="g g-auto-sm mb-24 gap-16">
       ${statCard('Today\'s Revenue', cur(totalRevenue), 'all pumps today', '💰')}
@@ -610,9 +607,6 @@ function renderSales(D, filter = 'all') {
     : '';
 
   return `
-    <div class="flex-between mb-20">
-      <h2 style="font-size:18px;font-weight:800;color:var(--text-0);display:flex;align-items:center;gap:8px">💰 Sales</h2>
-    </div>
     <div class="page-hdr">
       <h3>💰 Sales${(APP.data?.dayLocks||{})[selDate] ? ' <span style="font-size:12px;background:rgba(34,197,94,0.15);color:var(--green);padding:2px 8px;border-radius:4px;font-weight:700;vertical-align:middle">🔒 LOCKED</span>' : ''}</h3>
       <div class="flex" style="gap:8px;flex-wrap:wrap;align-items:center">
@@ -721,9 +715,6 @@ function renderCredit(D) {
   }).join('');
 
   return `
-    <div class="flex-between mb-20">
-      <h2 style="font-size:18px;font-weight:800;color:var(--text-0);display:flex;align-items:center;gap:8px">💳 Credit Management</h2>
-    </div>
     <div class="page-hdr"><h3>💳 Credit Management</h3><button class="btn btn-accent" onclick="openCreditCustomerModal()">+ Add Customer</button></div>
     <div class="g g-auto-sm mb-24 gap-16">
       ${statCard('Total Outstanding', cur(totalOut), '', '📋')}
@@ -1223,9 +1214,6 @@ function renderFinance(D) {
     : `<tr><td colspan="4" style="text-align:center;padding:24px;color:var(--text-3)">No expenses recorded yet</td></tr>`;
 
   return `
-    <div class="flex-between mb-20">
-      <h2 style="font-size:18px;font-weight:800;color:var(--text-0);display:flex;align-items:center;gap:8px">📈 Finance</h2>
-    </div>
     <div class="page-hdr"><h3>📈 Financial Management</h3>
       <div class="flex" style="gap:8px;flex-wrap:wrap">
         <button class="btn btn-accent" onclick="openExpenseModal()">+ Add Expense</button>
@@ -1316,9 +1304,6 @@ function renderReports(D) {
   </div>`).join('');
 
   return `
-    <div class="flex-between mb-20">
-      <h2 style="font-size:18px;font-weight:800;color:var(--text-0);display:flex;align-items:center;gap:8px">📄 Reports</h2>
-    </div>
     <div class="page-hdr"><h3>📄 Reports & Analytics</h3></div>
     <div class="g g-2 gap-16 mb-24">
       <div class="card card-pad">
@@ -1386,9 +1371,6 @@ function renderSettings(D) {
   </div>`).join('');
 
   return `
-    <div class="flex-between mb-20">
-      <h2 style="font-size:18px;font-weight:800;color:var(--text-0);display:flex;align-items:center;gap:8px">⚙️ Settings</h2>
-    </div>
     <div class="page-hdr"><h3>⚙️ Settings</h3></div>
     <div class="g g-auto gap-16 mb-24">
       <div class="card card-pad">
@@ -2295,8 +2277,7 @@ function renderAnalytics(D) {
 
     const fuelOpts = ['petrol','diesel','premium_petrol'].map(id => {
       const f = getFuel(id);
-      return `
-    <div class="flex-between mb-20"><h2 style="font-size:18px;font-weight:800;color:var(--text-0);display:flex;align-items:center;gap:8px">🔍 Analytics</h2></div><option value="${id}" ${vFuel===id?'selected':''}>${f.short}</option>`;
+      return `<option value="${id}" ${vFuel===id?'selected':''}>${f.short}</option>`;
     }).join('');
 
     body = `
@@ -2626,8 +2607,7 @@ function renderPayroll(D) {
       const statusColor = {draft:'var(--orange)', approved:'var(--accent-light)', paid:'var(--green)'}[savedPayroll.status] || 'var(--text-3)';
       const ini = sanitize(e.name||'').charAt(0).toUpperCase();
 
-      return `
-    <div class="flex-between mb-20"><h2 style="font-size:18px;font-weight:800;color:var(--text-0);display:flex;align-items:center;gap:8px">💵 Payroll</h2></div><div class="card card-pad mb-12">
+      return `<div class="card card-pad mb-12">
         <div class="flex-between mb-10">
           <div style="display:flex;align-items:center;gap:10px">
             <div style="width:36px;height:36px;border-radius:50%;background:rgba(212,148,15,0.12);border:2px solid rgba(212,148,15,0.3);display:grid;place-items:center;font-size:14px;font-weight:800;color:var(--accent-light)">${ini}</div>
@@ -3498,8 +3478,7 @@ function renderLubes(D) {
       const expiringSoon = p.expiryDate && !isExpired && p.expiryDate <= new Date(Date.now()+30*86400000).toISOString().slice(0,10);
       const stockBg  = isLow ? 'rgba(239,68,68,0.08)' : '';
       const margin   = p.sellingPrice && p.costPrice ? (((p.sellingPrice-p.costPrice)/p.sellingPrice)*100).toFixed(0) : '—';
-      return `
-    <div class="flex-between mb-20"><h2 style="font-size:18px;font-weight:800;color:var(--text-0);display:flex;align-items:center;gap:8px">🛢️ Lubes & Products</h2></div><tr style="background:${stockBg}">
+      return `<tr style="background:${stockBg}">
         <td>
           <div class="fw-700" style="font-size:13px;color:var(--text-0)">${sanitize(p.name)}</div>
           <div style="font-size:10px;color:var(--text-3)">${sanitize(p.brand||'')} ${p.hsn?'· HSN: '+p.hsn:''}</div>
@@ -3918,8 +3897,7 @@ function renderExports(D) {
       }, 0);
       const net = Math.max(0, earned - advDeduct);
       const savedSlip = (window._payrollSaved||{})[e.id];
-      return `
-    <div class="flex-between mb-20"><h2 style="font-size:18px;font-weight:800;color:var(--text-0);display:flex;align-items:center;gap:8px">📤 Exports</h2></div><div class="card card-pad mb-10">
+      return `<div class="card card-pad mb-10">
         <div class="flex-between mb-10">
           <div>
             <div class="fw-800" style="font-size:15px;color:var(--text-0)">${sanitize(e.name)}</div>
