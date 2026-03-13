@@ -5802,8 +5802,8 @@ const PAGES = [
   { id: 'exports', label: 'Exports', icon: '📤', group: 'reports' },
   { id: 'reports', label: 'Reports', icon: '📄', group: 'reports' },
   { id: 'analytics', label: 'Analytics', icon: '🔍', group: 'reports' },
-  { id: 'compare', label: 'Compare Stations', icon: '🏢', group: 'reports' },
-  { id: 'insights', label: 'AI Insights', icon: '🤖', group: 'reports' },
+  { id: 'compare', label: 'Compare Stations', icon: '🏢', group: 'reports', superAdminOnly: true },
+  { id: 'insights', label: 'AI Insights', icon: '🤖', group: 'reports', superAdminOnly: true },
   { id: 'settings', label: 'Settings', icon: '⚙️', group: 'reports' },
 ];
 
@@ -5845,7 +5845,8 @@ function buildNav() {
   let html = '';
   let lastGroup = '';
   const allowedPages = (APP.loggedIn && APP.role === 'admin') ? rbac_pages() : PAGES.map(p=>p.id);
-  PAGES.filter(p => allowedPages.includes(p.id)).forEach(p => {
+  const isSuperAdminUser = APP.isSuperAdmin || APP.role === 'superadmin';
+  PAGES.filter(p => allowedPages.includes(p.id) && (!p.superAdminOnly || isSuperAdminUser)).forEach(p => {
     if (p.group !== lastGroup) {
       html += `<div class="nav-group-label">${groups[p.group]}</div>`;
       lastGroup = p.group;
