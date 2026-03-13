@@ -8,8 +8,8 @@ WORKDIR /app
 # Copy package manifests from repo root
 COPY package.json package-lock.json* ./
 
-# Install production dependencies
-RUN npm install --omit=dev --no-audit --no-fund
+# Install production dependencies (clean cache first to avoid EINTEGRITY errors)
+RUN npm cache clean --force && npm install --omit=dev --no-audit --no-fund
 
 # Copy application source
 COPY src/ ./src/
