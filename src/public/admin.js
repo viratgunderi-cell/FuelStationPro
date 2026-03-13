@@ -5821,7 +5821,13 @@ function navigate(pageId) {
   document.getElementById('pageTitle').textContent = PAGES.find(p => p.id === pageId)?.label || 'Dashboard';
   const _tb = APP.tenant;
   const _bc = document.getElementById('breadcrumb');
-  if (_bc) { _bc.innerHTML = _tb ? '<strong style="color:var(--accent-light);font-size:13px;font-weight:800;letter-spacing:-0.2px">' + sanitize(_tb.name) + '</strong>' + (_tb.location ? '<span style="color:var(--text-3);font-size:11px;font-weight:500"> · ' + sanitize(_tb.location) + '</span>' : '') : '<span style="color:var(--text-3)">FuelBunk Pro</span>'; }
+  if (_bc) {
+    if (_tb) {
+      _bc.innerHTML = '⛽ <strong style="color:var(--accent-light);font-weight:900;letter-spacing:-0.2px">' + sanitize(_tb.name) + '</strong>' + (_tb.location ? '<span class="topbar-station-loc"> · ' + sanitize(_tb.location) + '</span>' : '');
+    } else {
+      _bc.textContent = '⛽ FuelBunk Pro';
+    }
+  }
   buildNav();
   renderPage();
   // Close mobile sidebar
