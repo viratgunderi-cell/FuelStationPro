@@ -204,7 +204,7 @@ function mt_showTenantForm(existing) {
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">Phone</label>
-              <input class="form-input" id="tPhone" placeholder="9876543210" value="${existing?.phone||''}" />
+              <div style="display:flex;gap:8px"><input class="form-input" id="tPhoneCC" type="tel" inputmode="numeric" maxlength="4" placeholder="+91" value="${existing?.phoneCC||'+91'}" style="width:72px;flex-shrink:0" /><input class="form-input" id="tPhone" type="tel" inputmode="numeric" maxlength="10" minlength="10" placeholder="10-digit number" value="${existing?.phone||''}" style="flex:1" /></div>
             </div>
             <div class="form-group"><label class="form-label">Station Icon</label>
               <select class="form-input" id="tIcon">
@@ -241,6 +241,7 @@ async function mt_saveTenant(isEdit) {
   const name     = document.getElementById('tName')?.value?.trim();
   const location = document.getElementById('tLocation')?.value?.trim();
   const ownerName= document.getElementById('tOwner')?.value?.trim();
+  const phoneCC  = document.getElementById('tPhoneCC')?.value?.trim() || '+91';
   const phone    = document.getElementById('tPhone')?.value?.trim();
   const icon     = document.getElementById('tIcon')?.value || '⛽';
   const adminUser= document.getElementById('tAdminUser')?.value?.trim() || 'admin';
