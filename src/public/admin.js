@@ -1427,7 +1427,10 @@ function renderSettings(D) {
             <span>📱 WhatsApp Number</span>
             <span style="font-size:10px;background:rgba(34,197,94,0.12);color:var(--green);padding:1px 6px;border-radius:4px;font-weight:700">FREE</span>
           </label>
-          <input class="form-input" id="waPhone" value="${D.waPhone || ''}" placeholder="e.g. 9876543210 (Indian mobile)" type="tel" inputmode="numeric" />
+          <div style="display:flex;gap:8px">
+          <input class="form-input" id="waPhoneCC" type="tel" inputmode="numeric" maxlength="4" placeholder="+91" value="${D.waPhoneCC || '+91'}" style="width:72px;flex-shrink:0" />
+          <input class="form-input" id="waPhone" type="tel" inputmode="numeric" maxlength="10" minlength="10" placeholder="10-digit number" value="${D.waPhone || ''}" style="flex:1" />
+        </div>
           <div style="font-size:11px;color:var(--text-3);margin-top:3px">Your WhatsApp number — receives low-tank, mismatch & daily summary alerts</div>
         </div>
         <div class="form-group">
@@ -7832,6 +7835,7 @@ function saveUPISettings() {
   const rzpKey = (document.getElementById('rzpKey')?.value || '').trim();
   const stationCode = (document.getElementById('stationCode')?.value || '').trim();
   const omcName = (document.getElementById('omcName')?.value || '').trim();
+  const waPhoneCC = (document.getElementById('waPhoneCC')?.value || '+91').trim();
   const waPhone = (document.getElementById('waPhone')?.value || '').trim().replace(/\D/g,'');
   const waApiKey = (document.getElementById('waApiKey')?.value || '').trim();
   APP.data.upiVPA  = sanitize(vpa);
@@ -8094,7 +8098,7 @@ function empFormHTML(shiftOpts, vals) {
       <select class="form-input" id="empShift" multiple size="3" style="height:auto;padding:4px">${shiftOpts}</select>
     </div>
     <div class="form-row">
-      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="empPhone" placeholder="10-digit mobile" value="${vals.phone||''}" /></div>
+      <div class="form-group"><label class="form-label">Phone</label><div style="display:flex;gap:8px"><input class="form-input" id="empPhoneCC" type="tel" inputmode="numeric" maxlength="4" placeholder="+91" value="${vals.phoneCC||'+91'}" style="width:72px;flex-shrink:0" /><input class="form-input" id="empPhone" type="tel" inputmode="numeric" maxlength="10" minlength="10" placeholder="10-digit number" value="${vals.phone||''}" style="flex:1" /></div></div>
       <div class="form-group"><label class="form-label">Monthly Salary (₹)</label><input class="form-input" id="empSalary" type="number" value="${vals.salary||12000}" /></div>
     </div>
     <div style="margin-top:4px">
