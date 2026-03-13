@@ -525,15 +525,24 @@ async function startServer() {
   });
 
   // POST add tenant admin
-  app.post('/api/data/tenants/:id/admins', authMiddleware(db), reqRole('super'), async (req, res) => {
+  // POST add tenant admin — super can add to any tenant; Owner can add to their own
+  app.post('/api/data/tenants/:id/admins', authMiddleware(db), async (req, res) => {
+    // Allow super OR an Owner managing their own tenant
+    const isSuperUser = req.userType === 'super';
+    const isOwnerOfTenant = req.userType === 'admin' && 
+                            (req.userRole === 'Owner' || req.userRole === 'owner') &&
+                            req.tenantId === req.params.id;
+    if (!isSuperUser && !isOwnerOfTenant) {
+      return res.status(403).json({ error: 'Only Super Admin or Owner can add admin users' });
+    }
     const { name, username, password, role } = req.body;
     if (!name || !username || !password) return res.status(400).json({ error: 'All fields required' });
     if (password.length < 6) return res.status(400).json({ error: 'Password too short' });
     try {
       const exists = await db.prepare('SELECT id FROM admin_users WHERE tenant_id = $1 AND username = $2').get(req.params.id, username);
       if (exists) return res.status(409).json({ error: 'Username already exists' });
-      const result = const adminHash = await hashPw(password);
-      await db.prepare('INSERT INTO admin_users (tenant_id, name, username, pass_hash, role) VALUES ($1,$2,$3,$4,$5)').run(req.params.id, name, username, adminHash, role||'Manager');
+      const adminHash = await hashPw(password);
+      const result = await db.prepare('INSERT INTO admin_users (tenant_id, name, username, pass_hash, role) VALUES ($1,$2,$3,$4,$5)').run(req.params.id, name, username, adminHash, role||'Manager');
       res.json({ success: true, id: result.lastInsertRowid });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
