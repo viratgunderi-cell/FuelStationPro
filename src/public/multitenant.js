@@ -78,9 +78,23 @@ async function mt_showSelector() {
   const isSuperLoggedIn = mt_isSuperLoggedIn();
   document.body.classList.add('app-ready');
 
+  // Stats
+  const total = tenants.length;
+  const active = tenants.filter(t => t.active !== false).length;
+  const inactive = total - active;
+
+  // Search state
+  const q = window._mtSearch || '';
+
+  const filtered = tenants.filter(t => {
+    if (!q) return true;
+    const s = q.toLowerCase();
+    return (t.name||'').toLowerCase().includes(s) || (t.location||'').toLowerCase().includes(s);
+  });
+
   app.innerHTML = `
     <div style="position:fixed;inset:0;background:var(--bg-0);overflow-y:auto;z-index:9999">
-      <div style="max-width:560px;margin:0 auto;padding:28px 20px 60px">
+      <div style="max-width:720px;margin:0 auto;padding:28px 20px 60px">
 
         <!-- Header -->
         <div style="text-align:center;margin-bottom:28px">
@@ -89,20 +103,48 @@ async function mt_showSelector() {
           <p style="font-size:11px;color:var(--text-3);margin-top:4px">Multi-Station Management System</p>
         </div>
 
+        ${isSuperLoggedIn && total > 0 ? `
+        <!-- Stats Bar -->
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
+          <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:12px 16px">
+            <div style="font-size:22px;font-weight:800;color:var(--accent-light)">${total}</div>
+            <div style="font-size:9px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px">Total Stations</div>
+          </div>
+          <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:12px 16px">
+            <div style="font-size:22px;font-weight:800;color:var(--green)">${active}</div>
+            <div style="font-size:9px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px">Active</div>
+          </div>
+          <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:12px 16px">
+            <div style="font-size:22px;font-weight:800;color:var(--red)">${inactive}</div>
+            <div style="font-size:9px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px">Inactive</div>
+          </div>
+        </div>
+        ` : ''}
+
         <!-- Station List -->
         <div style="background:var(--bg-2);border-radius:var(--radius);border:1px solid var(--border);overflow:hidden;margin-bottom:14px">
-          <div style="padding:12px 18px;border-bottom:1px solid var(--border-light);display:flex;justify-content:space-between;align-items:center">
-            <h4 style="font-size:12px;font-weight:700;color:var(--text-0)">🏪 Select Your Station</h4>
+          <div style="padding:12px 18px;border-bottom:1px solid var(--border-light);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+            <h4 style="font-size:13px;font-weight:700;color:var(--text-0)">🏪 Select Your Station</h4>
             ${isSuperLoggedIn ? '<button class="btn btn-accent btn-sm" onclick="mt_openAddTenant()">+ Add Station</button>' : ''}
           </div>
+
+          ${isSuperLoggedIn && total > 3 ? `
+          <!-- Search -->
+          <div style="padding:10px 14px;border-bottom:1px solid var(--border-light)">
+            <input id="mt_search_input" class="form-input" placeholder="🔍  Search by name or city..." value="${q}"
+              oninput="window._mtSearch=this.value;mt_showSelector()"
+              style="width:100%;font-size:13px;background:var(--bg-1)" />
+          </div>
+          ` : ''}
+
           <div style="padding:8px">
-            ${tenants.length === 0 ? `
+            ${filtered.length === 0 ? `
               <div style="text-align:center;padding:30px 20px;color:var(--text-3)">
-                <div style="font-size:32px;margin-bottom:8px">🏪</div>
-                <div style="font-weight:600;margin-bottom:4px">No stations yet</div>
-                <div style="font-size:12px">Login as Super Admin below to add stations</div>
+                <div style="font-size:32px;margin-bottom:8px">🔍</div>
+                <div style="font-weight:600;margin-bottom:4px">No stations found</div>
+                <div style="font-size:12px">Try a different search term</div>
               </div>
-            ` : tenants.map(t => {
+            ` : filtered.map(t => {
               const isActive = t.active !== false;
               return `
               <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--radius-sm);margin-bottom:4px;border:1px solid ${isActive ? 'transparent' : 'rgba(239,68,68,0.15)'};background:${isActive ? 'transparent' : 'rgba(239,68,68,0.03)'}">
@@ -116,7 +158,6 @@ async function mt_showSelector() {
                   <button onclick="event.stopPropagation();mt_openEditTenant('${t.id}')" style="background:transparent;border:none;color:var(--text-3);cursor:pointer;padding:4px;font-size:13px" title="Edit">✏️</button>
                   <button onclick="event.stopPropagation();mt_toggleStation('${t.id}')" style="background:${isActive ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)'};border:1px solid ${isActive ? 'rgba(239,68,68,0.25)' : 'rgba(34,197,94,0.25)'};color:${isActive ? 'var(--red)' : 'var(--green)'};cursor:pointer;padding:3px 8px;font-size:10px;font-weight:700;border-radius:4px" title="${isActive ? 'Deactivate' : 'Activate'}">${isActive ? '⏸ Off' : '▶ On'}</button>
                   <button onclick="event.stopPropagation();mt_manageStationAdmins('${t.id}')" style="background:rgba(212,148,15,0.12);border:1px solid rgba(212,148,15,0.3);color:var(--accent-light);cursor:pointer;padding:3px 8px;font-size:10px;font-weight:700;border-radius:4px" title="Manage Admins">👤 Admins</button>
-
                   <button onclick="event.stopPropagation();mt_confirmDeleteTenant('${t.id}')" style="background:transparent;border:none;color:var(--red);cursor:pointer;padding:4px;font-size:13px" title="Delete">🗑</button>
                 ` : ''}
               </div>`;
