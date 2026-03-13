@@ -6944,13 +6944,6 @@ function openPurchaseModal() {
         <input class="form-input" id="purchSupplier" placeholder="e.g. IOCL Bangalore Terminal" />
       </div>
     </div>
-    <div class="form-group">
-      <label class="form-label">Fuel Density (kg/L)
-        <span style="font-size:10px;color:var(--text-3);font-weight:400"> — from delivery note, IS-1460 standard</span>
-      </label>
-      <input class="form-input" id="purchDensity" type="number" min="0.5" max="1.0" step="0.001" placeholder="e.g. 0.742 (Petrol: 0.720–0.775)" oninput="checkDensityFlag()" />
-      <div id="purchDensityFlag" style="font-size:11px;margin-top:3px"></div>
-      </div>
     </div>
 
     <div id="purchTotalPreview" style="display:none;background:rgba(212,148,15,0.08);border:1px solid rgba(212,148,15,0.3);border-radius:10px;padding:14px 16px;margin-top:4px">
@@ -6969,13 +6962,21 @@ function openPurchaseModal() {
           <div class="mono fw-800" style="font-size:15px;color:var(--green)" id="purchEffRate">—</div>
         </div>
         <div style="background:rgba(212,148,15,0.08);border:1px solid rgba(212,148,15,0.2);border-radius:8px;padding:10px">
-          <div style="font-size:10px;color:var(--text-3);margin-bottom:3px">Total Amount</div>
+          <div style="font-size:10px;color:var(--text-3);margin-bottom:3px">Effective Rate/L</div>
           <div class="mono fw-800" style="font-size:15px;color:var(--accent-light)" id="purchTotalAmt">—</div>
         </div>
       </div>
+      <div style="background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);border-radius:10px;padding:12px 16px;margin-bottom:4px">
+        <div style="font-size:11px;color:var(--text-3);margin-bottom:4px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Total Purchase Price (After Tax)</div>
+        <div class="mono fw-900" style="font-size:22px;color:var(--green)" id="purchTotalAmt2">—</div>
+      </div>
       <div style="font-size:11px;color:var(--text-3)" id="purchTotalFml"></div>
     </div>
-  `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-accent" onclick="savePurchase()">💾 Save Purchase</button>`);
+    <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-accent" onclick="savePurchase()">💾 Save Purchase</button>
+    </div>
+  `, ``);
 }
 
 function checkDensityFlag() {
@@ -7021,6 +7022,8 @@ function calcPurchTotal() {
     document.getElementById('purchTaxPerL').textContent    = fmt2(taxPerL) + (taxPct ? ' (' + taxPct + '%)' : '');
     document.getElementById('purchEffRate').textContent    = fmt2(effRate);
     document.getElementById('purchTotalAmt').textContent   = '₹' + total.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    const t2 = document.getElementById('purchTotalAmt2');
+    if (t2) t2.textContent = '₹' + total.toLocaleString('en-IN', { maximumFractionDigits: 2 });
     document.getElementById('purchTotalFml').textContent   = qty.toLocaleString('en-IN') + ' L × ₹' + effRate.toFixed(3) + '/L';
     prev.style.display = '';
   } else {
@@ -7046,7 +7049,6 @@ async function savePurchase() {
   const taxPerL   = basicPerL * (taxPct / 100);
   const rate      = Math.round((basicPerL + taxPerL) * 1000) / 1000;
   const total     = Math.round(liters * rate * 100) / 100;
-  const density   = parseFloat(document.getElementById('purchDensity')?.value) || null;
   const purchase  = {
     id: Date.now(), date: today(), fuelType, liters,
     basicRate: basicKL,   // per KL — from invoice
@@ -7054,7 +7056,6 @@ async function savePurchase() {
     taxPct,               // e.g. 29.84
     rate,                 // effective per-litre rate
     total,
-    density,              // kg/L — IS-1460 check
     invoice: sanitize(invoice), supplier
   };
   APP.data.fuelPurchases.unshift(purchase);
