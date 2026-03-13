@@ -257,7 +257,7 @@ function renderTanks(D) {
       <div class="flex-between mb-10">
         <div>
           <div class="fw-800" style="color:var(--text-0);font-size:15px">Tank ${t.id}
-            <span style="font-size:10px;font-weight:700;color:${fuel.color};background:${fuel.color}22;padding:2px 7px;border-radius:4px;margin-left:6px">${fuel.short}</span>
+            <span style="font-size:14px;font-weight:800;color:${fuel.color};background:${fuel.color}22;padding:3px 10px;border-radius:5px;margin-left:8px">${fuel.short}</span>
           </div>
           <div style="font-size:10px;color:var(--text-3);margin-top:2px">${dipSource}</div>
         </div>
