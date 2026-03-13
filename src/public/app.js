@@ -113,8 +113,9 @@ async function initApp() {
 
   // Store tenant info in APP for use throughout
   APP.tenant = _tenant;
-  // If super admin session active, mark it so sidebar shows super-admin-only pages
-  if (typeof mt_isSuperLoggedIn === 'function' && mt_isSuperLoggedIn()) APP.isSuperAdmin = true;
+  // Only show super-admin-only pages if user entered via super admin compare flow
+  // (not just because super session cookie exists from a previous login)
+  if (window._superAdminCompareMode === true) APP.isSuperAdmin = true;
 
   // HTTPS redirect: REMOVED for standalone HTML build
 
