@@ -204,7 +204,7 @@ function mt_showTenantForm(existing) {
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">Phone</label>
-              <div style="display:flex;gap:8px"><input class="form-input" id="tPhoneCC" type="tel" inputmode="numeric" maxlength="4" placeholder="+91" value="${existing?.phoneCC||'+91'}" style="width:72px;flex-shrink:0" /><input class="form-input" id="tPhone" type="tel" inputmode="numeric" maxlength="10" minlength="10" placeholder="10-digit number" value="${existing?.phone||''}" style="flex:1" /></div>
+              <div style="display:flex;gap:8px"><input class="form-input" id="tPhoneCC" type="tel" inputmode="numeric" maxlength="4" placeholder="+91" value="${existing?.phoneCC||'+91'}" style="width:72px;flex-shrink:0" /><input class="form-input" id="tPhone" type="tel" inputmode="numeric" maxlength="10" minlength="10" oninput="this.value=this.value.replace(/[^0-9]/g,'')" placeholder="10-digit number" value="${existing?.phone||''}" style="flex:1" /></div>
             </div>
             <div class="form-group"><label class="form-label">Station Icon</label>
               <select class="form-input" id="tIcon">
@@ -247,6 +247,7 @@ async function mt_saveTenant(isEdit) {
   const adminUser= document.getElementById('tAdminUser')?.value?.trim() || 'admin';
   const adminPass= document.getElementById('tAdminPass')?.value || 'admin123';
   if (!name || name.length < 2) { mt_toast('Enter a station name', 'error'); return; }
+  if (!phone || phone.length !== 10 || !/^[0-9]{10}$/.test(phone)) { mt_toast('Phone number must be exactly 10 digits', 'error'); return; }
 
   // Use API if available
   if (typeof TenantAPI !== 'undefined') {
