@@ -229,7 +229,10 @@ async function emp_flushPendingSales() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(sale),
       });
-      if (resp.ok) { savedCount++; }
+      if (resp.ok) {
+        // FIX 33c: server returns { duplicate: true } for idempotent retries — still a success
+        savedCount++;
+      }
       else { empState.pendingSales.push(sale); failedCount++; }
     } catch {
       empState.pendingSales.push(sale);
@@ -1977,7 +1980,14 @@ function emp_recordSale() {
   }
 
   const sale = {
-    id: Date.now(), date: today(), time: emp_time(),
+    id: Date.now(), date: emp_today(), time: emp_time(),
+    // FIX 33: idempotency key lets server deduplicate retries (network drop after server
+    // accepted the sale but before client got the 200 response back — previously caused
+    // duplicate sales when flushOfflineQueue retried). crypto.randomUUID is available in
+    // all modern browsers; fallback uses timestamp + random for older contexts.
+    idempotencyKey: (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : (Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)),
     fuelType: empSaleFuel, liters: l, amount: amt,
     mode: empPayMode, pump: p, nozzle,
     vehicle: sanitize(v),
@@ -2013,11 +2023,17 @@ function emp_recordSale() {
               toast(`❌ Pump is inactive — sale rejected. Contact admin.`, 'error');
               emp_saveSession();
               renderPage();
-            } else if (resp.status === 422 && err.error === 'Credit limit exceeded') {
-              // FA-02: server rejected credit sale — remove from local state too
+            } else if (resp.status === 422 && (err.error === 'Credit limit exceeded' || err.error === 'credit_limit_exceeded')) {
+              // FIX F-10: server hard-blocks credit sales that exceed limit — remove from local state
               empState.sales = empState.sales.filter(s => s.id !== sale.id);
               if (APP.data?.sales) APP.data.sales = APP.data.sales.filter(s => s.id !== sale.id);
-              toast(`❌ Server rejected: credit limit exceeded (available: ${cur(err.available||0)})`, 'error');
+              const remaining = err.remainingCredit != null ? cur(err.remainingCredit) : cur(err.available || 0);
+              toast(`❌ Credit limit exceeded. Available credit: ${remaining}. Ask customer to make a payment first.`, 'error');
+              // Also reverse the local outstanding balance update
+              if (empPayMode === 'credit' && sale.customer) {
+                const creditCust = APP.data?.creditCustomers?.find(c => c.name === sale.customer);
+                if (creditCust) creditCust.outstanding = Math.max(0, (creditCust.outstanding || 0) - sale.amount);
+              }
               emp_saveSession();
               renderPage();
             } else {
@@ -2242,6 +2258,21 @@ function emp_confirmEnd() {
 }
 
 async function emp_submit() {
+  // FIX 36: prevent double-submit — user tapping Submit twice (slow connection)
+  // would deduct tank levels twice and duplicate the shift history entry
+  if (window._empSubmitInProgress) {
+    toast('⏳ Shift close already in progress — please wait…', 'warning');
+    return;
+  }
+  window._empSubmitInProgress = true;
+  try {
+    await _emp_submit_inner();
+  } finally {
+    window._empSubmitInProgress = false;
+  }
+}
+
+async function _emp_submit_inner() {
   // ── FA-01: Flush any pending queued sales before submitting shift ──
   await emp_flushPendingSales().catch(() => {});
   // ── Refresh tanks from DB to get latest values before deducting ──
@@ -3225,7 +3256,8 @@ async function resetData() {
 // ── PDF REPORTS ──────────────────────────────────────────────
 function generateDSRReport() {
   const D = APP.data;
-  const todayIso = new Date().toISOString().slice(0, 10);
+  // FIX 32: use emp_today() (IST) — prevents wrong date in 18:30–00:00 UTC window
+  const todayIso = (typeof emp_today === 'function') ? emp_today() : new Date().toLocaleString('en-CA', { timeZone: 'Asia/Kolkata' }).slice(0, 10);
   const todaySales = D.sales.filter(s => (s.date || '').slice(0, 10) === todayIso);
   const totalRev = todaySales.reduce((a, s) => a + s.amount, 0);
   const totalL = todaySales.reduce((a, s) => a + s.liters, 0);
@@ -3531,7 +3563,14 @@ async function loadData() {
   // Previously sequential (~18 round-trips × 300ms = 6s). Now one wave.
   // Fix 01C: limit date-heavy stores to last 60 days on dashboard load.
   // Reports tab uses its own date-range queries — completely unaffected.
-  const from60 = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  // FIX 28: compute 60-day cutoff from IST today, not UTC Date.now() — prevents
+  //          off-by-one during the 18:30–00:00 UTC window (midnight IST to midnight UTC).
+  const from60 = (() => {
+    const t = (typeof today === 'function' ? today() : new Date().toLocaleString('en-CA', { timeZone: 'Asia/Kolkata' }).slice(0, 10));
+    const [y, m, d] = t.split('-').map(Number);
+    const dt = new Date(y, m - 1, d - 60);
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  })();
   const [
     seeded,
     razorpayKey,

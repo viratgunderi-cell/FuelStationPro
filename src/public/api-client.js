@@ -264,12 +264,26 @@ function saveDataSnapshot(data) {
     localStorage.setItem(_OFFLINE_SNAP_KEY, JSON.stringify({ data, savedAt: Date.now() }));
   } catch (e) { console.warn('[Offline] snapshot save failed:', e.message); }
 }
+// FIX F-04: Add stale-data age check — warn if snapshot is older than SNAPSHOT_STALE_MS (24h)
+// Previously: savedAt was stored but never read — stale prices shown silently for days.
 function loadDataSnapshot() {
   try {
     const raw = localStorage.getItem(_OFFLINE_SNAP_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    return parsed?.data || null;
+    if (!parsed?.data) return null;
+    const staleMs = (typeof SNAPSHOT_STALE_MS !== "undefined") ? SNAPSHOT_STALE_MS : 86400000;
+    const ageMs = Date.now() - (parsed.savedAt || 0);
+    const ageHours = Math.round(ageMs / 3600000);
+    if (ageMs > staleMs) {
+      console.warn("[Offline] Snapshot is " + ageHours + "h old — fuel prices and stock levels may be stale.");
+      // Set a flag so the app can show a stale-data banner
+      window._snapshotIsStale = true;
+      window._snapshotAgeHours = ageHours;
+    } else {
+      window._snapshotIsStale = false;
+    }
+    return parsed.data;
   } catch { return null; }
 }
 window.saveDataSnapshot = saveDataSnapshot;
@@ -336,6 +350,9 @@ window.apiFetch = apiFetch;
 
 // ── Flush offline queue when connectivity restores ────────────────────────────
 window._offlineFlushing = false;
+// FIX F-03: Re-queue failed operations instead of silently dropping them.
+// Previously: _queueClear() ran after ALL ops regardless of individual failures — lost data.
+// Now: only successful ops are removed; failed ops remain in queue for next retry.
 async function flushOfflineQueue() {
   const queue = _queueGet();
   if (!queue.length || window._offlineFlushing) return;
@@ -344,7 +361,9 @@ async function flushOfflineQueue() {
   console.log('[Offline] Flushing', queue.length, 'queued operations');
   if (typeof toast === 'function') toast('⟳ Syncing ' + queue.length + ' offline changes…', 'info');
 
-  let successCount = 0, failCount = 0;
+  const failedOps = [];
+  let successCount = 0;
+
   for (const op of queue) {
     try {
       await _apiFetch_orig(op.path, {
@@ -355,17 +374,30 @@ async function flushOfflineQueue() {
       successCount++;
     } catch (e) {
       console.error('[Offline] Flush failed for', op.method, op.path, e.message);
-      failCount++;
+      // FIX: Track retry count to avoid infinite re-queuing
+      const retries = (op._retries || 0) + 1;
+      if (retries <= 3) {
+        failedOps.push({ ...op, _retries: retries, _lastError: e.message });
+      } else {
+        console.warn('[Offline] Dropping op after 3 retries:', op.method, op.path);
+        if (typeof toast === 'function')
+          toast(`⚠️ Dropped 1 change after 3 failed attempts (${op.method} ${op.path})`, 'error');
+      }
     }
   }
 
+  // Only keep the ops that failed (preserve them for next retry)
   _queueClear();
+  if (failedOps.length > 0) {
+    try { localStorage.setItem('_fb_offline_queue', JSON.stringify(failedOps)); } catch(e) {}
+  }
+
   window._offlineFlushing = false;
 
   if (successCount > 0 && typeof toast === 'function')
     toast('✅ ' + successCount + ' change' + (successCount > 1 ? 's' : '') + ' synced to server', 'success');
-  if (failCount > 0 && typeof toast === 'function')
-    toast('⚠️ ' + failCount + ' change(s) failed to sync — please check', 'error');
+  if (failedOps.length > 0 && typeof toast === 'function')
+    toast('⚠️ ' + failedOps.length + ' change(s) will retry on next sync (attempt ' + (failedOps[0]._retries) + '/3)', 'warning');
 
   // Reload data to ensure UI reflects true server state
   if (typeof loadData === 'function' && typeof APP !== 'undefined' && APP.loggedIn) {

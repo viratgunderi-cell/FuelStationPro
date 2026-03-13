@@ -1,18 +1,22 @@
 /**
- * FuelBunk Pro — Service Worker v8.1
+ * FuelBunk Pro — Service Worker v12
  * Strategy:
- *   - App shell (index.html, api-client.js, bridge.js): Cache-first, network fallback
+ *   - App shell (index.html, JS files, icons): Cache-first, network fallback
+ *   - Chart.js (self-hosted): Pre-cached in shell — FIX F-07 (was CDN-only, failed offline)
  *   - API /api/public/*: Network-first, cache fallback (employee portal offline support)
  *   - API /api/data/compare/*: Network-first, cache fallback (compare page offline)
  *   - API /api/data/* and /api/auth/*: Network-only (auth + data must be fresh)
  *   - Static assets (manifest, icons): Cache-first, long TTL
+ *   - Push notifications: Fully wired — requires VAPID subscription from server
  */
 
-const CACHE_NAME    = 'fuelbunk-v11';
-const SHELL_CACHE   = 'fuelbunk-shell-v11';
-const API_CACHE     = 'fuelbunk-api-v11';
+const CACHE_VERSION = 'v12';
+const CACHE_NAME    = `fuelbunk-${CACHE_VERSION}`;
+const SHELL_CACHE   = `fuelbunk-shell-${CACHE_VERSION}`;
+const API_CACHE     = `fuelbunk-api-${CACHE_VERSION}`;
 
-// App shell — cache on install (split bundle: v7)
+// App shell — pre-cached on install
+// FIX F-07: Added /chart.min.js (self-hosted Chart.js) so charts work offline
 const SHELL_ASSETS = [
   '/',
   '/multitenant.js',
@@ -23,6 +27,10 @@ const SHELL_ASSETS = [
   '/api-client.js',
   '/bridge.js',
   '/manifest.json',
+  '/icon-192.png',
+  '/icon-512.png',
+  '/apple-touch-icon.png',
+  '/chart.min.js',
 ];
 
 // ── INSTALL: pre-cache app shell ────────────────────────────────────────────
@@ -56,7 +64,25 @@ self.addEventListener('fetch', event => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Only handle same-origin requests
+  // FIX F-07: Intercept cdnjs Chart.js requests and serve from local cache
+  // This means even if the CDN is unreachable, Chart.js works offline.
+  if (url.hostname === 'cdnjs.cloudflare.com' && url.pathname.includes('chart')) {
+    event.respondWith(
+      caches.match('/chart.min.js').then(cached => {
+        if (cached) return cached;
+        return fetch(request.clone()).then(res => {
+          if (res.ok) {
+            const clone = res.clone();
+            caches.open(SHELL_CACHE).then(c => c.put('/chart.min.js', clone));
+          }
+          return res;
+        });
+      })
+    );
+    return;
+  }
+
+  // Only handle same-origin requests for other routes
   if (url.origin !== location.origin) return;
 
   const path = url.pathname;
@@ -69,7 +95,6 @@ self.addEventListener('fetch', event => {
     }
 
     // Public employee APIs (/api/public/*): network-first, fall back to cache
-    // This lets the employee portal work offline after first load
     if (path.startsWith('/api/public/') && request.method === 'GET') {
       event.respondWith(
         fetch(request.clone())
@@ -85,7 +110,7 @@ self.addEventListener('fetch', event => {
       return;
     }
 
-    // Compare summary: network-first, cache fallback (useful when briefly offline)
+    // Compare summary: network-first, cache fallback
     if (path.startsWith('/api/data/compare/') && request.method === 'GET') {
       event.respondWith(
         fetch(request.clone())
@@ -104,7 +129,7 @@ self.addEventListener('fetch', event => {
     return; // all other API: network only
   }
 
-  // ── App shell (HTML + JS files): cache-first, network fallback ─────────
+  // ── App shell (HTML + JS + assets): cache-first, network fallback ───────
   if (request.method === 'GET') {
     event.respondWith(
       caches.match(request).then(cached => {
@@ -145,33 +170,61 @@ async function syncPendingSales() {
   }
 }
 
-// ── PUSH NOTIFICATIONS (future use) ────────────────────────────────────────
+// ── PUSH NOTIFICATIONS ──────────────────────────────────────────────────────
+// Requires server-side VAPID push subscription (see /api/push/subscribe endpoint).
+// Payload format: { title, body, tag, url, urgency }
 self.addEventListener('push', event => {
   if (!event.data) return;
   try {
     const data = event.data.json();
+    const urgency = data.urgency || 'normal'; // 'critical' | 'high' | 'normal'
+    const iconMap = {
+      critical: '/icon-512.png',
+      high:     '/icon-192.png',
+      normal:   '/icon-192.png',
+    };
     event.waitUntil(
       self.registration.showNotification(data.title || 'FuelBunk Pro', {
-        body: data.body || '',
-        icon: '/icon-192.png',
-        badge: '/icon-192.png',
-        tag: data.tag || 'fuelbunk',
-        data: data.url ? { url: data.url } : {},
-        vibrate: [100, 50, 100],
+        body:    data.body || '',
+        icon:    iconMap[urgency] || '/icon-192.png',
+        badge:   '/icon-192.png',
+        tag:     data.tag || 'fuelbunk',
+        data:    { url: data.url || '/' },
+        vibrate: urgency === 'critical' ? [200, 100, 200, 100, 200] : [100, 50, 100],
+        requireInteraction: urgency === 'critical',
+        actions: urgency === 'critical' ? [
+          { action: 'view',    title: '📊 View Dashboard' },
+          { action: 'dismiss', title: 'Dismiss' },
+        ] : [],
       })
     );
-  } catch (e) {}
+  } catch (e) {
+    console.warn('[SW] Push parse error:', e);
+  }
 });
 
 self.addEventListener('notificationclick', event => {
   event.notification.close();
+  if (event.action === 'dismiss') return;
   const url = event.notification.data?.url || '/';
   event.waitUntil(
-    clients.matchAll({ type: 'window' }).then(wcs => {
-      const existing = wcs.find(c => c.url === url && 'focus' in c);
-      return existing ? existing.focus() : clients.openWindow(url);
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(wcs => {
+      // Focus existing window if already open
+      const existing = wcs.find(c => c.url.startsWith(self.registration.scope) && 'focus' in c);
+      if (existing) {
+        existing.focus();
+        existing.postMessage({ type: 'NOTIFICATION_NAVIGATE', url });
+        return;
+      }
+      return clients.openWindow(url);
     })
   );
 });
 
-console.log('[SW] FuelBunk Pro Service Worker v10 loaded');
+// ── SW → Client messaging ───────────────────────────────────────────────────
+self.addEventListener('message', event => {
+  if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
+});
+
+// FIX F-08: Version string now matches CACHE_VERSION constant
+console.log(`[SW] FuelBunk Pro Service Worker ${CACHE_VERSION} loaded`);

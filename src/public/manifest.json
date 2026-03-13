@@ -11,31 +11,50 @@
   "categories": ["business", "productivity"],
   "icons": [
     {
-      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='100' fill='%23d4940f'/%3E%3Ctext x='256' y='340' font-size='280' text-anchor='middle' fill='%23000'%3E⛽%3C/text%3E%3C/svg%3E",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
     },
     {
       "src": "/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "maskable"
     },
     {
       "src": "/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
     }
   ],
   "screenshots": [
     {
-      "src": "/",
+      "src": "/screenshots/dashboard-mobile.png",
       "sizes": "390x844",
       "type": "image/png",
       "form_factor": "narrow",
-      "label": "FuelBunk Pro Dashboard"
+      "label": "FuelBunk Pro — Station Dashboard"
+    },
+    {
+      "src": "/screenshots/dashboard-tablet.png",
+      "sizes": "1024x768",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "FuelBunk Pro — Admin Dashboard on Tablet"
     }
   ],
   "shortcuts": [
@@ -51,6 +70,13 @@
       "short_name": "Dashboard",
       "description": "View station dashboard",
       "url": "/#dashboard",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Tank Levels",
+      "short_name": "Tanks",
+      "description": "Check and update fuel tank levels",
+      "url": "/#tanks",
       "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
     }
   ],

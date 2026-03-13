@@ -7,7 +7,8 @@
 
 // ── DASHBOARD ────────────────────────────────────────────────
 function renderDashboard(D) {
-  const todayIso = new Date().toISOString().slice(0, 10);
+  // FIX 31: use IST today() to prevent off-by-one during 18:30-00:00 UTC
+  const todayIso = (typeof window.today === 'function') ? window.today() : new Date().toLocaleString('en-CA', { timeZone: 'Asia/Kolkata' }).slice(0, 10);
   const todaySales = D.sales.filter(s => (s.date || '').slice(0, 10) === todayIso);
   const totalRevenue = todaySales.reduce((a, s) => a + s.amount, 0);
   const totalLiters = todaySales.reduce((a, s) => a + s.liters, 0);
@@ -504,7 +505,8 @@ function renderPumps(D) {
 
 // ── SALES ────────────────────────────────────────────────────
 function renderSales(D, filter = 'all') {
-  const todayIso = new Date().toISOString().slice(0, 10);
+  // FIX 31: use IST today()
+  const todayIso = (typeof window.today === 'function') ? window.today() : new Date().toLocaleString('en-CA', { timeZone: 'Asia/Kolkata' }).slice(0, 10);
 
   // ── Date navigation state ──────────────────────────────────
   if (!APP.salesDate) APP.salesDate = todayIso;
@@ -2993,7 +2995,8 @@ function nozzleLog_save() {
 // Called from emp_submit — auto-captures all nozzle readings for the shift
 function nozzleLog_recordFromShift(empName, shiftName, pumps, openReadings, closeReadings, sales) {
   if (!window._nozzleMeterLog) window._nozzleMeterLog = [];
-  const today = new Date().toISOString().slice(0, 10);
+  // FIX 31: use IST today()
+  const today = (typeof window.today === 'function') ? window.today() : new Date().toLocaleString('en-CA', { timeZone: 'Asia/Kolkata' }).slice(0, 10);
   const nowTs = Date.now();
 
   pumps.forEach(pump => {
@@ -5780,7 +5783,7 @@ function navigate(pageId) {
   }
   APP.page = pageId;
   APP.salesFilter = 'all';
-  APP.salesDate = new Date().toISOString().slice(0, 10);
+  APP.salesDate = (typeof window.today === 'function') ? window.today() : new Date().toLocaleString('en-CA', { timeZone: 'Asia/Kolkata' }).slice(0, 10); // FIX 31: IST
   APP.salesEmpFilter = 'all';
   window.location.hash = pageId;
   document.getElementById('pageTitle').textContent = PAGES.find(p => p.id === pageId)?.label || 'Dashboard';
@@ -5973,6 +5976,11 @@ async function saveSale() {
 
   const sale = {
     id: Date.now(), date: today(), time: now(), fuelType, liters, amount,
+    // FIX 34: idempotency key prevents duplicate sales if the request is retried
+    // (e.g. user double-submits or network drops after server accepted but before client got response)
+    idempotencyKey: (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : (Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)),
     mode, pump, vehicle: sanitize(vehicle),
     customer: customer ? sanitize(customer) : undefined, shift: 'Current',
     employee: APP.adminUser?.name || 'Admin',
@@ -6604,6 +6612,17 @@ async function saveDip() {
   auditLog('dip_reading', { tankId, reading, method });
   closeModal();
   toast(`✅ Tank ${tankId} — Available Qty set to ${reading.toLocaleString('en-IN', {maximumFractionDigits:1})} L`, 'success');
+
+  // FIX 26: check thresholds after dip and show alert (push fires server-side on next deduction;
+  // for dip-driven updates fire local alert immediately so admin is aware of the current level)
+  if (tank) {
+    const pct = tank.capacity > 0 ? Math.round((reading / tank.capacity) * 100) : 0;
+    if (pct < TANK_CRITICAL_PCT) {
+      toast(`🚨 ${getFuel(tank.fuelType).name} tank is CRITICAL at ${pct}% after dip!`, 'error');
+    } else if (pct < TANK_LOW_PCT) {
+      toast(`⚠️ ${getFuel(tank.fuelType).name} tank is LOW at ${pct}% after dip.`, 'warning');
+    }
+  }
   renderPage();
 }
 
@@ -8666,11 +8685,13 @@ window.renderCompare = renderCompare;
 function renderInsights(D) {
   if (!D) return '<div style="padding:40px;text-align:center;color:var(--text-3)">Loading\u2026</div>';
 
-  const today = new Date().toISOString().slice(0,10);
-  const todayDate = new Date(today);
+  // FIX 29: use IST today() — UTC toISOString() gives wrong date during 18:30–00:00 UTC
+  const today = (typeof window.today === 'function') ? window.today() : new Date().toLocaleString('en-CA', { timeZone: 'Asia/Kolkata' }).slice(0, 10);
+  const [ty, tm, td] = today.split('-').map(Number);
 
   function rollingAvg(arr, field, nDays) {
-    const cutoff = new Date(todayDate.getTime() - nDays*86400000).toISOString().slice(0,10);
+    const cutoffDate = new Date(ty, tm - 1, td - nDays);
+    const cutoff = `${cutoffDate.getFullYear()}-${String(cutoffDate.getMonth()+1).padStart(2,'0')}-${String(cutoffDate.getDate()).padStart(2,'0')}`;
     const rows = arr.filter(s => s.date >= cutoff && s.date < today);
     if (!rows.length) return 0;
     return rows.reduce((a,b) => a+(parseFloat(b[field])||0), 0) / nDays;

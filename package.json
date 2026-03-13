@@ -1,6 +1,6 @@
 {
   "name": "fuelbunk-pro-server",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "FuelBunk Pro — Fuel Station Management Backend (PostgreSQL)",
   "main": "src/server.js",
   "engines": {
@@ -8,7 +8,9 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "setup": "node scripts/setup.js",
+    "generate-vapid": "node -e \"const wp=require('web-push');const k=wp.generateVAPIDKeys();console.log('\\nAdd these to your .env file:\\n');console.log('VAPID_PUBLIC_KEY=' + k.publicKey);console.log('VAPID_PRIVATE_KEY=' + k.privateKey);console.log('VAPID_MAILTO=mailto:admin@yourdomain.com\\n');\""
   },
   "dependencies": {
     "pg": "^8.11.0",
@@ -16,6 +18,7 @@
     "cors": "^2.8.5",
     "express": "^4.21.0",
     "express-rate-limit": "^7.4.0",
-    "helmet": "^8.0.0"
+    "helmet": "^8.0.0",
+    "web-push": "^3.6.7"
   }
 }

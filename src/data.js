@@ -7,6 +7,12 @@ const { hashPassword } = require('./schema');
 const { requireRole, auditLog } = require('./security');
 const { pool } = require('./schema');
 
+// FIX 27b: IST date helper — use everywhere instead of new Date().toISOString().slice(0,10)
+// Prevents off-by-one on dates between midnight IST (18:30 UTC prev day) and midnight UTC
+function istDate() {
+  return new Date().toLocaleString('en-CA', { timeZone: 'Asia/Kolkata' }).slice(0, 10);
+}
+
 // ── Store metadata ─────────────────────────────────────────────────────────
 const STORE_MAP = {
   sales:              { table: 'sales',              hasAutoId: true },
@@ -60,6 +66,11 @@ const WRITE_ALIAS = {
   currentReading: 'current_reading',
   pinHash:        'pin_hash',
   passHash:       'pass_hash',
+  // FIX 38: explicit aliases for tank dip columns — prevents camelToSnake from
+  // silently dropping these if column names ever diverge from convention
+  lastDip:        'last_dip',
+  lastDipSource:  'last_dip_source',
+  idempotencyKey: 'idempotency_key',  // FIX 35b: ensure admin sales route stores key
 };
 
 // ── DB column → frontend mapping (read) ───────────────────────────────────
@@ -368,22 +379,36 @@ function dataRoutes(db) {
   async function checkDayLock(req, res, next) {
     const store = req.params.store;
     if (!DAY_LOCKED_STORES.has(store)) return next();
-    // Determine the record date: body.date, or today
-    const recDate = (req.body && req.body.date)
-      ? String(req.body.date).slice(0, 10)
-      : new Date().toISOString().slice(0, 10);
+
+    // FIX 21: bulk upsert sends body as an array — check every record's date, not just body.date
+    const body = req.body;
+    const records = Array.isArray(body) ? body : [body];
+    const today = istDate();
+    const datesToCheck = new Set(
+      records.map(r => (r && r.date ? String(r.date).slice(0, 10) : today))
+    );
+
     try {
-      const r = await pool.query(
-        `SELECT value FROM settings WHERE key = $1 AND tenant_id = $2`,
-        [`day_lock_${recDate}`, req.tenantId || '']
-      );
-      if (r.rows[0] && r.rows[0].value === 'true') {
-        return res.status(423).json({
-          error: `Day ${recDate} is locked. Unlock from Settings → Day-Lock before editing.`,
-          locked: true, date: recDate
-        });
+      for (const recDate of datesToCheck) {
+        const r = await pool.query(
+          `SELECT value FROM settings WHERE key = $1 AND tenant_id = $2`,
+          [`day_lock_${recDate}`, req.tenantId || '']
+        );
+        if (r.rows[0] && r.rows[0].value === 'true') {
+          return res.status(423).json({
+            error: `Day ${recDate} is locked. Unlock from Settings → Day-Lock before editing.`,
+            locked: true, date: recDate
+          });
+        }
       }
-    } catch (e) { /* Lock check failed — allow through */ }
+    } catch (e) {
+      // FIX 16: fail-closed — if we cannot confirm the day is UNLOCKED, block the write.
+      console.error('[checkDayLock] DB error — blocking write as precaution:', e.message);
+      return res.status(503).json({
+        error: 'Cannot verify day-lock status due to a database error. Please retry in a few seconds.',
+        retryable: true,
+      });
+    }
     return next();
   }
 
@@ -445,6 +470,36 @@ function dataRoutes(db) {
       const data = req.body;
       await client.query('BEGIN');
 
+      // FIX F-10: Hard credit limit check — block sale if it would push customer over their limit
+      // Previously only a soft client-side warning was shown (checkCreditAlerts at 85%)
+      if ((data.type || 'sale').toLowerCase() === 'sale' && data.amount > 0) {
+        const custId = data.customerId || data.customer_id;
+        if (custId) {
+          const custRow = await client.query(
+            'SELECT balance, credit_limit FROM credit_customers WHERE id=$1 AND tenant_id=$2',
+            [custId, req.tenantId]
+          );
+          if (custRow.rows.length > 0) {
+            const { balance, credit_limit } = custRow.rows[0];
+            const currentBalance = parseFloat(balance) || 0;
+            const limit = parseFloat(credit_limit) || 0;
+            const saleAmount = parseFloat(data.amount) || 0;
+            if (limit > 0 && (currentBalance + saleAmount) > limit) {
+              await client.query('ROLLBACK');
+              client.release();
+              return res.status(422).json({
+                error: 'credit_limit_exceeded',
+                message: `Credit limit exceeded. Outstanding: ₹${currentBalance.toFixed(2)}, Limit: ₹${limit.toFixed(2)}, This sale: ₹${saleAmount.toFixed(2)}. Remaining credit: ₹${Math.max(0, limit - currentBalance).toFixed(2)}.`,
+                outstanding: currentBalance,
+                limit,
+                saleAmount,
+                remainingCredit: Math.max(0, limit - currentBalance),
+              });
+            }
+          }
+        }
+      }
+
       // Insert the transaction record
       const r = await client.query(
         `INSERT INTO credit_transactions
@@ -488,6 +543,22 @@ function dataRoutes(db) {
     const meta = STORE_MAP[req.params.store];
     if (!meta) return res.status(404).json({ error: 'Unknown store' });
     try {
+      // FIX 35: idempotency check for sales — prevents duplicate records when
+      // the admin client retries after a network drop. The idempotencyKey is
+      // generated client-side (Fix 34) and stored in the idempotency_key column.
+      if (req.params.store === 'sales') {
+        const idemKey = req.body?.idempotencyKey || req.body?.idempotency_key || '';
+        if (idemKey) {
+          const existing = await pool.query(
+            'SELECT id FROM sales WHERE tenant_id = $1 AND idempotency_key = $2',
+            [req.tenantId, idemKey]
+          );
+          if (existing.rows[0]) {
+            await auditLog(req, 'CREATE_DEDUP', 'sales', String(existing.rows[0].id), 'idempotent retry');
+            return res.json({ success: true, id: existing.rows[0].id, duplicate: true });
+          }
+        }
+      }
       const result = await upsertRow(meta, req.tenantId, req.body, true);
       await auditLog(req, 'CREATE', req.params.store, String(result.id||''), '');
       res.json({ success: true, id: result.id });

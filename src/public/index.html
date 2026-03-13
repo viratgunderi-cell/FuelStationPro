@@ -54,7 +54,8 @@
     /* Hide splash when app is ready */
     body.app-ready #splash { display: none !important; }
   </style>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
+  <!-- FIX F-07: Self-hosted Chart.js so it works offline via SW cache. CDN as fallback. -->
+  <script src="/chart.min.js" defer onerror="var s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js';document.head.appendChild(s)"></script>
 </head>
 <body>
 
@@ -139,11 +140,70 @@
     document.getElementById('splash-msg').textContent = 'Starting...';
   } catch(e) {}
 
-  // Register service worker v6 — works on any HTTPS or localhost origin
+  // Register service worker v12 — works on any HTTPS or localhost origin
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js?v=10.0', { scope: '/' })
+    navigator.serviceWorker.register('/sw.js?v=12.0', { scope: '/' })  // FIX F-08: version matches sw.js
       .then(function(reg) {
         reg.update(); // check for updates on every load
+
+        // FIX 30: wire up update detection so users get a prompt instead of stale app
+        // When a new SW is waiting, show a non-intrusive toast with a reload action
+        function promptUpdate(worker) {
+          if (!worker) return;
+          if (window._swUpdatePrompted) return;
+          window._swUpdatePrompted = true;
+
+          // Show a persistent, dismissible update banner at the top of the page
+          var showBanner = function() {
+            if (!document.body) { setTimeout(showBanner, 500); return; }
+            var existing = document.getElementById('fb-update-banner');
+            if (existing) return;
+            var banner = document.createElement('div');
+            banner.id = 'fb-update-banner';
+            banner.style.cssText = [
+              'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:99999',
+              'background:#1e3a5f', 'color:#f4f5f7', 'font-size:13px', 'font-weight:600',
+              'padding:10px 16px', 'display:flex', 'align-items:center', 'gap:12px',
+              'box-shadow:0 2px 8px rgba(0,0,0,0.4)', 'font-family:Arial,sans-serif',
+            ].join(';');
+            banner.innerHTML = [
+              '<span style="flex:1">🔄 A new version of FuelBunk Pro is available.</span>',
+              '<button id="fb-update-now" style="background:#d4940f;color:#0a0c10;border:none;',
+              'border-radius:6px;padding:6px 14px;font-weight:700;cursor:pointer;font-size:12px">',
+              'Update Now</button>',
+              '<button id="fb-update-dismiss" style="background:transparent;color:#9098a5;border:none;',
+              'cursor:pointer;font-size:16px;padding:2px 6px" title="Dismiss">✕</button>',
+            ].join('');
+            document.body.prepend(banner);
+            document.getElementById('fb-update-now').onclick = function() {
+              worker.postMessage({ type: 'SKIP_WAITING' });
+              banner.innerHTML = '<span style="flex:1">⏳ Updating…</span>';
+            };
+            document.getElementById('fb-update-dismiss').onclick = function() {
+              banner.remove();
+            };
+          };
+          showBanner();
+
+          // Reload once new SW takes control
+          navigator.serviceWorker.addEventListener('controllerchange', function() {
+            window.location.reload();
+          });
+        }
+
+        // New SW already waiting (user revisiting tab)
+        if (reg.waiting) { promptUpdate(reg.waiting); }
+
+        // New SW installs during this session
+        reg.addEventListener('updatefound', function() {
+          var newWorker = reg.installing;
+          if (!newWorker) return;
+          newWorker.addEventListener('statechange', function() {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              promptUpdate(newWorker);
+            }
+          });
+        });
       })
       .catch(function(e) { console.warn('[PWA] SW register failed:', e.message); });
   }
@@ -826,13 +886,13 @@ try {
 </script>
 
 <!-- FuelBunk Pro — Backend Integration (SQLite REST API) -->
-<script src="/api-client.js?v=11"></script>
+<script src="/api-client.js?v=12"></script>
 
-<script src="/multitenant.js?v=11"></script>
-<script src="/utils.js?v=11"></script>
-<script src="/admin.js?v=11"></script>
-<script src="/employee.js?v=11"></script>
-<script src="/app.js?v=11"></script>
-<script src="/bridge.js?v=11"></script>
+<script src="/multitenant.js?v=12"></script>
+<script src="/utils.js?v=12"></script>
+<script src="/admin.js?v=12"></script>
+<script src="/employee.js?v=12"></script>
+<script src="/app.js?v=12"></script>
+<script src="/bridge.js?v=12"></script>
 </body>
 </html>

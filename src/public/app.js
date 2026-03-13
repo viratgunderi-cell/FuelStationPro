@@ -125,6 +125,23 @@ async function initApp() {
     navigator.serviceWorker.addEventListener('message', e => {
       if (e.data?.type === 'SYNC_COMPLETE') toast('Data synced!', 'info');
       if (e.data?.type === 'UPDATE_AVAILABLE') toast('App updated — reload for latest version', 'info');
+      // FIX 19a: SW background-sync asks client to flush its offline queue
+      if (e.data?.type === 'SYNC_REQUESTED') {
+        if (typeof flushOfflineQueue === 'function') {
+          flushOfflineQueue().catch(() => {});
+        }
+      }
+      // FIX 19b: Push notification click navigates to a specific page within the SPA
+      if (e.data?.type === 'NOTIFICATION_NAVIGATE' && e.data?.url) {
+        const hash = new URL(e.data.url, location.origin).hash;
+        if (hash && hash.startsWith('#')) {
+          const page = hash.slice(1);
+          if (page && typeof renderPage === 'function') {
+            APP.page = page;
+            renderPage();
+          }
+        }
+      }
     });
   }
 
@@ -181,7 +198,20 @@ async function initApp() {
         if (snap) {
           APP.data = snap;
           console.log('[Offline] Restored data from snapshot');
-          if (typeof toast === 'function') toast('📴 Offline — showing last saved data', 'info');
+          // FIX F-04: Show stale warning if snapshot is older than 24h
+          if (window._snapshotIsStale && window._snapshotAgeHours) {
+            if (typeof toast === 'function') toast('📴 Offline — showing data from ' + window._snapshotAgeHours + 'h ago. Prices may be outdated.', 'warning');
+            // Show persistent stale banner in the offline bar
+            const bar = document.getElementById('offlineBar');
+            if (bar) {
+              bar.textContent = '⚡ Offline — showing data from ' + window._snapshotAgeHours + 'h ago. Fuel prices may be stale.';
+              bar.style.display = 'block';
+              bar.style.background = '#78350f';
+              bar.style.color = '#f97316';
+            }
+          } else {
+            if (typeof toast === 'function') toast('📴 Offline — showing last saved data', 'info');
+          }
         }
       }
     }
