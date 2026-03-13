@@ -2819,7 +2819,8 @@ function calcPayrollSlip(empId, empName, month, year) {
   const otPay = otHours * 50;
   const grossSalary = grossEarned + otPay;
   const activeAdv = (window._advancesData||[]).filter(a=>a.empId===empId&&a.status==='active');
-  const advDeduction = activeAdv.reduce((a,adv)=>a+(adv.monthlyEmi||0),0);
+  const totalAdvBalance = activeAdv.reduce((a,adv)=>a+(adv.balance||adv.amount||0),0);
+  const defaultAdvDeduction = activeAdv.reduce((a,adv)=>a+(adv.monthlyEmi||0),0);
 
   openModal(`🧮 Salary Preview — ${sanitize(empName)}`, `
     <div class="card card-pad mb-12" style="background:var(--bg-0)">
@@ -2839,18 +2840,33 @@ function calcPayrollSlip(empId, empName, month, year) {
       <div class="flex-between" style="font-size:13px;padding:6px 0;border-bottom:1px solid var(--border-light)"><span style="color:var(--text-3)">Earned (${effectiveDays.toFixed(1)}/${workingDays} days)</span><span class="mono fw-700">₹${fmt(grossEarned)}</span></div>
       ${otPay>0?`<div class="flex-between" style="font-size:13px;padding:6px 0;border-bottom:1px solid var(--border-light)"><span style="color:var(--green)">Overtime (${otHours}h × ₹50)</span><span class="mono fw-700" style="color:var(--green)">+₹${fmt(otPay)}</span></div>`:''}
       <div class="flex-between" style="font-size:13px;padding:6px 0;border-bottom:1px solid var(--border-light)"><span class="fw-600">Gross Salary</span><span class="mono fw-800">₹${fmt(grossSalary)}</span></div>
-      ${advDeduction>0?`<div class="flex-between" style="font-size:13px;padding:6px 0;border-bottom:1px solid var(--border-light)"><span style="color:var(--red)">Advance Deduction</span><span class="mono fw-700" style="color:var(--red)">-₹${fmt(advDeduction)}</span></div>`:''}
-      <div class="form-group mt-10"><label class="form-label">Other Deductions (₹)</label><input class="form-input" type="number" id="otherDed" value="0" min="0" /></div>
+      ${totalAdvBalance>0?`
+      <div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:8px;padding:10px 14px;margin:8px 0">
+        <div style="font-size:11px;color:var(--text-3);font-weight:700;text-transform:uppercase;margin-bottom:6px">Salary Advance</div>
+        <div class="flex-between mb-6"><span style="font-size:13px;color:var(--text-2)">Total Outstanding Balance</span><span class="mono fw-700" style="color:var(--red)">₹${fmt(totalAdvBalance)}</span></div>
+        <label class="form-label" style="margin-top:4px">Deduct this month (₹) — default: ₹${fmt(defaultAdvDeduction)}</label>
+        <input class="form-input" type="number" id="advDedInput" value="${defaultAdvDeduction}" min="0" max="${totalAdvBalance}" oninput="updateNetPreview(${grossSalary})" />
+      </div>`:''}
+      <div class="form-group mt-10"><label class="form-label">Other Deductions (₹)</label><input class="form-input" type="number" id="otherDed" value="0" min="0" oninput="updateNetPreview(${grossSalary})" /></div>
     </div>
     <div style="background:rgba(212,148,15,0.08);border:2px solid rgba(212,148,15,0.3);border-radius:12px;padding:18px;text-align:center">
       <div style="font-size:11px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.8px">Net Salary</div>
-      <div class="mono fw-900" style="font-size:32px;color:var(--accent-light)">₹${fmt(grossSalary - advDeduction)}</div>
+      <div class="mono fw-900" style="font-size:32px;color:var(--accent-light)" id="netSalaryPreview">₹${fmt(grossSalary - defaultAdvDeduction)}</div>
     </div>
   `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-accent" onclick="savePayrollSlip(${empId},${month},${year},${grossSalary},${advDeduction})">💾 Save Payroll</button>`);
+      <button class="btn btn-accent" onclick="savePayrollSlip(${empId},${month},${year},${grossSalary})">💾 Save Payroll</button>`);
 }
 
-function savePayrollSlip(empId, month, year, gross, advDed) {
+function updateNetPreview(gross) {
+  const advDed = parseFloat(document.getElementById('advDedInput')?.value) || 0;
+  const otherDed = parseFloat(document.getElementById('otherDed')?.value) || 0;
+  const net = Math.max(0, gross - advDed - otherDed);
+  const el = document.getElementById('netSalaryPreview');
+  if (el) el.textContent = '₹' + net.toLocaleString('en-IN', {maximumFractionDigits:2});
+}
+
+function savePayrollSlip(empId, month, year, gross) {
+  const advDed = parseFloat(document.getElementById('advDedInput')?.value) || 0;
   const otherDed = parseFloat(document.getElementById('otherDed')?.value) || 0;
   const net = Math.max(0, gross - advDed - otherDed);
   if (!window._payrollSaved) window._payrollSaved = {};
@@ -2916,7 +2932,9 @@ function openAddAdvanceModal() {
       <div class="form-group"><label class="form-label">Repay in months</label>
         <select class="form-input" id="advMonths" onchange="updateAdvPreview()">
           ${[1,2,3,4,5,6].map(n=>`<option value="${n}">${n} month${n>1?'s':''}</option>`).join('')}
+          <option value="custom">Custom</option>
         </select>
+        <input class="form-input mt-6" type="number" id="advMonthsCustom" min="1" max="60" placeholder="Enter number of months" style="display:none;margin-top:6px" oninput="updateAdvPreview()" />
       </div>
     </div>
     <div class="form-group"><label class="form-label">Reason</label><input class="form-input" id="advReason" placeholder="Medical / Personal / Other" /></div>
@@ -2926,13 +2944,20 @@ function openAddAdvanceModal() {
 }
 
 function updateAdvPreview() {
-  const amt    = parseFloat(document.getElementById('advAmt')?.value||0);
-  const months = parseInt(document.getElementById('advMonths')?.value||1);
-  const prev   = document.getElementById('advPreview');
+  const amt      = parseFloat(document.getElementById('advAmt')?.value||0);
+  const selVal   = document.getElementById('advMonths')?.value;
+  const customEl = document.getElementById('advMonthsCustom');
+  if (customEl) customEl.style.display = selVal === 'custom' ? '' : 'none';
+  const months   = selVal === 'custom'
+    ? parseInt(customEl?.value||0)
+    : parseInt(selVal||1);
+  const prev = document.getElementById('advPreview');
   if (!prev) return;
   if (amt > 0 && months > 0) {
     const emi = (amt/months).toFixed(2);
     prev.innerHTML = `<span style="color:var(--text-1)">Monthly EMI: <strong class="mono">₹${fmt(parseFloat(emi))}</strong> × ${months} month${months>1?'s':''}</span>`;
+  } else {
+    prev.innerHTML = 'Monthly EMI: —';
   }
 }
 
@@ -2940,7 +2965,11 @@ function saveAdvance() {
   const empId = parseInt(document.getElementById('advEmp')?.value);
   const amount = parseFloat(document.getElementById('advAmt')?.value);
   const reason = (document.getElementById('advReason')?.value||'').trim();
-  const repayMonths = parseInt(document.getElementById('advMonths')?.value||1);
+  const advMonthsVal = document.getElementById('advMonths')?.value;
+  const repayMonths = advMonthsVal === 'custom'
+    ? parseInt(document.getElementById('advMonthsCustom')?.value||1)
+    : parseInt(advMonthsVal||1);
+  if (!repayMonths || repayMonths < 1) { toast('Enter valid number of months', 'error'); return; }
   const date = document.getElementById('advDate')?.value || (()=>{const _d=new Date();return _d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');})();
   if (!empId || isNaN(amount) || amount <= 0) { toast('Please enter a valid amount', 'error'); return; }
   const monthlyEmi = Math.ceil(amount / repayMonths);
