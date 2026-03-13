@@ -682,6 +682,103 @@ async function startServer() {
   });
 
   // Keep legacy /api/data/* and new /api/* route styles working together.
+  app.get('/api/data/compare/summary', authMiddleware(db), async (req, res) => {
+    try {
+      // FIX 27: use istDate() — UTC date can be yesterday in IST after midnight UTC
+      const today = istDate();
+      const sevenDaysAgo = (() => {
+        const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+        d.setDate(d.getDate() - 7);
+        return d.toISOString().slice(0, 10);
+      })();
+      const isSuperUser = req.userType === 'super';
+      const ownerTenantId = req.tenantId;
+
+      // Query 1: all active tenants
+      const tenantRows = await pool.query(
+        'SELECT id, name, location FROM tenants WHERE active = 1 ORDER BY name'
+      );
+      if (!tenantRows.rows.length) return res.json({ stations: [], benchmark: null });
+
+      // Query 2: today sales — aggregated across ALL tenants in one shot
+      const salesTodayRows = await pool.query(
+        `SELECT tenant_id,
+                COALESCE(SUM(amount),0) AS revenue,
+                COALESCE(SUM(liters),0) AS liters,
+                COUNT(*)                AS txns
+         FROM sales WHERE date = $1 GROUP BY tenant_id`, [today]
+      );
+      const salesTodayMap = {};
+      salesTodayRows.rows.forEach(r => { salesTodayMap[r.tenant_id] = r; });
+
+      // Query 3: 7-day sales average — aggregated across all tenants
+      const sales7Rows = await pool.query(
+        `SELECT tenant_id,
+                COALESCE(SUM(amount),0)/7 AS avg_revenue,
+                COALESCE(SUM(liters),0)/7 AS avg_liters
+         FROM sales WHERE date >= $1 AND date < $2 GROUP BY tenant_id`,
+        [sevenDaysAgo, today]
+      );
+      const sales7Map = {};
+      sales7Rows.rows.forEach(r => { sales7Map[r.tenant_id] = r; });
+
+      // Query 4: tank levels — all tenants
+      const tankRows = await pool.query(
+        'SELECT tenant_id, fuel_type, current_level, capacity, low_alert FROM tanks'
+      );
+      const tanksMap = {};
+      tankRows.rows.forEach(r => {
+        if (!tanksMap[r.tenant_id]) tanksMap[r.tenant_id] = [];
+        tanksMap[r.tenant_id].push(r);
+      });
+
+      // Query 5: employee counts — all tenants
+      const empRows = await pool.query(
+        'SELECT tenant_id, COUNT(*) AS cnt FROM employees WHERE active = 1 GROUP BY tenant_id'
+      );
+      const empMap = {};
+      empRows.rows.forEach(r => { empMap[r.tenant_id] = parseInt(r.cnt) || 0; });
+
+      // Assemble per-station data from maps (no DB calls inside loop)
+      const stationData = tenantRows.rows.map(t => {
+        const s  = salesTodayMap[t.id] || {};
+        const s7 = sales7Map[t.id]     || {};
+        const tanks = (tanksMap[t.id]  || []).map(tk => ({
+          fuelType: tk.fuel_type,
+          current:  parseFloat(tk.current_level) || 0,
+          capacity: parseFloat(tk.capacity) || 1,
+          lowAlert: parseFloat(tk.low_alert) || 500,
+          pct: Math.round((parseFloat(tk.current_level)||0) / Math.max(parseFloat(tk.capacity)||1, 1) * 100),
+        }));
+        return {
+          tenantId:  t.id,
+          name:      t.name,
+          location:  t.location || '',
+          today:     { revenue: parseFloat(s.revenue)||0, liters: parseFloat(s.liters)||0, txns: parseInt(s.txns)||0 },
+          avg7:      { revenue: parseFloat(s7.avg_revenue)||0, liters: parseFloat(s7.avg_liters)||0 },
+          tanks,
+          employees: empMap[t.id] || 0,
+          isOwn:     !isSuperUser && t.id === ownerTenantId,
+        };
+      });
+
+      const allRev = stationData.map(s => s.today.revenue);
+      const allLit = stationData.map(s => s.today.liters);
+      const benchmark = {
+        avgRevenue:   allRev.reduce((a,b)=>a+b,0) / (allRev.length||1),
+        avgLiters:    allLit.reduce((a,b)=>a+b,0) / (allLit.length||1),
+        maxRevenue:   Math.max(...allRev, 0),
+        stationCount: stationData.length,
+      };
+
+      const visible = isSuperUser ? stationData : stationData.filter(s => s.tenantId === ownerTenantId);
+      res.json({ stations: visible, benchmark, isSuperUser, today });
+    } catch (err) {
+      console.error('[compare/summary]', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.use('/api/data', authMiddleware(db), dataRoutes(db));
   // NOTE: /api/data is the canonical path — do not add /api/* catch-all to avoid double processing
 
@@ -1036,103 +1133,6 @@ async function startServer() {
   // ── COMPARE: multi-station summary (super = all tenants; admin = own + benchmark) ──
   // H-02 FIX: Rewritten from N+1 (5 queries × N tenants) to 5 aggregated queries total.
   // At 200 bunks: was 1,000 DB hits → now 5 DB hits regardless of bunk count.
-  app.get('/api/data/compare/summary', authMiddleware(db), async (req, res) => {
-    try {
-      // FIX 27: use istDate() — UTC date can be yesterday in IST after midnight UTC
-      const today = istDate();
-      const sevenDaysAgo = (() => {
-        const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-        d.setDate(d.getDate() - 7);
-        return d.toISOString().slice(0, 10);
-      })();
-      const isSuperUser = req.userType === 'super';
-      const ownerTenantId = req.tenantId;
-
-      // Query 1: all active tenants
-      const tenantRows = await pool.query(
-        'SELECT id, name, location FROM tenants WHERE active = 1 ORDER BY name'
-      );
-      if (!tenantRows.rows.length) return res.json({ stations: [], benchmark: null });
-
-      // Query 2: today sales — aggregated across ALL tenants in one shot
-      const salesTodayRows = await pool.query(
-        `SELECT tenant_id,
-                COALESCE(SUM(amount),0) AS revenue,
-                COALESCE(SUM(liters),0) AS liters,
-                COUNT(*)                AS txns
-         FROM sales WHERE date = $1 GROUP BY tenant_id`, [today]
-      );
-      const salesTodayMap = {};
-      salesTodayRows.rows.forEach(r => { salesTodayMap[r.tenant_id] = r; });
-
-      // Query 3: 7-day sales average — aggregated across all tenants
-      const sales7Rows = await pool.query(
-        `SELECT tenant_id,
-                COALESCE(SUM(amount),0)/7 AS avg_revenue,
-                COALESCE(SUM(liters),0)/7 AS avg_liters
-         FROM sales WHERE date >= $1 AND date < $2 GROUP BY tenant_id`,
-        [sevenDaysAgo, today]
-      );
-      const sales7Map = {};
-      sales7Rows.rows.forEach(r => { sales7Map[r.tenant_id] = r; });
-
-      // Query 4: tank levels — all tenants
-      const tankRows = await pool.query(
-        'SELECT tenant_id, fuel_type, current_level, capacity, low_alert FROM tanks'
-      );
-      const tanksMap = {};
-      tankRows.rows.forEach(r => {
-        if (!tanksMap[r.tenant_id]) tanksMap[r.tenant_id] = [];
-        tanksMap[r.tenant_id].push(r);
-      });
-
-      // Query 5: employee counts — all tenants
-      const empRows = await pool.query(
-        'SELECT tenant_id, COUNT(*) AS cnt FROM employees WHERE active = 1 GROUP BY tenant_id'
-      );
-      const empMap = {};
-      empRows.rows.forEach(r => { empMap[r.tenant_id] = parseInt(r.cnt) || 0; });
-
-      // Assemble per-station data from maps (no DB calls inside loop)
-      const stationData = tenantRows.rows.map(t => {
-        const s  = salesTodayMap[t.id] || {};
-        const s7 = sales7Map[t.id]     || {};
-        const tanks = (tanksMap[t.id]  || []).map(tk => ({
-          fuelType: tk.fuel_type,
-          current:  parseFloat(tk.current_level) || 0,
-          capacity: parseFloat(tk.capacity) || 1,
-          lowAlert: parseFloat(tk.low_alert) || 500,
-          pct: Math.round((parseFloat(tk.current_level)||0) / Math.max(parseFloat(tk.capacity)||1, 1) * 100),
-        }));
-        return {
-          tenantId:  t.id,
-          name:      t.name,
-          location:  t.location || '',
-          today:     { revenue: parseFloat(s.revenue)||0, liters: parseFloat(s.liters)||0, txns: parseInt(s.txns)||0 },
-          avg7:      { revenue: parseFloat(s7.avg_revenue)||0, liters: parseFloat(s7.avg_liters)||0 },
-          tanks,
-          employees: empMap[t.id] || 0,
-          isOwn:     !isSuperUser && t.id === ownerTenantId,
-        };
-      });
-
-      const allRev = stationData.map(s => s.today.revenue);
-      const allLit = stationData.map(s => s.today.liters);
-      const benchmark = {
-        avgRevenue:   allRev.reduce((a,b)=>a+b,0) / (allRev.length||1),
-        avgLiters:    allLit.reduce((a,b)=>a+b,0) / (allLit.length||1),
-        maxRevenue:   Math.max(...allRev, 0),
-        stationCount: stationData.length,
-      };
-
-      const visible = isSuperUser ? stationData : stationData.filter(s => s.tenantId === ownerTenantId);
-      res.json({ stations: visible, benchmark, isSuperUser, today });
-    } catch (err) {
-      console.error('[compare/summary]', err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
   app.get('*', (req, res) => {
     if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Not found' });
     res.sendFile(path.join(publicDir, 'index.html'));
