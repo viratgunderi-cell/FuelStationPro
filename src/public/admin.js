@@ -5829,7 +5829,7 @@ function navigate(pageId) {
   APP.salesDate = (typeof window.today === 'function') ? window.today() : new Date().toLocaleString('en-CA', { timeZone: 'Asia/Kolkata' }).slice(0, 10); // FIX 31: IST
   APP.salesEmpFilter = 'all';
   window.location.hash = pageId;
-  document.getElementById('pageTitle').textContent = PAGES.find(p => p.id === pageId)?.label || 'Dashboard';
+  const _pt = document.getElementById('pageTitle'); if (_pt) _pt.textContent = PAGES.find(p => p.id === pageId)?.label || '';
   updateStationBreadcrumb();
   buildNav();
   renderPage();
