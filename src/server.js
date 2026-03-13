@@ -724,7 +724,7 @@ async function startServer() {
 
       // Query 4: tank levels — all tenants
       const tankRows = await pool.query(
-        'SELECT tenant_id, fuel_type, current_level, capacity, low_alert FROM tanks'
+        'SELECT tenant_id, name, fuel_type, current_level, capacity, low_alert FROM tanks ORDER BY tenant_id, name'
       );
       const tanksMap = {};
       tankRows.rows.forEach(r => {
@@ -744,6 +744,7 @@ async function startServer() {
         const s  = salesTodayMap[t.id] || {};
         const s7 = sales7Map[t.id]     || {};
         const tanks = (tanksMap[t.id]  || []).map(tk => ({
+          name:     tk.name || '',
           fuelType: tk.fuel_type,
           current:  parseFloat(tk.current_level) || 0,
           capacity: parseFloat(tk.capacity) || 1,
