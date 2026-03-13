@@ -567,30 +567,114 @@ async function mt_doSuperLogin() {
   const isValid = (u === creds.username && hash === creds.passHash);
   if (!isValid) { mt_toast('Invalid super admin credentials', 'error'); return; }
   mt_saveSuperSession();
+  // Also get a server-side session token so API calls (compare, admins) work
+  try {
+    await AuthAPI.superLogin(u, p);
+  } catch(e) { /* offline or server not ready — compare will show cached data */ }
   mt_toast('Super Admin logged in', 'success');
   mt_showSelector();
 }
 
-function mt_openCompareStations() {
-  // Enter first active station context then navigate to compare page
-  const tenants = mt_getTenants();
-  const active = tenants.find(t => t.active !== false) || tenants[0];
-  if (!active) { alert('No stations available.'); return; }
-  // Set tenant context silently (no full login redirect)
-  mt_setActiveTenant(active);
-  window._superAdminCompareMode = true;
-  APP.isSuperAdmin = true;
-  // Boot the admin app then navigate to compare
-  if (typeof initApp === 'function') {
-    initApp().then(() => {
-      if (typeof navigate === 'function') navigate('compare');
-    }).catch(() => {
-      window.location.hash = '#compare';
-      window.location.reload();
-    });
-  } else {
-    window.location.hash = '#compare';
-    window.location.reload();
+async function mt_openCompareStations() {
+  // Show loading overlay immediately
+  const overlay = document.createElement('div');
+  overlay.id = 'compareOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);backdrop-filter:blur(6px);z-index:10010;display:flex;flex-direction:column;overflow-y:auto;padding:20px';
+  overlay.innerHTML = `
+    <div style="max-width:900px;margin:0 auto;width:100%">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div style="font-size:18px;font-weight:800;color:#fff">🏢 Compare Stations</div>
+        <button onclick="document.getElementById('compareOverlay').remove()" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);border-radius:8px;padding:6px 14px;cursor:pointer;font-size:12px;font-weight:600">✕ Close</button>
+      </div>
+      <div id="compareContent" style="text-align:center;padding:60px 20px;color:var(--text-3)">
+        <div style="font-size:32px;margin-bottom:12px">🏢</div>
+        <div style="font-weight:600;margin-bottom:4px">Loading station data…</div>
+        <div style="font-size:12px">Fetching from server</div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  try {
+    const data = await apiFetch('/data/compare/summary');
+    const { stations = [], benchmark = {} } = data;
+    const r = n => '₹' + (n||0).toLocaleString('en-IN', {maximumFractionDigits:0});
+    const pct = n => Math.min(100, Math.max(0, Math.round(n||0)));
+
+    if (!stations.length) {
+      document.getElementById('compareContent').innerHTML = `<div style="font-size:32px;margin-bottom:12px">🏢</div><div style="font-weight:600;color:var(--text-2)">No station data available yet</div>`;
+      return;
+    }
+
+    const cards = stations.map(s => {
+      const tankBars = (s.tanks||[]).map(t => {
+        const p = pct((t.current / Math.max(t.capacity,1)) * 100);
+        const c = p<20 ? '#ef4444' : p<40 ? '#f59e0b' : '#4ade80';
+        return `<div style="margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">
+            <span style="color:#aaa">${t.fuelType}</span>
+            <span style="color:${c};font-weight:700">${p}%</span>
+          </div>
+          <div style="height:5px;background:#1e1e1e;border-radius:3px">
+            <div style="height:100%;width:${p}%;background:${c};border-radius:3px"></div>
+          </div></div>`;
+      }).join('');
+
+      const revVsAvg = benchmark.avgRevenue > 0
+        ? ((s.today.revenue - benchmark.avgRevenue) / benchmark.avgRevenue * 100).toFixed(1)
+        : 0;
+      const revColor = revVsAvg >= 0 ? '#4ade80' : '#ef4444';
+      const revSign = revVsAvg >= 0 ? '+' : '';
+
+      return `<div style="background:#111;border:1px solid #1e1e1e;border-radius:12px;padding:16px;margin-bottom:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div>
+            <div style="font-size:15px;font-weight:900;color:#f5b93e">${s.name}</div>
+            <div style="font-size:11px;color:#666;margin-top:2px">${s.location||''} · ${s.employees||0} staff</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:18px;font-weight:800;color:#fff">${r(s.today.revenue)}</div>
+            <div style="font-size:10px;color:${revColor};font-weight:700">${revSign}${revVsAvg}% vs avg</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+          <div style="background:#161616;border-radius:8px;padding:8px 10px">
+            <div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px">Volume Today</div>
+            <div style="font-size:14px;font-weight:700;color:#fff">${(s.today.liters||0).toLocaleString()} L</div>
+          </div>
+          <div style="background:#161616;border-radius:8px;padding:8px 10px">
+            <div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px">Transactions</div>
+            <div style="font-size:14px;font-weight:700;color:#fff">${s.today.txns||0}</div>
+          </div>
+        </div>
+        ${tankBars ? `<div style="background:#161616;border-radius:8px;padding:10px"><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Tank Levels</div>${tankBars}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    const totalRev = stations.reduce((a,s) => a + (s.today.revenue||0), 0);
+    const totalLit = stations.reduce((a,s) => a + (s.today.liters||0), 0);
+
+    document.getElementById('compareContent').innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
+        <div style="background:#111;border:1px solid #1e1e1e;border-radius:10px;padding:12px 16px">
+          <div style="font-size:20px;font-weight:800;color:#f5b93e">${stations.length}</div>
+          <div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-top:2px">Stations</div>
+        </div>
+        <div style="background:#111;border:1px solid #1e1e1e;border-radius:10px;padding:12px 16px">
+          <div style="font-size:20px;font-weight:800;color:#4ade80">${r(totalRev)}</div>
+          <div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-top:2px">Combined Revenue Today</div>
+        </div>
+        <div style="background:#111;border:1px solid #1e1e1e;border-radius:10px;padding:12px 16px">
+          <div style="font-size:20px;font-weight:800;color:#fff">${totalLit.toLocaleString()} L</div>
+          <div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-top:2px">Combined Volume Today</div>
+        </div>
+      </div>
+      ${cards}`;
+  } catch(e) {
+    document.getElementById('compareContent').innerHTML = `
+      <div style="font-size:32px;margin-bottom:12px">⚠️</div>
+      <div style="font-weight:600;color:#ef4444;margin-bottom:8px">Could not load station data</div>
+      <div style="font-size:12px;color:#666">${e.message}</div>
+      <div style="font-size:11px;color:#555;margin-top:8px">Please logout and login again as Super Admin to refresh your session.</div>`;
   }
 }
 
