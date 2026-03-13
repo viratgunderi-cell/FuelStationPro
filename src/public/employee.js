@@ -3002,7 +3002,7 @@ function openCreditCustomerModal() {
       <div class="form-group"><label class="form-label">Type</label><select class="form-input" id="ccType"><option value="Fleet">Fleet</option><option value="Government">Government</option><option value="Individual">Individual</option></select></div>
       <div class="form-group"><label class="form-label">Credit Limit (₹)</label><input class="form-input" id="ccLimit" type="number" placeholder="500000" /></div>
     </div>
-    <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="ccPhone" placeholder="10-digit mobile" /></div>
+    <div class="form-group"><label class="form-label">Phone</label><div style="display:flex;gap:8px"><input class="form-input" id="ccPhoneCC" type="tel" inputmode="numeric" maxlength="4" placeholder="+91" value="+91" style="width:72px;flex-shrink:0" /><input class="form-input" id="ccPhone" type="tel" inputmode="numeric" maxlength="10" minlength="10" placeholder="10-digit number" style="flex:1" /></div></div>
   `, `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-accent" onclick="saveCreditCustomer()">💾 Save Customer</button>`);
 }
 
@@ -3043,7 +3043,7 @@ function openEditCreditModal(customerId) {
         <input class="form-input" id="ecLimit" type="number" value="${c.limit||0}" /></div>
     </div>
     <div class="form-group"><label class="form-label">Phone</label>
-      <input class="form-input" id="ecPhone" value="${sanitize(c.phone||'')}" /></div>`,
+      <div style="display:flex;gap:8px"><input class="form-input" id="ecPhoneCC" type="tel" inputmode="numeric" maxlength="4" placeholder="+91" value="${sanitize(c.phoneCC||'+91')}" style="width:72px;flex-shrink:0" /><input class="form-input" id="ecPhone" type="tel" inputmode="numeric" maxlength="10" minlength="10" placeholder="10-digit number" value="${sanitize(c.phone||'')}" style="flex:1" /></div></div>`,
     `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn btn-accent" onclick="saveEditCredit(${customerId})">💾 Save</button>`
   );
