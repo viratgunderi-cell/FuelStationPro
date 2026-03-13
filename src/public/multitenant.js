@@ -370,9 +370,8 @@ async function mt_manageStationAdmins(id) {
 
   // Load fresh admin list from server
   try {
-    const res = await apiFetch(`/data/tenants/${id}/admins`);
-    if (res.ok) {
-      const serverAdmins = await res.json();
+    const serverAdmins = await apiFetch(`/data/tenants/${id}/admins`);
+    if (Array.isArray(serverAdmins)) {
       const idx = tenants.findIndex(x => x.id === id);
       if (idx !== -1) { tenants[idx].adminUsers = serverAdmins; mt_saveTenants(tenants); t.adminUsers = serverAdmins; }
     }
@@ -578,6 +577,7 @@ function mt_openCompareStations() {
   if (!active) { alert('No stations available.'); return; }
   // Set tenant context silently (no full login redirect)
   mt_setActiveTenant(active);
+  window._superAdminCompareMode = true;
   APP.isSuperAdmin = true;
   // Boot the admin app then navigate to compare
   if (typeof initApp === 'function') {
