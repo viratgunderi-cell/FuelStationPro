@@ -5803,7 +5803,7 @@ const PAGES = [
   { id: 'reports', label: 'Reports', icon: '📄', group: 'reports' },
   { id: 'analytics', label: 'Analytics', icon: '🔍', group: 'reports' },
   { id: 'compare', label: 'Compare Stations', icon: '🏢', group: 'reports', superAdminOnly: true },
-  { id: 'insights', label: 'AI Insights', icon: '🤖', group: 'reports', superAdminOnly: true },
+  { id: 'insights', label: 'AI Insights', icon: '🤖', group: 'reports' },
   { id: 'settings', label: 'Settings', icon: '⚙️', group: 'reports' },
 ];
 
