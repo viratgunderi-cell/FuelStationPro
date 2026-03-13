@@ -1429,7 +1429,7 @@ function renderSettings(D) {
           </label>
           <div style="display:flex;gap:8px">
           <input class="form-input" id="waPhoneCC" type="tel" inputmode="numeric" maxlength="4" placeholder="+91" value="${D.waPhoneCC || '+91'}" style="width:72px;flex-shrink:0" />
-          <input class="form-input" id="waPhone" type="tel" inputmode="numeric" maxlength="10" minlength="10" placeholder="10-digit number" value="${D.waPhone || ''}" style="flex:1" />
+          <input class="form-input" id="waPhone" type="tel" inputmode="numeric" maxlength="10" minlength="10" oninput="this.value=this.value.replace(/[^0-9]/g,'')" placeholder="10-digit number" value="${D.waPhone || ''}" style="flex:1" />
         </div>
           <div style="font-size:11px;color:var(--text-3);margin-top:3px">Your WhatsApp number — receives low-tank, mismatch & daily summary alerts</div>
         </div>
@@ -7837,6 +7837,7 @@ function saveUPISettings() {
   const omcName = (document.getElementById('omcName')?.value || '').trim();
   const waPhoneCC = (document.getElementById('waPhoneCC')?.value || '+91').trim();
   const waPhone = (document.getElementById('waPhone')?.value || '').trim().replace(/\D/g,'');
+  if (!waPhone || waPhone.length !== 10) { toast('WhatsApp phone must be exactly 10 digits', 'error'); return; }
   const waApiKey = (document.getElementById('waApiKey')?.value || '').trim();
   APP.data.upiVPA  = sanitize(vpa);
   APP.data.upiName = sanitize(name);
@@ -8098,7 +8099,7 @@ function empFormHTML(shiftOpts, vals) {
       <select class="form-input" id="empShift" multiple size="3" style="height:auto;padding:4px">${shiftOpts}</select>
     </div>
     <div class="form-row">
-      <div class="form-group"><label class="form-label">Phone</label><div style="display:flex;gap:8px"><input class="form-input" id="empPhoneCC" type="tel" inputmode="numeric" maxlength="4" placeholder="+91" value="${vals.phoneCC||'+91'}" style="width:72px;flex-shrink:0" /><input class="form-input" id="empPhone" type="tel" inputmode="numeric" maxlength="10" minlength="10" placeholder="10-digit number" value="${vals.phone||''}" style="flex:1" /></div></div>
+      <div class="form-group"><label class="form-label">Phone</label><div style="display:flex;gap:8px"><input class="form-input" id="empPhoneCC" type="tel" inputmode="numeric" maxlength="4" placeholder="+91" value="${vals.phoneCC||'+91'}" style="width:72px;flex-shrink:0" /><input class="form-input" id="empPhone" type="tel" inputmode="numeric" maxlength="10" minlength="10" oninput="this.value=this.value.replace(/[^0-9]/g,'')" placeholder="10-digit number" value="${vals.phone||''}" style="flex:1" /></div></div>
       <div class="form-group"><label class="form-label">Monthly Salary (₹)</label><input class="form-input" id="empSalary" type="number" value="${vals.salary||12000}" /></div>
     </div>
     <div style="margin-top:4px">
@@ -8143,6 +8144,7 @@ async function addEmployee() {
   const empId  = (document.getElementById('empEmpId')?.value || '').trim().toUpperCase();
   const aadhar = (document.getElementById('empAadhar')?.value || '').trim().replace(/\s/g, '');
   if (!name || name.length < 2) { toast('Employee name must be at least 2 characters', 'error'); return; }
+  if (!phone || phone.length !== 10 || !/^\d{10}$/.test(phone)) { toast('Phone number must be exactly 10 digits', 'error'); return; }
   if (empId && APP.data.employees.some(e => e.empId && e.empId.toUpperCase() === empId)) {
     toast('Employee ID "' + empId + '" is already taken — use a unique ID', 'error'); return;
   }
@@ -8190,6 +8192,7 @@ async function saveEditEmployee() {
   const empEmpId = (document.getElementById('empEmpId')?.value || '').trim().toUpperCase();
   const empAadhar = (document.getElementById('empAadhar')?.value || '').trim().replace(/\s/g, '');
   if (!name || name.length < 2) { toast('Name must be at least 2 characters', 'error'); return; }
+  if (!phone || phone.length !== 10 || !/^\d{10}$/.test(phone)) { toast('Phone number must be exactly 10 digits', 'error'); return; }
   if (empEmpId && APP.data.employees.some(e => parseInt(e.id) !== empId && e.empId && e.empId.toUpperCase() === empEmpId)) {
     toast('Employee ID "' + empEmpId + '" is already taken — use a unique ID', 'error'); return;
   }
