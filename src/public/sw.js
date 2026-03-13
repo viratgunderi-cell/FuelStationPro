@@ -1,5 +1,5 @@
 /**
- * FuelBunk Pro — Service Worker v8.0
+ * FuelBunk Pro — Service Worker v8.1
  * Strategy:
  *   - App shell (index.html, api-client.js, bridge.js): Cache-first, network fallback
  *   - API /api/public/*: Network-first, cache fallback (employee portal offline support)
@@ -8,9 +8,9 @@
  *   - Static assets (manifest, icons): Cache-first, long TTL
  */
 
-const CACHE_NAME    = 'fuelbunk-v10';
-const SHELL_CACHE   = 'fuelbunk-shell-v10';
-const API_CACHE     = 'fuelbunk-api-v10';
+const CACHE_NAME    = 'fuelbunk-v11';
+const SHELL_CACHE   = 'fuelbunk-shell-v11';
+const API_CACHE     = 'fuelbunk-api-v11';
 
 // App shell — cache on install (split bundle: v7)
 const SHELL_ASSETS = [
