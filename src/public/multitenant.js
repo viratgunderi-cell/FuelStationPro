@@ -174,6 +174,7 @@ async function mt_showSelector() {
           <div style="padding:14px 18px">
             ${isSuperLoggedIn ? `
               <div style="font-size:11px;color:var(--text-2);margin-bottom:12px;line-height:1.6">Full control: add/edit stations, manage admins, activate/deactivate and view all data.</div>
+              <button class="btn btn-accent btn-sm btn-block" onclick="mt_openCompareStations()" style="font-size:12px;font-weight:700;margin-bottom:8px">🏢 Compare Stations</button>
               <button class="btn btn-ghost btn-sm btn-block" onclick="mt_changeSupercreds()" style="font-size:11px;margin-bottom:8px">🔑 Change Super Admin Credentials</button>
               <button class="btn btn-ghost btn-sm btn-block" onclick="mt_superLogout()" style="font-size:11px;color:var(--red)">⏻ Logout Super Admin</button>
             ` : `
@@ -568,6 +569,28 @@ async function mt_doSuperLogin() {
   mt_saveSuperSession();
   mt_toast('Super Admin logged in', 'success');
   mt_showSelector();
+}
+
+function mt_openCompareStations() {
+  // Enter first active station context then navigate to compare page
+  const tenants = mt_getTenants();
+  const active = tenants.find(t => t.active !== false) || tenants[0];
+  if (!active) { alert('No stations available.'); return; }
+  // Set tenant context silently (no full login redirect)
+  mt_setActiveTenant(active);
+  APP.isSuperAdmin = true;
+  // Boot the admin app then navigate to compare
+  if (typeof initApp === 'function') {
+    initApp().then(() => {
+      if (typeof navigate === 'function') navigate('compare');
+    }).catch(() => {
+      window.location.hash = '#compare';
+      window.location.reload();
+    });
+  } else {
+    window.location.hash = '#compare';
+    window.location.reload();
+  }
 }
 
 function mt_superLogout() {
