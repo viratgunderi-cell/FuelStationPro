@@ -1497,7 +1497,17 @@ async function emp_doLogin() {
   }
   const id = parseInt(document.getElementById('empLoginName').value);
   const pin = (document.getElementById('empLoginPin')?.value || '').trim();
-  const emp = EMP_LIST.find(e => e.id === id);
+  // Use parseInt on both sides — e.id may be number or string depending on data source
+  let emp = EMP_LIST.find(e => parseInt(e.id) === id);
+  // Fallback: search fb_emp_cache directly in case EMP_LIST is out of sync
+  if (!emp) {
+    try {
+      const cached = JSON.parse(localStorage.getItem('fb_emp_cache') || '[]');
+      const hit = cached.find(e => parseInt(e.id) === id);
+      if (hit) emp = { id: hit.id, name: hit.name, role: hit.role,
+                       shift: hit.shift||'', permissions: hit.permissions||{}, pinHash: hit.pinHash||null };
+    } catch(e) {}
+  }
   if (!emp) { toast('Select employee','error'); return; }
   if (!checkRateLimit('emp_' + id)) return;
   const pinHash = await hashPassword(pin);
@@ -2706,7 +2716,23 @@ async function doEmpLogin() {
   var id = parseInt(document.getElementById('empLoginName2').value);
   var pin = document.getElementById('empLoginPin2').value || '';
   var emp = null;
+  // PRIMARY: search EMP_LIST (live data or fb_emp_cache)
   for (var i = 0; i < EMP_LIST.length; i++) { if (parseInt(EMP_LIST[i].id) === id) { emp = EMP_LIST[i]; break; } }
+  // FALLBACK: EMP_LIST may be out of sync if APP.data.employees (background preload) differs
+  // from the dropdown which was populated by fetchPublicEmployees() → fb_emp_cache.
+  if (!emp) {
+    try {
+      var cached = JSON.parse(localStorage.getItem('fb_emp_cache') || '[]');
+      for (var j = 0; j < cached.length; j++) {
+        if (parseInt(cached[j].id) === id) {
+          emp = { id: cached[j].id, name: cached[j].name, role: cached[j].role,
+                  shift: cached[j].shift || '', permissions: cached[j].permissions || {},
+                  pinHash: cached[j].pinHash || null };
+          break;
+        }
+      }
+    } catch(e) {}
+  }
   if (!emp) { toast('Select employee', 'error'); return; }
   if (!checkRateLimit('emp_' + id)) return;
   var pinHash = await hashPassword(pin);
