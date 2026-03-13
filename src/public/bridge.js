@@ -390,25 +390,19 @@
   // AUTO-REFRESH TENANTS ON PAGE LOAD
   // ═══════════════════════════════════════════
   // ── Super session heartbeat ─────────────────────────────────────────────
-  // Polls the server every 30s while a super token is active.
-  // If the server returns 401 (i.e. another device logged in and killed this session),
-  // apiFetch's existing 401 handler calls appLogout() automatically.
+  // Checks server every 2 MINUTES (not 5 seconds) to avoid hammering /api/auth/session.
+  // visibilitychange + focus events give fast kick-out detection without polling.
   let _superHeartbeatTimer = null;
   function startSuperSessionHeartbeat() {
-    stopSuperSessionHeartbeat(); // clear any existing timer first
+    stopSuperSessionHeartbeat();
     _superHeartbeatTimer = setInterval(async function() {
       const token = sessionStorage.getItem('fb_super_token');
       if (!token) { stopSuperSessionHeartbeat(); return; }
       try {
-        // checkSession hits /api/auth/session with the current Bearer token.
-        // If session was deleted server-side, this throws 401 → apiFetch calls appLogout().
         setAuthToken(token);
         await AuthAPI.checkSession();
-      } catch (e) {
-        // 401 is already handled by apiFetch → appLogout() → page reload.
-        // Any other error (network offline etc.) — stay logged in, try again next tick.
-      }
-    }, 5000); // 5 seconds — fast enough to kick out the old session immediately
+      } catch (e) { /* 401 handled by apiFetch → appLogout() */ }
+    }, 120000); // 2 minutes — visibilitychange handles fast detection
   }
   // Also check immediately when this tab regains focus — catches the kicked-out state instantly
   async function _superSessionCheck() {
