@@ -6944,7 +6944,7 @@ function openPurchaseModal() {
       </div>
       <div class="form-group">
         <label class="form-label">Quantity (Litres) *</label>
-        <input class="form-input" id="purchQty" type="number" min="1" max="25000" step="1" placeholder="e.g. 10000" oninput="calcPurchTotal()" />
+        <input class="form-input" id="purchQty" type="number" min="1" max="25000" step="1" placeholder="e.g. 10000" oninput="calcPurchTotal();updateTankDistribution(document.getElementById('purchFuel')?.value, parseFloat(this.value)||0)" />
       </div>
     </div>
 
@@ -7005,6 +7005,11 @@ function openPurchaseModal() {
       </div>
       <div style="font-size:11px;color:var(--text-3)" id="purchTotalFml"></div>
     </div>
+    <div id="purchTankDist" style="display:none;background:var(--bg-0);border:1px solid var(--border);border-radius:10px;padding:14px;margin-top:10px">
+      <div style="font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px">🛢️ Distribute to Tanks</div>
+      <div id="purchTankDistInputs"></div>
+      <div id="purchDistHint" style="font-size:11px;margin-top:6px"></div>
+    </div>
     <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-accent" onclick="savePurchase()">💾 Save Purchase</button>
@@ -7039,22 +7044,72 @@ function purchFuelChanged() {
   calcPurchTotal();
 }
 
+function updateTankDistribution(fuelType, totalQty) {
+  const distSection = document.getElementById('purchTankDist');
+  const distInputs  = document.getElementById('purchTankDistInputs');
+  if (!distSection || !distInputs) return;
+  const sameTanks = (APP.data?.tanks||[]).filter(t=>(t.fuelType||t.fuel_type)===fuelType);
+  if (sameTanks.length < 2) { distSection.style.display = 'none'; return; }
+  distSection.style.display = '';
+  let remaining = totalQty;
+  const autoVals = sameTanks.map(t => {
+    const avail = Math.max(0,(t.capacity||0)-(t.current||0));
+    const fill  = Math.min(avail, remaining);
+    remaining   = Math.max(0, remaining - fill);
+    return fill;
+  });
+  distInputs.innerHTML = sameTanks.map((t,i) => {
+    const avail = Math.max(0,(t.capacity||0)-(t.current||0));
+    const fuelInfo = getFuel(fuelType);
+    return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'
+      + '<div style="min-width:120px;font-size:12px;font-weight:700;color:'+fuelInfo.color+'">Tank '+t.id+' <span style="font-size:10px;color:var(--text-3);font-weight:400">(free: '+avail.toLocaleString('en-IN')+' L)</span></div>'
+      + '<input class="form-input" id="dist_tank_'+t.id+'" type="number" min="0" max="'+avail+'" step="1" value="'+autoVals[i]+'" style="flex:1" oninput="checkDistTotal()" />'
+      + '<span style="font-size:11px;color:var(--text-3);min-width:16px">L</span>'
+      + '</div>';
+  }).join('');
+  checkDistTotal();
+}
+
+function checkDistTotal() {
+  const qty = parseFloat(document.getElementById('purchQty')?.value)||0;
+  const fuelType = document.getElementById('purchFuel')?.value;
+  const sameTanks = (APP.data?.tanks||[]).filter(t=>(t.fuelType||t.fuel_type)===fuelType);
+  if (sameTanks.length < 2) return;
+  const distTotal = sameTanks.reduce((s,t)=>{
+    const el = document.getElementById('dist_tank_'+t.id);
+    return s + (el ? parseFloat(el.value)||0 : 0);
+  }, 0);
+  const hint = document.getElementById('purchDistHint');
+  if (!hint) return;
+  const diff = Math.abs(distTotal - qty);
+  if (diff < 0.5) {
+    hint.innerHTML = '<span style="color:var(--green)">✅ Distribution matches purchase quantity</span>';
+  } else {
+    hint.innerHTML = '<span style="color:var(--red)">⚠️ Total distributed: '+distTotal.toLocaleString('en-IN')+' L — must equal '+qty.toLocaleString('en-IN')+' L (diff: '+(qty-distTotal).toFixed(1)+' L)</span>';
+  }
+}
+
 function calcPurchTotal() {
   const qty      = parseFloat(document.getElementById('purchQty')?.value);
   const basicKL  = parseFloat(document.getElementById('purchBasicKL')?.value);
   const taxPct   = parseFloat(document.getElementById('purchTaxPct')?.value) || 0;
   const prev     = document.getElementById('purchTotalPreview');
   if (!prev) return;
-  // Show tank space warning
+  // Show tank space warning (combined across all tanks of same fuel type)
   const purchFuelType = document.getElementById('purchFuel')?.value;
   const capHint = document.getElementById('purchCapHint');
   if (capHint && purchFuelType) {
-    const tk = (APP.data?.tanks||[]).find(t=>(t.fuelType||t.fuel_type)===purchFuelType);
-    if (tk) {
-      const avail = Math.max(0,(tk.capacity||0)-(tk.current||0));
-      const over = !isNaN(qty) && qty > avail;
-      capHint.innerHTML = `<span style="color:${over?'var(--red)':'var(--text-3)'}">Tank space available: <strong>${avail.toLocaleString('en-IN')} L</strong> (capacity ${(tk.capacity||0).toLocaleString('en-IN')} L, current ${(tk.current||0).toLocaleString('en-IN')} L)${over?' — ⚠️ exceeds available space!':''}</span>`;
+    const sameTanks = (APP.data?.tanks||[]).filter(t=>(t.fuelType||t.fuel_type)===purchFuelType);
+    if (sameTanks.length) {
+      const totalCap   = sameTanks.reduce((s,t)=>s+(t.capacity||0),0);
+      const totalCurr  = sameTanks.reduce((s,t)=>s+(t.current||0),0);
+      const totalAvail = Math.max(0, totalCap - totalCurr);
+      const over = !isNaN(qty) && qty > totalAvail;
+      const tankList = sameTanks.map(t=>`Tank ${t.id}: ${Math.max(0,(t.capacity||0)-(t.current||0)).toLocaleString('en-IN')} L free`).join(' · ');
+      capHint.innerHTML = `<span style="color:${over?'var(--red)':'var(--text-3)'}">Combined space: <strong>${totalAvail.toLocaleString('en-IN')} L</strong> across ${sameTanks.length} tank${sameTanks.length>1?'s':''} (${tankList})${over?' — ⚠️ exceeds available space!':''}</span>`;
       capHint.style.display = '';
+      // Show/hide distribution section
+      updateTankDistribution(purchFuelType, !isNaN(qty) ? qty : 0);
     } else { capHint.style.display = 'none'; }
   }
   if (!isNaN(qty) && qty > 0 && !isNaN(basicKL) && basicKL > 0) {
@@ -7089,14 +7144,23 @@ async function savePurchase() {
   if (isNaN(liters) || liters <= 0) { toast('Quantity in litres is required', 'error'); return; }
   if (liters > 50000) { toast('Purchase cannot exceed 50,000 litres', 'error'); return; }
   // Check tank capacity
-  const purchTank = (APP.data.tanks||[]).find(t => (t.fuelType||t.fuel_type) === fuelType);
-  if (purchTank) {
-    const available = Math.max(0, (purchTank.capacity||0) - (purchTank.current||0));
-    if (liters > purchTank.capacity) {
-      toast(`Cannot purchase ${liters.toLocaleString('en-IN')} L — tank capacity is only ${(purchTank.capacity).toLocaleString('en-IN')} L`, 'error'); return;
-    }
-    if (liters > available) {
-      toast(`Tank only has space for ${available.toLocaleString('en-IN')} L (current: ${(purchTank.current||0).toLocaleString('en-IN')} L, capacity: ${(purchTank.capacity||0).toLocaleString('en-IN')} L)`, 'error'); return;
+  const sameFuelTanks = (APP.data.tanks||[]).filter(t => (t.fuelType||t.fuel_type) === fuelType);
+  if (sameFuelTanks.length) {
+    const totalCap   = sameFuelTanks.reduce((s,t)=>s+(t.capacity||0),0);
+    const totalAvail = sameFuelTanks.reduce((s,t)=>s+Math.max(0,(t.capacity||0)-(t.current||0)),0);
+    if (liters > totalCap)   { toast(`Purchase ${liters.toLocaleString('en-IN')} L exceeds combined tank capacity of ${totalCap.toLocaleString('en-IN')} L`, 'error'); return; }
+    if (liters > totalAvail) { toast(`Only ${totalAvail.toLocaleString('en-IN')} L of space available across ${sameFuelTanks.length} tank${sameFuelTanks.length>1?'s':''}`, 'error'); return; }
+    // Validate distribution if multiple tanks
+    if (sameFuelTanks.length > 1) {
+      let distTotal = 0;
+      for (const tk of sameFuelTanks) {
+        const distEl = document.getElementById('dist_tank_' + tk.id);
+        const distVal = distEl ? parseFloat(distEl.value)||0 : 0;
+        const tkAvail = Math.max(0,(tk.capacity||0)-(tk.current||0));
+        if (distVal > tkAvail) { toast(`Tank ${tk.id} only has ${tkAvail.toLocaleString('en-IN')} L of space`, 'error'); return; }
+        distTotal += distVal;
+      }
+      if (Math.abs(distTotal - liters) > 0.5) { toast(`Distribution total (${distTotal.toLocaleString('en-IN')} L) must equal purchase quantity (${liters.toLocaleString('en-IN')} L)`, 'error'); return; }
     }
   }
   if (isNaN(basicKL) || basicKL <= 0) { toast('Enter basic price per KL from invoice (required)', 'error'); return; }
@@ -7125,18 +7189,17 @@ async function savePurchase() {
   APP.data.expenses.unshift(expEntry);
   try { await db.add('fuelPurchases', purchase); } catch(e) { console.warn('[Purchase]', e.message); }
   try { await db.add('expenses', expEntry); } catch(e) { console.warn('[Expense]', e.message); }
-  const tank = APP.data.tanks.find(t => (t.fuelType || t.fuel_type) === fuelType);
-  if (tank) {
-    tank.current = Math.min(parseInt(tank.capacity) || 0, (parseFloat(tank.current) || 0) + liters);
+  // Update tanks — distribute per user input if multiple tanks, else add all to single tank
+  const tanksToUpdate = (APP.data.tanks||[]).filter(t => (t.fuelType||t.fuel_type) === fuelType);
+  for (const tank of tanksToUpdate) {
+    const distEl = document.getElementById('dist_tank_' + tank.id);
+    const addLiters = tanksToUpdate.length > 1 && distEl ? (parseFloat(distEl.value)||0) : liters;
+    if (addLiters <= 0) continue;
+    tank.current = Math.min(parseInt(tank.capacity)||0, (parseFloat(tank.current)||0) + addLiters);
     tank.lastDip = today();
-    try {
-      await db.put('tanks', _tankForPut(tank));
-      const freshTanks = await db.getAll('tanks');
-      if (freshTanks && freshTanks.length) APP.data.tanks = freshTanks.map(_normTank);
-    } catch(e) { console.warn('[Tank purchase update]', e.message); }
-  } else {
-    console.warn('[Purchase] No tank found for fuelType:', fuelType, '— tanks:', APP.data.tanks.map(t => t.fuelType));
+    try { await db.put('tanks', _tankForPut(tank)); } catch(e) { console.warn('[Tank purchase update]', e.message); }
   }
+  try { const freshTanks = await db.getAll('tanks'); if (freshTanks&&freshTanks.length) APP.data.tanks = freshTanks.map(_normTank); } catch(e) {}
   // ── Auto-update purchase price (COGS) from this fuel entry ──
   if (!APP.data.purchasePrices) APP.data.purchasePrices = {};
   APP.data.purchasePrices[fuelType] = rate;
