@@ -17,7 +17,7 @@
  *     was sent as 'role' in response — matched frontend expectation.
  */
 const express = require('express');
-const { hashPassword } = require('./schema');
+const { hashPassword, verifyPassword } = require('./schema');
 const {
   bruteForceCheck, recordLoginAttempt, createSession,
   destroySession, auditLog, requireRole
@@ -39,10 +39,16 @@ function authRoutes(db) {
         await recordLoginAttempt(db, req._bruteForceIp, username, '', false);
         return res.status(401).json({ error: 'Invalid credentials' });
       }
-      const hash = hashPassword(password);
-      if (admin.username !== username || admin.pass_hash !== hash) {
+      // C-01 FIX: Use bcrypt-aware verifyPassword (handles legacy SHA-256 migration)
+      const validPass = await verifyPassword(password, admin.pass_hash);
+      if (admin.username !== username || !validPass) {
         await recordLoginAttempt(db, req._bruteForceIp, username, '', false);
         return res.status(401).json({ error: 'Invalid credentials' });
+      }
+      // C-01 FIX: Upgrade legacy SHA-256 hash to bcrypt on first successful login
+      if (admin.pass_hash && !admin.pass_hash.startsWith('$2')) {
+        const newHash = await hashPassword(password);
+        await db.prepare('UPDATE super_admin SET pass_hash = $1 WHERE id = 1').run(newHash);
       }
       await recordLoginAttempt(db, req._bruteForceIp, username, '', true);
       // FIX (a): Only one superadmin session allowed — invalidate all previous super sessions
@@ -71,14 +77,19 @@ function authRoutes(db) {
       ).get(tenantId);
       if (!tenant) return res.status(404).json({ error: 'Station not found or inactive' });
 
-      const hash = hashPassword(password);
+      // C-01 FIX: Fetch user first, then verify with bcrypt-aware verifyPassword
       const user = await db.prepare(
-        'SELECT * FROM admin_users WHERE tenant_id = $1 AND username = $2 AND pass_hash = $3 AND active = 1'
-      ).get(tenantId, username, hash);
+        'SELECT * FROM admin_users WHERE tenant_id = $1 AND username = $2 AND active = 1'
+      ).get(tenantId, username);
 
-      if (!user) {
+      if (!user || !(await verifyPassword(password, user.pass_hash))) {
         await recordLoginAttempt(db, req._bruteForceIp, username, tenantId, false);
         return res.status(401).json({ error: 'Invalid credentials' });
+      }
+      // C-01 FIX: Upgrade legacy SHA-256 hash to bcrypt on first successful login
+      if (user.pass_hash && !user.pass_hash.startsWith('$2')) {
+        const newHash = await hashPassword(password);
+        await db.prepare('UPDATE admin_users SET pass_hash = $1 WHERE id = $2').run(newHash, user.id);
       }
       await recordLoginAttempt(db, req._bruteForceIp, username, tenantId, true);
       const token = await createSession(db, {
@@ -86,10 +97,12 @@ function authRoutes(db) {
         userName: user.name, role: user.role,
         ip: req.ip, userAgent: req.headers['user-agent']
       });
+      // L-02 FIX: Include last login info so admins can detect unexpected access
       res.json({
         success: true, token,
         userType: 'admin', userName: user.name, userRole: user.role,
-        tenantId, tenantName: tenant.name
+        tenantId, tenantName: tenant.name,
+        loginIp: req.ip, loginAt: new Date().toISOString(),
       });
     } catch (e) {
       console.error('[login]', e.message);
@@ -106,7 +119,7 @@ function authRoutes(db) {
       return res.status(400).json({ error: 'PIN must be 4-8 digits' });
     }
     try {
-      const hash = hashPassword(String(pin));
+      // C-01 FIX: verifyPassword handles both bcrypt and legacy SHA-256 PINs
       // Verify tenant is active before allowing employee login
       const tenant = await db.prepare(
         'SELECT id FROM tenants WHERE id = $1 AND active = 1'
@@ -116,13 +129,23 @@ function authRoutes(db) {
       // BUG FIX: if employeeId provided, use it to disambiguate duplicate PINs
       let emp;
       if (employeeId) {
-        emp = await db.prepare(
-          'SELECT * FROM employees WHERE id = $1 AND tenant_id = $2 AND pin_hash = $3 AND active = 1'
-        ).get(employeeId, tenantId, hash);
+        const candidate = await db.prepare(
+          'SELECT * FROM employees WHERE id = $1 AND tenant_id = $2 AND active = 1'
+        ).get(employeeId, tenantId);
+        emp = (candidate && await verifyPassword(String(pin), candidate.pin_hash)) ? candidate : null;
       } else {
-        emp = await db.prepare(
-          'SELECT * FROM employees WHERE tenant_id = $1 AND pin_hash = $2 AND active = 1'
-        ).get(tenantId, hash);
+        // No employeeId: fetch all with a pin_hash set, verify each (rare path)
+        const candidates = await db.prepare(
+          'SELECT * FROM employees WHERE tenant_id = $1 AND active = 1 AND pin_hash IS NOT NULL AND pin_hash != $2'
+        ).all(tenantId, '');
+        for (const c of candidates) {
+          if (await verifyPassword(String(pin), c.pin_hash)) { emp = c; break; }
+        }
+      }
+      // C-01 FIX: Upgrade legacy SHA-256 PIN hash to bcrypt on first successful login
+      if (emp && emp.pin_hash && !emp.pin_hash.startsWith('$2')) {
+        const newHash = await hashPassword(String(pin));
+        await db.prepare('UPDATE employees SET pin_hash = $1 WHERE id = $2').run(newHash, emp.id);
       }
       if (!emp) {
         await recordLoginAttempt(db, req._bruteForceIp, 'employee-pin', tenantId, false);
@@ -198,9 +221,10 @@ function authRoutes(db) {
       return res.status(400).json({ error: 'Passwords do not match' });
     }
     try {
+      const superHash = await hashPassword(newPassword);
       await db.prepare(
         'UPDATE super_admin SET username = $1, pass_hash = $2, updated_at = NOW() WHERE id = 1'
-      ).run(newUsername, hashPassword(newPassword));
+      ).run(newUsername, superHash);
       res.json({ success: true });
     } catch (e) {
       res.status(500).json({ error: e.message });
@@ -214,9 +238,10 @@ function authRoutes(db) {
       return res.status(400).json({ error: 'Password too short (min 6 chars)' });
     }
     try {
+      const newHash = await hashPassword(newPassword);
       await db.prepare(
         'UPDATE admin_users SET pass_hash = $1 WHERE id = $2 AND tenant_id = $3'
-      ).run(hashPassword(newPassword), req.userId, req.tenantId);
+      ).run(newHash, req.userId, req.tenantId);
       res.json({ success: true });
     } catch (e) {
       res.status(500).json({ error: e.message });

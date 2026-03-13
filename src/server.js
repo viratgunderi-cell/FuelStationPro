@@ -27,6 +27,16 @@ async function startServer() {
   app.locals.db = db;
   app.set('trust proxy', 1);
 
+  // L-01 FIX: Enforce HTTPS in production — Railway sets x-forwarded-proto
+  app.use((req, res, next) => {
+    if (process.env.NODE_ENV === 'production' &&
+        req.headers['x-forwarded-proto'] &&
+        req.headers['x-forwarded-proto'] !== 'https') {
+      return res.redirect(301, 'https://' + req.headers.host + req.url);
+    }
+    next();
+  });
+
   // BUG-08 FIX: CSP was fully disabled to allow inline scripts. Instead, enable CSP
   // with unsafe-inline only for scripts (required for SPA), keeping all other protections.
   app.use(helmet({
@@ -110,8 +120,14 @@ async function startServer() {
     }
   }));
 
-  app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', database: 'postgresql', uptime: process.uptime() });
+  app.get('/api/health', async (req, res) => {
+    // L-03 FIX: verify actual DB connectivity, not just process uptime
+    try {
+      await pool.query('SELECT 1');
+      res.json({ status: 'ok', database: 'connected', uptime: process.uptime() });
+    } catch (e) {
+      res.status(503).json({ status: 'degraded', database: 'error', error: e.message, uptime: process.uptime() });
+    }
   });
 
   // ── Pool for public routes (imported here so public routes can use it) ────
@@ -142,7 +158,9 @@ async function startServer() {
   });
 
   // ── IR-01 FIX: Server-side PIN verification — hash never leaves DB ───────────
-  app.post('/api/public/verify-pin/:tenantId', async (req, res) => {
+  // M-01 FIX: Rate limit PIN verification — previously had zero protection
+  const pinVerifyLimiter = rateLimit({ windowMs: 300000, max: 15, standardHeaders: true, legacyHeaders: false });
+  app.post('/api/public/verify-pin/:tenantId', pinVerifyLimiter, async (req, res) => {
     try {
       const { employeeId, pinHash } = req.body;
       if (!employeeId || !pinHash) return res.status(400).json({ valid: false, error: 'Missing fields' });
@@ -435,18 +453,35 @@ async function startServer() {
       }
 
       // BUG-01 FIX: 'employee' bare column does not exist in sales — use employee_id + employee_name
+      // M-02 FIX: Idempotency key prevents duplicate sales on network retry.
+      // Client generates a UUID per sale attempt; duplicate key = silent no-op, returns existing id.
+      const idemKey = sale.idempotencyKey || sale.idempotency_key || '';
+      let saleId;
+      if (idemKey) {
+        // Check for existing sale with this idempotency key first
+        const existing = await client.query(
+          'SELECT id FROM sales WHERE tenant_id = $1 AND idempotency_key = $2',
+          [tenantId, idemKey]
+        );
+        if (existing.rows[0]) {
+          await client.query('COMMIT');
+          client.release();
+          return res.json({ id: existing.rows[0].id, duplicate: true });
+        }
+      }
       const r = await client.query(
-        `INSERT INTO sales (tenant_id, date, time, fuel_type, liters, amount, mode, pump, nozzle, vehicle, customer, shift, employee_id, employee_name)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+        `INSERT INTO sales (tenant_id, date, time, fuel_type, liters, amount, mode, pump, nozzle, vehicle, customer, shift, employee_id, employee_name, idempotency_key)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
         [tenantId, sale.date||'', sale.time||'', sale.fuelType||'', sale.liters||0, sale.amount||0,
          sale.mode||'cash', sale.pump||'', sale.nozzle||'A', sale.vehicle||'',
          sale.customer||'', sale.shift||'', sale.employeeId||0,
-         sale.employeeName||(sale.employee||'')]
+         sale.employeeName||(sale.employee||''), idemKey]
       );
+      saleId = r.rows[0].id;
 
       await client.query('COMMIT');
       client.release();
-      res.json({ id: r.rows[0].id });
+      res.json({ id: saleId });
     } catch (e) {
       try { await client.query('ROLLBACK'); } catch {}
       client.release();
@@ -457,7 +492,7 @@ async function startServer() {
 
   const authLimiter = rateLimit({
     windowMs: 300000,   // 5-minute window
-    max: 200,           // raised from 30 — supports multi-user stations
+    max: 20,            // M-01 FIX: reduced from 200 — 20/5min matches brute-force check threshold
     standardHeaders: true,
     legacyHeaders: false,
     handler: (req, res) => {
@@ -479,7 +514,7 @@ async function startServer() {
   // These are registered BEFORE the generic dataRoutes mounts to avoid
   // any routing ambiguity from double-mounting.
   const { requireRole: reqRole, auditLog: auLog } = require('./security');
-  const { hashPassword: hashPw } = require('./schema');
+  const { hashPassword: hashPw, verifyPassword: verifyPw } = require('./schema');
 
   // GET tenant admins
   app.get('/api/data/tenants/:id/admins', authMiddleware(db), reqRole('super'), async (req, res) => {
@@ -497,7 +532,8 @@ async function startServer() {
     try {
       const exists = await db.prepare('SELECT id FROM admin_users WHERE tenant_id = $1 AND username = $2').get(req.params.id, username);
       if (exists) return res.status(409).json({ error: 'Username already exists' });
-      const result = await db.prepare('INSERT INTO admin_users (tenant_id, name, username, pass_hash, role) VALUES ($1,$2,$3,$4,$5)').run(req.params.id, name, username, hashPw(password), role||'Manager');
+      const result = const adminHash = await hashPw(password);
+      await db.prepare('INSERT INTO admin_users (tenant_id, name, username, pass_hash, role) VALUES ($1,$2,$3,$4,$5)').run(req.params.id, name, username, adminHash, role||'Manager');
       res.json({ success: true, id: result.lastInsertRowid });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -515,7 +551,8 @@ async function startServer() {
     const { newPassword } = req.body;
     if (!newPassword || newPassword.length < 6) return res.status(400).json({ error: 'Password too short' });
     try {
-      await db.prepare('UPDATE admin_users SET pass_hash = $1 WHERE id = $2 AND tenant_id = $3').run(hashPw(newPassword), req.params.uid, req.params.tid);
+      const resetHash = await hashPw(newPassword);
+      await db.prepare('UPDATE admin_users SET pass_hash = $1 WHERE id = $2 AND tenant_id = $3').run(resetHash, req.params.uid, req.params.tid);
       res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -532,8 +569,9 @@ async function startServer() {
         .run(tenantId, name, location||'', ownerName||'', phone||'', icon||'⛽', color||'#d4940f', colorLight||'#f0b429', stationCode||'', 1);
       if (adminUser && adminPass) {
         try {
+          const ownerHash = await hashPw(adminPass);
           await db.prepare('INSERT INTO admin_users (tenant_id, name, username, pass_hash, role) VALUES ($1,$2,$3,$4,$5)')
-            .run(tenantId, ownerName||adminUser, adminUser, hashPw(adminPass), 'Owner');
+            .run(tenantId, ownerName||adminUser, adminUser, ownerHash, 'Owner');
         } catch (e2) { console.warn('[Tenant] Admin creation failed:', e2.message); }
       }
       await auLog(req, 'CREATE_TENANT', 'tenants', tenantId, name);
@@ -673,7 +711,7 @@ async function startServer() {
       } else {
         history.unshift(newEntry);
       }
-      history = history.slice(0, 30);
+      history = history.slice(0, 180); // M-04 FIX: 180 entries ~= 6 months of daily shifts
       if (existing.rows[0]) {
         await pool.query(
           "UPDATE settings SET value=$1 WHERE key=$2 AND tenant_id=$3",
@@ -741,6 +779,8 @@ async function startServer() {
   });
 
   // ── COMPARE: multi-station summary (super = all tenants; admin = own + benchmark) ──
+  // H-02 FIX: Rewritten from N+1 (5 queries × N tenants) to 5 aggregated queries total.
+  // At 200 bunks: was 1,000 DB hits → now 5 DB hits regardless of bunk count.
   app.get('/api/data/compare/summary', authMiddleware(db), async (req, res) => {
     try {
       const today = new Date().toISOString().slice(0, 10);
@@ -748,76 +788,84 @@ async function startServer() {
       const isSuperUser = req.userType === 'super';
       const ownerTenantId = req.tenantId;
 
-      // Determine which tenant IDs to query
-      let tenantIds = [];
-      if (isSuperUser) {
-        const rows = await pool.query('SELECT id FROM tenants WHERE active = true ORDER BY created_at');
-        tenantIds = rows.rows.map(r => r.id);
-      } else {
-        // Owner sees own tenant plus we still compute network aggregate across all
-        const rows = await pool.query('SELECT id FROM tenants WHERE active = true');
-        tenantIds = rows.rows.map(r => r.id);
-      }
+      // Query 1: all active tenants
+      const tenantRows = await pool.query(
+        'SELECT id, name, location FROM tenants WHERE active = 1 ORDER BY name'
+      );
+      if (!tenantRows.rows.length) return res.json({ stations: [], benchmark: null });
 
-      if (!tenantIds.length) return res.json({ stations: [], benchmark: null });
+      // Query 2: today sales — aggregated across ALL tenants in one shot
+      const salesTodayRows = await pool.query(
+        `SELECT tenant_id,
+                COALESCE(SUM(amount),0) AS revenue,
+                COALESCE(SUM(liters),0) AS liters,
+                COUNT(*)                AS txns
+         FROM sales WHERE date = $1 GROUP BY tenant_id`, [today]
+      );
+      const salesTodayMap = {};
+      salesTodayRows.rows.forEach(r => { salesTodayMap[r.tenant_id] = r; });
 
-      // Per-tenant today summary
-      const stationData = await Promise.all(tenantIds.map(async tid => {
-        const [tenantRow, salesRow, tankRow, empRow, sales7Row] = await Promise.all([
-          pool.query('SELECT name, location FROM tenants WHERE id = $1', [tid]),
-          pool.query(
-            `SELECT COALESCE(SUM(amount),0) AS revenue, COALESCE(SUM(liters),0) AS liters, COUNT(*) AS txns
-             FROM sales WHERE tenant_id = $1 AND date = $2`, [tid, today]),
-          pool.query(
-            `SELECT fuel_type, current_level, capacity, low_alert FROM tanks WHERE tenant_id = $1`, [tid]),
-          pool.query('SELECT COUNT(*) AS cnt FROM employees WHERE tenant_id = $1 AND active = 1', [tid]),
-          pool.query(
-            `SELECT COALESCE(SUM(amount),0)/7 AS avg_revenue, COALESCE(SUM(liters),0)/7 AS avg_liters
-             FROM sales WHERE tenant_id = $1 AND date >= $2 AND date < $3`, [tid, sevenDaysAgo, today]),
-        ]);
-        const t = tenantRow.rows[0] || {};
-        const s = salesRow.rows[0] || {};
-        const s7 = sales7Row.rows[0] || {};
-        const tanks = tankRow.rows || [];
+      // Query 3: 7-day sales average — aggregated across all tenants
+      const sales7Rows = await pool.query(
+        `SELECT tenant_id,
+                COALESCE(SUM(amount),0)/7 AS avg_revenue,
+                COALESCE(SUM(liters),0)/7 AS avg_liters
+         FROM sales WHERE date >= $1 AND date < $2 GROUP BY tenant_id`,
+        [sevenDaysAgo, today]
+      );
+      const sales7Map = {};
+      sales7Rows.rows.forEach(r => { sales7Map[r.tenant_id] = r; });
+
+      // Query 4: tank levels — all tenants
+      const tankRows = await pool.query(
+        'SELECT tenant_id, fuel_type, current_level, capacity, low_alert FROM tanks'
+      );
+      const tanksMap = {};
+      tankRows.rows.forEach(r => {
+        if (!tanksMap[r.tenant_id]) tanksMap[r.tenant_id] = [];
+        tanksMap[r.tenant_id].push(r);
+      });
+
+      // Query 5: employee counts — all tenants
+      const empRows = await pool.query(
+        'SELECT tenant_id, COUNT(*) AS cnt FROM employees WHERE active = 1 GROUP BY tenant_id'
+      );
+      const empMap = {};
+      empRows.rows.forEach(r => { empMap[r.tenant_id] = parseInt(r.cnt) || 0; });
+
+      // Assemble per-station data from maps (no DB calls inside loop)
+      const stationData = tenantRows.rows.map(t => {
+        const s  = salesTodayMap[t.id] || {};
+        const s7 = sales7Map[t.id]     || {};
+        const tanks = (tanksMap[t.id]  || []).map(tk => ({
+          fuelType: tk.fuel_type,
+          current:  parseFloat(tk.current_level) || 0,
+          capacity: parseFloat(tk.capacity) || 1,
+          lowAlert: parseFloat(tk.low_alert) || 500,
+          pct: Math.round((parseFloat(tk.current_level)||0) / Math.max(parseFloat(tk.capacity)||1, 1) * 100),
+        }));
         return {
-          tenantId: tid,
-          name: t.name || tid,
-          location: t.location || '',
-          today: {
-            revenue: parseFloat(s.revenue) || 0,
-            liters: parseFloat(s.liters) || 0,
-            txns: parseInt(s.txns) || 0,
-          },
-          avg7: {
-            revenue: parseFloat(s7.avg_revenue) || 0,
-            liters: parseFloat(s7.avg_liters) || 0,
-          },
-          tanks: tanks.map(t => ({
-            fuelType: t.fuel_type, current: parseFloat(t.current_level) || 0,
-            capacity: parseFloat(t.capacity) || 1,
-            lowAlert: parseFloat(t.low_alert) || 500,
-            pct: Math.round((parseFloat(t.current_level) || 0) / Math.max(parseFloat(t.capacity) || 1, 1) * 100)
-          })),
-          employees: parseInt(empRow.rows[0]?.cnt) || 0,
-          isOwn: !isSuperUser && tid === ownerTenantId,
+          tenantId:  t.id,
+          name:      t.name,
+          location:  t.location || '',
+          today:     { revenue: parseFloat(s.revenue)||0, liters: parseFloat(s.liters)||0, txns: parseInt(s.txns)||0 },
+          avg7:      { revenue: parseFloat(s7.avg_revenue)||0, liters: parseFloat(s7.avg_liters)||0 },
+          tanks,
+          employees: empMap[t.id] || 0,
+          isOwn:     !isSuperUser && t.id === ownerTenantId,
         };
-      }));
+      });
 
-      // Network benchmark (aggregate of all stations)
-      const allTodayRevenue = stationData.map(s => s.today.revenue);
-      const allTodayLiters  = stationData.map(s => s.today.liters);
+      const allRev = stationData.map(s => s.today.revenue);
+      const allLit = stationData.map(s => s.today.liters);
       const benchmark = {
-        avgRevenue: allTodayRevenue.reduce((a, b) => a + b, 0) / (allTodayRevenue.length || 1),
-        avgLiters:  allTodayLiters.reduce((a, b) => a + b, 0) / (allTodayLiters.length || 1),
-        maxRevenue: Math.max(...allTodayRevenue, 0),
+        avgRevenue:   allRev.reduce((a,b)=>a+b,0) / (allRev.length||1),
+        avgLiters:    allLit.reduce((a,b)=>a+b,0) / (allLit.length||1),
+        maxRevenue:   Math.max(...allRev, 0),
         stationCount: stationData.length,
       };
 
-      // Super sees all; owner sees own station only but also gets benchmark
-      const visible = isSuperUser
-        ? stationData
-        : stationData.filter(s => s.tenantId === ownerTenantId);
-
+      const visible = isSuperUser ? stationData : stationData.filter(s => s.tenantId === ownerTenantId);
       res.json({ stations: visible, benchmark, isSuperUser, today });
     } catch (err) {
       console.error('[compare/summary]', err.message);
@@ -838,6 +886,15 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[FuelBunk Pro] Running on port ${PORT} with PostgreSQL`);
   });
+
+  // M-03 FIX: Periodic cleanup — startup-only cleanup is not enough for long-running deployments
+  setInterval(async () => {
+    try {
+      await pool.query("DELETE FROM login_attempts WHERE attempted_at < NOW() - INTERVAL '24 hours'");
+      await pool.query("DELETE FROM audit_log WHERE created_at < NOW() - INTERVAL '90 days'");
+      await pool.query("DELETE FROM sessions WHERE expires_at < NOW()");
+    } catch (e) { console.warn('[Cleanup]', e.message); }
+  }, 6 * 60 * 60 * 1000); // every 6 hours
 
   process.on('SIGTERM', () => { console.log('[Server] Shutting down...'); process.exit(0); });
   process.on('SIGINT', () => process.exit(0));

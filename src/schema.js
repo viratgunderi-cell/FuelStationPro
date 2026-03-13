@@ -1,21 +1,39 @@
 /**
  * FuelBunk Pro — PostgreSQL Database Schema & Init
  *
- * BUGS FIXED:
- *  1. Duplicate/dead PgDB class removed (only PgDbWrapper is used)
- *  2. RETURNING * on INSERT INTO sessions → crash (token is TEXT PK, not SERIAL)
- *     Fixed: sessions INSERT uses RETURNING token
- *  3. RETURNING * appended to UPDATE/DELETE statements — wrong, removed
- *  4. No connection pool limits → Railway free tier pool exhaustion
- *  5. No pool error handler → uncaught errors crash process
- *  6. No indexes on hot query paths (sessions, sales, login_attempts)
- *  7. Session/login_attempts tables grow unbounded → added startup cleanup
+ * FIXES:
+ *  C-01: bcrypt (cost 12) replaces raw SHA-256 for all password hashing.
+ *  C-02: Default superadmin password read from SUPER_ADMIN_INIT_PASS env var.
+ *  L-04: statement_timeout added to pool config to prevent runaway queries.
+ *  Fix02: 4 missing composite indexes added (shifts, expenses, dip, purchases).
+ *  Fix03: Connection pool raised from 10 to 25.
  */
 const { Pool } = require('pg');
 const crypto = require('crypto');
+const bcrypt = require('bcrypt');
 
-function hashPassword(password) {
-  return crypto.createHash('sha256').update(password).digest('hex');
+// C-01 FIX: bcrypt replaces raw SHA-256.
+// SHA-256 crackable at ~10B guesses/sec on GPU. bcrypt at cost=12 is ~100/sec.
+const BCRYPT_ROUNDS = 12;
+
+async function hashPassword(password) {
+  return bcrypt.hash(String(password), BCRYPT_ROUNDS);
+}
+
+// Used for login comparison — handles legacy SHA-256 hashes transparently.
+// On first login with legacy hash, auth.js re-hashes with bcrypt and saves it.
+async function verifyPassword(plain, stored) {
+  if (stored && stored.startsWith('$2')) {
+    return bcrypt.compare(String(plain), stored);
+  }
+  // Legacy SHA-256 path — only for migration, never for new accounts
+  const sha = crypto.createHash('sha256').update(String(plain)).digest('hex');
+  return sha === stored;
+}
+
+// Sync SHA-256 kept only for initial seeding when bcrypt is not yet available
+function _sha256Legacy(s) {
+  return crypto.createHash('sha256').update(s).digest('hex');
 }
 
 const dbUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
@@ -37,6 +55,7 @@ if (dbUrl) {
     max: 25,                      // raised from 10 — handles peak shift-change concurrency
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
+    statement_timeout: 15000,      // L-04 FIX: kill runaway queries after 15s
   };
 } else {
   console.log('[DB] Using PG* env vars, host:', process.env.PGHOST);
@@ -50,6 +69,7 @@ if (dbUrl) {
     max: 25,                      // raised from 10 — both branches must match
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
+    statement_timeout: 15000,      // L-04 FIX: kill runaway queries after 15s
   };
 }
 
@@ -459,14 +479,27 @@ async function initDatabase() {
     catch (e) { console.warn('[Schema]', e.message.substring(0, 120)); }
   }
 
-  // Seed super admin
+  // C-02 FIX: Default superadmin password from env var — never hardcode in source.
+  // Set SUPER_ADMIN_INIT_PASS in Railway Variables before first deploy.
+  // If not set, a random password is generated and printed ONCE to server logs.
   const existing = await pool.query('SELECT id FROM super_admin WHERE id = 1');
   if (existing.rows.length === 0) {
+    const initPass = process.env.SUPER_ADMIN_INIT_PASS ||
+                     crypto.randomBytes(16).toString('hex');
+    const initHash = await hashPassword(initPass);
     await pool.query(
       'INSERT INTO super_admin (id, username, pass_hash) VALUES ($1, $2, $3)',
-      [1, 'superadmin', hashPassword('FuelBunk@Super2026')]
+      [1, process.env.SUPER_ADMIN_USERNAME || 'superadmin', initHash]
     );
-    console.log('[DB] Super admin seeded — CHANGE PASSWORD IMMEDIATELY');
+    if (!process.env.SUPER_ADMIN_INIT_PASS) {
+      console.log('╔══════════════════════════════════════════════════════╗');
+      console.log('║  SUPER ADMIN PASSWORD (shown once — save this now!) ║');
+      console.log(`║  Username : ${(process.env.SUPER_ADMIN_USERNAME || 'superadmin').padEnd(40)}║`);
+      console.log(`║  Password : ${initPass.padEnd(40)}║`);
+      console.log('╚══════════════════════════════════════════════════════╝');
+    } else {
+      console.log('[DB] Super admin seeded from SUPER_ADMIN_INIT_PASS env var');
+    }
   }
 
   // ── Add columns that may be missing from existing deployments ──────────────
@@ -476,6 +509,9 @@ async function initDatabase() {
     `ALTER TABLE sales ADD COLUMN IF NOT EXISTS upi_txn_id TEXT DEFAULT ''`,
     `ALTER TABLE sales ADD COLUMN IF NOT EXISTS nozzle TEXT DEFAULT ''`,
     `ALTER TABLE sales ADD COLUMN IF NOT EXISTS employee_name TEXT DEFAULT ''`,
+    // M-02 FIX: idempotency key prevents duplicate sales on network retry
+    `ALTER TABLE sales ADD COLUMN IF NOT EXISTS idempotency_key TEXT DEFAULT ''`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_idem ON sales(tenant_id, idempotency_key) WHERE idempotency_key != ''`,
     `ALTER TABLE credit_customers ADD COLUMN IF NOT EXISTS balance REAL DEFAULT 0`,
     `ALTER TABLE credit_customers ADD COLUMN IF NOT EXISTS credit_limit REAL DEFAULT 0`,
     `ALTER TABLE credit_customers ADD COLUMN IF NOT EXISTS last_payment TEXT DEFAULT ''`,
@@ -519,4 +555,4 @@ async function initDatabase() {
   return new PgDbWrapper(pool);
 }
 
-module.exports = { initDatabase, hashPassword, pool };
+module.exports = { initDatabase, hashPassword, verifyPassword, pool };

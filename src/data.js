@@ -436,6 +436,53 @@ function dataRoutes(db) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
+  // ── H-03 FIX: Credit payment deducts customer balance atomically ────────────
+  // The generic upsertRow() only inserts the transaction record — it cannot know
+  // to also UPDATE credit_customers.balance. This route intercepts payment records.
+  router.post('/creditTransactions', checkDayLock, async (req, res) => {
+    const client = await pool.connect();
+    try {
+      const data = req.body;
+      await client.query('BEGIN');
+
+      // Insert the transaction record
+      const r = await client.query(
+        `INSERT INTO credit_transactions
+           (tenant_id, customer_id, date, type, amount, description, sale_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+        [req.tenantId, data.customerId||data.customer_id||0,
+         data.date||'', data.type||'sale',
+         data.amount||0, data.description||data.desc||'',
+         data.saleId||data.sale_id||0]
+      );
+
+      // H-03 FIX: If this is a payment, deduct from the customer balance
+      if ((data.type||'').toLowerCase() === 'payment' && data.amount > 0) {
+        const custId = data.customerId || data.customer_id;
+        if (custId) {
+          await client.query(
+            `UPDATE credit_customers
+             SET balance = GREATEST(0, COALESCE(balance,0) - $1),
+                 last_payment = $2,
+                 updated_at = NOW()
+             WHERE id = $3 AND tenant_id = $4`,
+            [data.amount, data.date||'', custId, req.tenantId]
+          );
+        }
+      }
+
+      await client.query('COMMIT');
+      client.release();
+      await auditLog(req, 'CREATE', 'creditTransactions', String(r.rows[0].id), data.type||'');
+      res.json({ success: true, id: r.rows[0].id });
+    } catch (e) {
+      try { await client.query('ROLLBACK'); } catch {}
+      client.release();
+      console.error('[creditTransactions POST]', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Generic store POST (create) ───────────────────────────────────────────
   router.post('/:store', checkDayLock, async (req, res) => {
     const meta = STORE_MAP[req.params.store];
@@ -479,12 +526,15 @@ function dataRoutes(db) {
   });
 
   // ── Generic store DELETE all (clear) ─────────────────────────────────────
-  router.delete('/:store', async (req, res) => {
+  // H-01 FIX: requireRole('Owner') — previously ANY authenticated user could wipe all records.
+  // Also added audit log so bulk deletes are always traceable.
+  router.delete('/:store', requireRole('Owner'), async (req, res) => {
     const meta = STORE_MAP[req.params.store];
     if (!meta) return res.status(404).json({ error: 'Unknown store' });
     try {
-      await pool.query(`DELETE FROM ${meta.table} WHERE tenant_id = $1`, [req.tenantId]);
-      res.json({ success: true });
+      const result = await pool.query(`DELETE FROM ${meta.table} WHERE tenant_id = $1`, [req.tenantId]);
+      await auditLog(req, 'DELETE_ALL', req.params.store, '', `${result.rowCount} rows deleted`);
+      res.json({ success: true, deleted: result.rowCount });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
