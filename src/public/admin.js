@@ -5820,7 +5820,8 @@ function navigate(pageId) {
   window.location.hash = pageId;
   document.getElementById('pageTitle').textContent = PAGES.find(p => p.id === pageId)?.label || 'Dashboard';
   const _tb = APP.tenant;
-  document.getElementById('breadcrumb').textContent = (_tb ? (_tb.name + (_tb.location ? ' • ' + _tb.location : '')) : 'FuelBunk Pro');
+  const _bc = document.getElementById('breadcrumb');
+  if (_bc) { _bc.innerHTML = _tb ? '<strong style="color:var(--accent-light);font-size:13px;font-weight:800;letter-spacing:-0.2px">' + sanitize(_tb.name) + '</strong>' + (_tb.location ? '<span style="color:var(--text-3);font-size:11px;font-weight:500"> · ' + sanitize(_tb.location) + '</span>' : '') : '<span style="color:var(--text-3)">FuelBunk Pro</span>'; }
   buildNav();
   renderPage();
   // Close mobile sidebar
