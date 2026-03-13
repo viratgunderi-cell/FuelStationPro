@@ -108,7 +108,7 @@ async function mt_showSelector() {
               <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--radius-sm);margin-bottom:4px;border:1px solid ${isActive ? 'transparent' : 'rgba(239,68,68,0.15)'};background:${isActive ? 'transparent' : 'rgba(239,68,68,0.03)'}">
                 <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,${t.color||'var(--accent)'},${t.colorLight||'var(--accent-light)'});display:grid;place-items:center;font-size:18px;flex-shrink:0;opacity:${isActive?1:0.5}">${t.icon||'⛽'}</div>
                 <div style="flex:1;min-width:0;cursor:${isActive?'pointer':'default'}" onclick="${isActive ? `mt_selectTenant('${t.id}')` : ''}">
-                  <div style="font-weight:700;color:${isActive?'var(--text-0)':'var(--text-3)'};font-size:13px">${t.name}</div>
+                  <div style="font-weight:900;color:${isActive?'var(--accent-light)':'var(--text-3)'};font-size:14px;letter-spacing:-0.2px">${t.name}</div>
                   <div style="font-size:10px;color:var(--text-3);margin-top:1px">${t.location||''} ${isActive ? '' : '· <span style="color:var(--red);font-weight:600">INACTIVE</span>'}</div>
                 </div>
                 ${isActive ? `<div style="color:var(--text-3);font-size:16px;cursor:pointer" onclick="mt_selectTenant('${t.id}')">›</div>` : ''}
@@ -358,7 +358,7 @@ async function mt_manageStationAdmins(id) {
       <div style="padding:18px 22px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
         <div>
           <div style="font-size:15px;font-weight:800;color:var(--text-0)">👤 Manage Admins</div>
-          <div style="font-size:11px;color:var(--text-3);margin-top:2px">${t.name}</div>
+          <div style="font-size:12px;color:var(--accent-light);font-weight:800;margin-top:2px">${t.name}</div>
         </div>
         <button onclick="document.getElementById('adminMgrOverlay').remove()" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);border-radius:8px;padding:5px 12px;cursor:pointer;font-size:12px">✕ Close</button>
       </div>
