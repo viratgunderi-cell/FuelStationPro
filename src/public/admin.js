@@ -5472,9 +5472,11 @@ async function saveAddAdminUser() {
   if (!user || user.length < 2) { toast('Enter username','error'); return; }
   if (pass.length < 6) { toast('Password must be at least 6 characters','error'); return; }
   // Use AuthAPI if available (server), else update local tenant
-  if (typeof AuthAPI !== 'undefined') {
+  if (typeof TenantAPI !== 'undefined' && APP.tenant?.id) {
     try {
-      await AuthAPI.addAdminUser({ name, username: user, role, password: pass });
+      // FIX: was AuthAPI.addAdminUser (doesn't exist) → correct is TenantAPI.addAdmin
+      const tid = APP.tenant.id;
+      await TenantAPI.addAdmin(tid, { name, username: user, role, password: pass });
       toast(`${name} added as ${role}`, 'success');
       closeModal(); renderPage();
     } catch(e) { toast(e.message||'Failed to add user','error'); }
@@ -5514,9 +5516,18 @@ async function saveAdminUserRole(userIdx) {
   const admins = APP.tenant?.adminUsers;
   if (!admins || !admins[userIdx]) return;
   admins[userIdx].role = newRole;
-  if (typeof AuthAPI !== 'undefined') {
-    try { await AuthAPI.updateAdminUser(admins[userIdx]); } catch(e) {}
-  }
+  // FIX: persist role change to server via new PUT .../admins/:uid/role endpoint
+  try {
+    const tid = APP.tenant?.id;
+    const uid = admins[userIdx]?.id;
+    if (tid && uid) {
+      await fetch('/api/data/tenants/' + encodeURIComponent(tid) + '/admins/' + encodeURIComponent(uid) + '/role', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (typeof getAuthToken === 'function' ? getAuthToken() : '') },
+        body: JSON.stringify({ role: newRole })
+      });
+    }
+  } catch(e) { console.warn('[saveAdminUserRole]', e.message); }
   toast(`Role updated to ${newRole}`, 'success');
   closeModal(); renderPage();
 }

@@ -579,6 +579,24 @@ async function startServer() {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
+  // PUT update admin user role (Owner can do this for their own tenant)
+  app.put('/api/data/tenants/:tid/admins/:uid/role', authMiddleware(db), async (req, res) => {
+    // Super can update any tenant; Owner can only update their own
+    if (req.userType !== 'super' && req.tenantId !== req.params.tid) {
+      return res.status(403).json({ error: 'Insufficient permissions' });
+    }
+    const { role } = req.body;
+    if (!role || !['Owner','Manager','Accountant','Cashier'].includes(role)) {
+      return res.status(400).json({ error: 'Invalid role' });
+    }
+    try {
+      await db.prepare(
+        'UPDATE admin_users SET role = $1 WHERE id = $2 AND tenant_id = $3'
+      ).run(role, req.params.uid, req.params.tid);
+      res.json({ success: true });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+  });
+
   // PUT update tenant
   app.put('/api/data/tenants/:id', authMiddleware(db), reqRole('super'), async (req, res) => {
     const { name, location, ownerName, phone, icon, active, stationCode } = req.body;
