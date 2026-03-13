@@ -522,20 +522,25 @@ async function startServer() {
     }
   });
 
-  const authLimiter = rateLimit({
+  // Rate limit ONLY login/super-login/employee-login — NOT session checks
+  // Session endpoint is called on every page load; rate limiting it causes false lockouts
+  const loginOnlyLimiter = rateLimit({
     windowMs: 300000,   // 5-minute window
-    max: 20,            // M-01 FIX: reduced from 200 — 20/5min matches brute-force check threshold
+    max: 30,            // 30 login attempts per 5 min per IP — generous for shared Railway proxy
     standardHeaders: true,
     legacyHeaders: false,
+    skip: (req) => req.path === '/session' || req.method === 'GET', // never rate-limit session checks
+    keyGenerator: (req) => {
+      // Key by username if available, else IP — avoids shared-proxy false lockouts
+      const username = req.body?.username;
+      const ip = (req.headers['x-forwarded-for'] || req.ip || 'unknown').split(',')[0].trim();
+      return username ? `user:${username.toLowerCase()}` : `ip:${ip}`;
+    },
     handler: (req, res) => {
-      // BUG-D FIX: req.rateLimit.resetTime may be undefined in some express-rate-limit configs.
-      // Use optional chaining and fallback to a sensible default.
-      const resetMs = req.rateLimit?.resetTime ? (req.rateLimit.resetTime - Date.now()) : 300000;
-      const retryAfter = Math.max(1, Math.ceil(resetMs / 1000 / 60));
-      res.status(429).json({ error: `Too many login attempts. Please wait ${retryAfter} minute(s) and try again.` });
+      res.status(429).json({ error: 'Too many login attempts. Please wait a few minutes and try again.' });
     },
   });
-  app.use('/api/auth', authLimiter, authRoutes(db));
+  app.use('/api/auth', loginOnlyLimiter, authRoutes(db));
 
   // ── Settings routes ──────────────────────────────────────────────────────
   // BUG-06 FIX: These routes were duplicated here AND in data.js router.
