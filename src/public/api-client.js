@@ -6,12 +6,20 @@ const API_BASE = '/api';
 let _authToken = null;
 let _tenantId = null;
 let _logoutInProgress = false;
+const _TOKEN_KEY = '_fb_auth_token';
 
-function setAuthToken(token)  { _authToken = token; }
-function getAuthToken()       { return _authToken; }
+function setAuthToken(token)  {
+  _authToken = token;
+  if (token) sessionStorage.setItem(_TOKEN_KEY, token);
+  else sessionStorage.removeItem(_TOKEN_KEY);
+}
+function getAuthToken() {
+  if (!_authToken) _authToken = sessionStorage.getItem(_TOKEN_KEY) || null;
+  return _authToken;
+}
 function setTenantId(id)      { _tenantId = id; }
 function getTenantId()        { return _tenantId; }
-function clearAuth()          { _authToken = null; _tenantId = null; _logoutInProgress = false; }
+function clearAuth()          { _authToken = null; _tenantId = null; _logoutInProgress = false; sessionStorage.removeItem(_TOKEN_KEY); }
 
 async function apiFetch(path, options = {}) {
   const url = API_BASE + path;

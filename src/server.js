@@ -892,6 +892,42 @@ async function startServer() {
 
 
   // ── PUBLIC: Save employee shift history summary ──────────────────────────────
+  app.get('/api/public/sales-summary/:tenantId', async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      const { from, to } = req.query;
+      const today = istDate();
+      const fromDate = from || today;
+      const toDate = to || today;
+      const rows = await pool.query(
+        `SELECT COALESCE(SUM(amount),0) AS revenue, COALESCE(SUM(liters),0) AS liters, COUNT(*) AS txns
+         FROM sales WHERE tenant_id=$1 AND date>=$2 AND date<=$3`,
+        [tenantId, fromDate, toDate]
+      );
+      const tankRows = await pool.query(
+        'SELECT fuel_type, current_level, capacity FROM tanks WHERE tenant_id=$1', [tenantId]
+      );
+      const empRows = await pool.query(
+        'SELECT COUNT(*) AS cnt FROM employees WHERE tenant_id=$1 AND active=1', [tenantId]
+      );
+      const r = rows.rows[0] || {};
+      res.json({
+        revenue: parseFloat(r.revenue)||0,
+        liters: parseFloat(r.liters)||0,
+        txns: parseInt(r.txns)||0,
+        employees: parseInt(empRows.rows[0]?.cnt)||0,
+        tanks: tankRows.rows.map(t => ({
+          fuel_type: t.fuel_type,
+          current_level: parseFloat(t.current_level)||0,
+          capacity: parseFloat(t.capacity)||0,
+        })),
+      });
+    } catch(e) {
+      console.error('[public/sales-summary]', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post('/api/public/shift-history/:tenantId', async (req, res) => {
     try {
       const tenantId = req.params.tenantId;

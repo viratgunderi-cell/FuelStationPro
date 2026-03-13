@@ -696,212 +696,132 @@ function mt_toggleStation(id) {
 }
 
 // ── Super Admin: View All Station Data ──
-async function mt_viewStationData(id) {
+async function mt_viewStationData(id, period) {
   const tenants = mt_getTenants();
   const t = tenants.find(x => x.id === id);
   if (!t) return;
+  period = period || 'today';
 
-  const app = document.getElementById('app');
-  // Show loading
-  const overlay = document.createElement('div');
-  overlay.id = 'stationDataOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);backdrop-filter:blur(6px);z-index:10001;display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto';
-  overlay.innerHTML = `<div style="color:var(--text-1);font-size:14px;text-align:center"><div style="font-size:32px;margin-bottom:12px">⏳</div>Loading station data...</div>`;
-  document.body.appendChild(overlay);
+  // Show or update overlay
+  let overlay = document.getElementById('stationDataOverlay');
+  const isNew = !overlay;
+  if (isNew) {
+    overlay = document.createElement('div');
+    overlay.id = 'stationDataOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);backdrop-filter:blur(6px);z-index:10001;display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto';
+    document.body.appendChild(overlay);
+  }
 
-  // Load this station's IndexedDB
-  let stData = { sales:[], tanks:[], pumps:[], employees:[], shifts:[], expenses:[], creditCustomers:[], fuelPurchases:[], dipReadings:[] };
-  try {
-    const dbName = mt_dbName(id);
-    const stDb = await new Promise((resolve, reject) => {
-      const req = indexedDB.open(dbName, MT_DB_VERSION);
-      req.onsuccess = e => resolve(e.target.result);
-      req.onerror = () => resolve(null);
-      req.onupgradeneeded = e => resolve(e.target.result);
-      setTimeout(() => resolve(null), 3000);
-    });
-
-    if (stDb) {
-      const stores = ['sales','tanks','pumps','employees','shifts','expenses','creditCustomers','fuelPurchases','dipReadings'];
-      for (const store of stores) {
-        try {
-          const existing = Array.from(stDb.objectStoreNames);
-          if (existing.includes(store)) {
-            stData[store] = await new Promise((res) => {
-              const tx = stDb.transaction(store, 'readonly');
-              const req2 = tx.objectStore(store).getAll();
-              req2.onsuccess = () => res(req2.result || []);
-              req2.onerror = () => res([]);
-            });
-          }
-        } catch(e) { stData[store] = []; }
-      }
-      stDb.close();
-    }
-  } catch(e) { /* use empty data */ }
-
-  // Calculate summary stats
-  const today = new Date().toISOString().split('T')[0];
-  const salesAll = stData.sales || [];
-  const todaySales = salesAll.filter(s => s.date === today);
-  const totalRevenue = salesAll.reduce((s, x) => s + (x.amount || 0), 0);
-  const todayRevenue = todaySales.reduce((s, x) => s + (x.amount || 0), 0);
-  const totalLiters = salesAll.reduce((s, x) => s + (x.liters || 0), 0);
-  const creditCusts = stData.creditCustomers || [];
-  const totalOutstanding = creditCusts.reduce((s, x) => s + (x.outstanding || 0), 0);
-
-  const fmt2 = n => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(n || 0);
-  const cur2 = n => '₹' + fmt2(n);
-
-  // Payment mode breakdown
-  const payModes = {};
-  salesAll.forEach(s => { payModes[s.mode] = (payModes[s.mode]||0) + (s.amount||0); });
-
-  // Tank summary
-  const tanks = stData.tanks || [];
-  const tankHtml = tanks.length ? tanks.map(tk => {
-    const pct = tk.capacity ? Math.round((tk.current||0)/tk.capacity*100) : 0;
-    const col = pct > 40 ? 'var(--green)' : pct > 15 ? '#f97316' : 'var(--red)';
-    return `<div style="margin-bottom:10px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-        <span style="font-size:11px;font-weight:600;color:var(--text-1)">${tk.fuelType||'Tank'} (Tank ${tk.id})</span>
-        <span style="font-size:11px;color:${col};font-weight:700">${fmt2(tk.current||0)}L / ${fmt2(tk.capacity||0)}L (${pct}%)</span>
+  const isActive = t.active !== false;
+  overlay.innerHTML = `
+    <div style="background:var(--bg-1);border-radius:16px;border:1px solid var(--border);width:100%;max-width:680px;margin-top:20px">
+      <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,${t.color||'var(--accent)'},${t.colorLight||'var(--accent-light)'});display:grid;place-items:center;font-size:18px">${t.icon||'⛽'}</div>
+          <div>
+            <div style="font-size:15px;font-weight:800;color:var(--accent-light)">${t.name}</div>
+            <div style="font-size:11px;color:var(--text-3)">${t.location||''} · ${t.ownerName||''}</div>
+          </div>
+          <span style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:4px;${isActive?'background:rgba(74,222,128,0.1);border:1px solid rgba(74,222,128,0.2);color:#4ade80':'background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#ef4444'}">●${isActive?' ACTIVE':' INACTIVE'}</span>
+        </div>
+        <button onclick="document.getElementById('stationDataOverlay').remove()" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);border-radius:8px;padding:6px 14px;cursor:pointer;font-size:12px;font-weight:600">✕ Close</button>
       </div>
-      <div style="height:6px;background:var(--bg-0);border-radius:3px;overflow:hidden">
-        <div style="width:${pct}%;height:100%;background:${col};border-radius:3px;transition:width 0.5s"></div>
+
+      <!-- Period tabs -->
+      <div style="display:flex;gap:0;border-bottom:1px solid var(--border)">
+        ${['today','week','month','year'].map(p => `
+          <button onclick="mt_viewStationData('${id}','${p}')" style="flex:1;padding:10px 6px;font-size:12px;font-weight:700;cursor:pointer;border:none;border-bottom:2px solid ${p===period?'var(--accent)':'transparent'};background:transparent;color:${p===period?'var(--accent-light)':'var(--text-3)'}">${p.charAt(0).toUpperCase()+p.slice(1)}</button>
+        `).join('')}
+      </div>
+
+      <div id="stationDataContent" style="padding:16px 20px">
+        <div style="text-align:center;padding:40px;color:var(--text-3)"><div style="font-size:24px;margin-bottom:8px">⏳</div>Loading...</div>
       </div>
     </div>`;
-  }).join('') : '<div style="color:var(--text-3);font-size:12px">No tank data</div>';
 
-  // Recent sales table
-  const recentSales = salesAll.slice(-10).reverse();
-  const salesHtml = recentSales.length ? recentSales.map(s => `
-    <tr>
-      <td style="padding:6px 8px;font-size:11px;color:var(--text-2)">${s.date||'-'}</td>
-      <td style="padding:6px 8px;font-size:11px;font-weight:600;color:var(--text-0)">${s.fuelType||'-'}</td>
-      <td style="padding:6px 8px;font-size:11px;color:var(--text-1)">${fmt2(s.liters||0)}L</td>
-      <td style="padding:6px 8px;font-size:11px;font-weight:700;color:var(--accent-light)">${cur2(s.amount||0)}</td>
-      <td style="padding:6px 8px;font-size:10px;color:var(--text-3)">${s.mode||'-'}</td>
-    </tr>
-  `).join('') : '<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--text-3);font-size:12px">No sales recorded</td></tr>';
+  // Calculate date range
+  const istNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const todayStr = istNow.toISOString().slice(0,10);
+  let fromDate = todayStr, toDate = todayStr;
+  if (period === 'week') {
+    const d = new Date(istNow); d.setDate(d.getDate() - 6);
+    fromDate = d.toISOString().slice(0,10);
+  } else if (period === 'month') {
+    fromDate = todayStr.slice(0,7) + '-01';
+  } else if (period === 'year') {
+    fromDate = todayStr.slice(0,4) + '-01-01';
+  }
 
-  // Employees list
-  const empHtml = (stData.employees||[]).length ? (stData.employees||[]).map(e =>
-    `<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border-light)">
-      <div style="width:28px;height:28px;border-radius:50%;background:${e.color||'var(--accent)'};display:grid;place-items:center;font-size:11px;font-weight:700;color:#000;flex-shrink:0">${(e.name||'?')[0]}</div>
-      <div style="flex:1"><div style="font-size:12px;font-weight:600;color:var(--text-0)">${e.name||'-'}</div><div style="font-size:10px;color:var(--text-3)">${e.role||'-'} · ${e.shift||'-'}</div></div>
-      <div style="font-size:11px;color:var(--text-2)">${cur2(e.salary||0)}/mo</div>
-    </div>`
-  ).join('') : '<div style="color:var(--text-3);font-size:12px;padding:10px 0">No employees found</div>';
+  try {
+    // Fetch sales data for this tenant via compare/summary or per-station API
+    // Use the public endpoints which don't need station auth
+    const [salesRes, tanksRes, empsRes] = await Promise.allSettled([
+      apiFetch(`/public/sales-summary/${id}?from=${fromDate}&to=${toDate}`).catch(() => null),
+      apiFetch(`/public/tanks/${id}`).catch(() => ({tanks:[]})),
+      apiFetch(`/public/employees/${id}`).catch(() => []),
+    ]);
 
-  overlay.innerHTML = `
-    <div style="background:var(--bg-1);border-radius:16px;border:1px solid var(--border);width:100%;max-width:680px;max-height:90vh;overflow-y:auto">
+    // Fallback: use compare/summary data for revenue if per-station not available
+    let revenue = 0, liters = 0, txns = 0, tanks = [], employees = 0;
+    const salesData = salesRes.value;
+    if (salesData && salesData.revenue != null) {
+      revenue = salesData.revenue || 0;
+      liters = salesData.liters || 0;
+      txns = salesData.txns || 0;
+    }
+    const tankData = tanksRes.value;
+    if (tankData && tankData.tanks) tanks = tankData.tanks;
+    else if (Array.isArray(tankData)) tanks = tankData;
+    const empData = empsRes.value;
+    employees = Array.isArray(empData) ? empData.length : (empData?.count || 0);
 
-      <!-- Header -->
-      <div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:var(--bg-1);z-index:10">
-        <div style="display:flex;align-items:center;gap:12px">
-          <div style="width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,${t.color||'var(--accent)'},${t.colorLight||'var(--accent-light)'});display:grid;place-items:center;font-size:20px">${t.icon||'⛽'}</div>
-          <div>
-            <div style="font-size:16px;font-weight:800;color:var(--text-0)">${t.name}</div>
-            <div style="font-size:11px;color:var(--text-3)">${t.location||''} ${t.ownerName ? '· '+t.ownerName : ''}</div>
-          </div>
+    const r = n => '₹' + (n||0).toLocaleString('en-IN', {maximumFractionDigits:0});
+    const periodLabel = {today:'Today',week:'Last 7 Days',month:'This Month',year:'This Year'}[period];
+
+    const tankBars = tanks.map(tk => {
+      const p = Math.min(100, Math.round((tk.current_level||tk.current||0) / Math.max(tk.capacity||1,1) * 100));
+      const c = p<20?'#ef4444':p<40?'#f59e0b':'#4ade80';
+      return `<div style="margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+          <span style="color:var(--text-2);font-weight:600">${tk.fuel_type||tk.fuelType||''}</span>
+          <span style="color:${c};font-weight:700">${p}% · ${(tk.current_level||tk.current||0).toLocaleString()} L</span>
         </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:10px;font-weight:700;padding:3px 10px;border-radius:4px;${t.active!==false ? 'background:rgba(34,197,94,0.12);color:var(--green);border:1px solid rgba(34,197,94,0.25)' : 'background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)'}">${t.active!==false ? '● ACTIVE' : '● INACTIVE'}</span>
-          <button onclick="document.getElementById('stationDataOverlay').remove()" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);border-radius:8px;padding:6px 14px;cursor:pointer;font-size:12px;font-weight:600">✕ Close</button>
+        <div style="height:6px;background:#1e1e1e;border-radius:3px">
+          <div style="height:100%;width:${p}%;background:${c};border-radius:3px"></div>
+        </div></div>`;
+    }).join('');
+
+    document.getElementById('stationDataContent').innerHTML = `
+      <div style="font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px">${periodLabel}</div>
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:16px">
+        <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:12px">
+          <div style="font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Revenue</div>
+          <div style="font-size:20px;font-weight:800;color:#f5b93e">${r(revenue)}</div>
+        </div>
+        <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:12px">
+          <div style="font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Volume Sold</div>
+          <div style="font-size:20px;font-weight:800;color:#fff">${(liters||0).toLocaleString()} L</div>
+        </div>
+        <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:12px">
+          <div style="font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Transactions</div>
+          <div style="font-size:20px;font-weight:800;color:#fff">${txns||0}</div>
+        </div>
+        <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:12px">
+          <div style="font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Staff</div>
+          <div style="font-size:20px;font-weight:800;color:#fff">${employees}</div>
         </div>
       </div>
-
-      <div style="padding:20px 24px">
-
-        <!-- KPI Row -->
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px">
-          ${[
-            ['Total Revenue', cur2(totalRevenue), 'var(--accent-light)', '💰'],
-            ['Today Revenue', cur2(todayRevenue), 'var(--green)', '📅'],
-            ['Total Litres', fmt2(totalLiters)+'L', 'var(--blue)', '⛽'],
-            ['Outstanding', cur2(totalOutstanding), totalOutstanding>0?'var(--red)':'var(--text-2)', '💳'],
-          ].map(([lbl,val,col,ico]) => `
-            <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:12px;text-align:center">
-              <div style="font-size:18px;margin-bottom:4px">${ico}</div>
-              <div style="font-size:15px;font-weight:800;color:${col}">${val}</div>
-              <div style="font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px">${lbl}</div>
-            </div>
-          `).join('')}
-        </div>
-
-        <!-- Stats Row -->
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px">
-          ${[
-            ['Total Sales', salesAll.length],
-            ['Today Sales', todaySales.length],
-            ['Employees', (stData.employees||[]).length],
-            ['Credit Customers', creditCusts.length],
-          ].map(([lbl,val]) => `
-            <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center">
-              <div style="font-size:18px;font-weight:800;color:var(--text-0)">${val}</div>
-              <div style="font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px">${lbl}</div>
-            </div>
-          `).join('')}
-        </div>
-
-        <!-- Tanks -->
-        <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px">
-          <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px">🛢️ Tank Levels</div>
-          ${tankHtml}
-        </div>
-
-        <!-- Two cols: Employees + Payment modes -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
-          <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:16px">
-            <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">👥 Staff (${(stData.employees||[]).length})</div>
-            ${empHtml}
-          </div>
-          <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:16px">
-            <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">💳 Payment Modes</div>
-            ${Object.keys(payModes).length ? Object.entries(payModes).map(([mode, amt]) => `
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border-light)">
-                <span style="font-size:12px;font-weight:600;color:var(--text-1);text-transform:capitalize">${mode}</span>
-                <span style="font-size:12px;font-weight:700;color:var(--accent-light)">${cur2(amt)}</span>
-              </div>
-            `).join('') : '<div style="color:var(--text-3);font-size:12px">No data</div>'}
-          </div>
-        </div>
-
-        <!-- Recent Sales -->
-        <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
-          <div style="padding:12px 16px;border-bottom:1px solid var(--border-light);font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px">💰 Last 10 Sales</div>
-          <div style="overflow-x:auto">
-            <table style="width:100%;border-collapse:collapse">
-              <thead>
-                <tr style="background:var(--bg-0)">
-                  <th style="padding:7px 8px;text-align:left;font-size:9px;font-weight:700;color:var(--text-3);text-transform:uppercase">Date</th>
-                  <th style="padding:7px 8px;text-align:left;font-size:9px;font-weight:700;color:var(--text-3);text-transform:uppercase">Fuel</th>
-                  <th style="padding:7px 8px;text-align:left;font-size:9px;font-weight:700;color:var(--text-3);text-transform:uppercase">Litres</th>
-                  <th style="padding:7px 8px;text-align:left;font-size:9px;font-weight:700;color:var(--text-3);text-transform:uppercase">Amount</th>
-                  <th style="padding:7px 8px;text-align:left;font-size:9px;font-weight:700;color:var(--text-3);text-transform:uppercase">Mode</th>
-                </tr>
-              </thead>
-              <tbody>${salesHtml}</tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Station Info Footer -->
-        <div style="margin-top:14px;background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:14px">
-          <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">ℹ️ Station Info</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">
-            ${[['ID', t.id],['Owner', t.ownerName||'-'],['Phone', t.phone||'-'],['Created', t.createdAt ? t.createdAt.split('T')[0] : '-'],['Admin Users', (t.adminUsers||[]).length + ' user(s)'],['DB Size', (stData.sales||[]).length + ' sales records']].map(([k,v]) => `
-              <div style="display:flex;gap:6px"><span style="color:var(--text-3);min-width:80px">${k}:</span><span style="color:var(--text-1);font-weight:600">${v}</span></div>
-            `).join('')}
-          </div>
-        </div>
-
-      </div>
-    </div>
-  `;
+      ${tanks.length ? `<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:12px"><div style="font-size:10px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px">🛢️ Tank Levels</div>${tankBars}</div>` : ''}
+    `;
+  } catch(e) {
+    document.getElementById('stationDataContent').innerHTML = `
+      <div style="text-align:center;padding:30px;color:#ef4444">
+        <div style="font-size:24px;margin-bottom:8px">⚠️</div>
+        <div style="font-weight:600;margin-bottom:4px">Could not load data</div>
+        <div style="font-size:12px;color:var(--text-3)">${e.message}</div>
+      </div>`;
+  }
 }
-
 
 // ── Tenant Settings (change admin password etc.) ──
 function mt_getTenantAdminUsers(tenantId) {
