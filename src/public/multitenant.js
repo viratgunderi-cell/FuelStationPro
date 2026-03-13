@@ -116,7 +116,7 @@ async function mt_showSelector() {
                   <button onclick="event.stopPropagation();mt_openEditTenant('${t.id}')" style="background:transparent;border:none;color:var(--text-3);cursor:pointer;padding:4px;font-size:13px" title="Edit">✏️</button>
                   <button onclick="event.stopPropagation();mt_toggleStation('${t.id}')" style="background:${isActive ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)'};border:1px solid ${isActive ? 'rgba(239,68,68,0.25)' : 'rgba(34,197,94,0.25)'};color:${isActive ? 'var(--red)' : 'var(--green)'};cursor:pointer;padding:3px 8px;font-size:10px;font-weight:700;border-radius:4px" title="${isActive ? 'Deactivate' : 'Activate'}">${isActive ? '⏸ Off' : '▶ On'}</button>
                   <button onclick="event.stopPropagation();mt_manageStationAdmins('${t.id}')" style="background:rgba(212,148,15,0.12);border:1px solid rgba(212,148,15,0.3);color:var(--accent-light);cursor:pointer;padding:3px 8px;font-size:10px;font-weight:700;border-radius:4px" title="Manage Admins">👤 Admins</button>
-                  <button onclick="event.stopPropagation();mt_viewStationData('${t.id}')" style="background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.25);color:var(--blue);cursor:pointer;padding:3px 8px;font-size:10px;font-weight:700;border-radius:4px" title="View Data">📊 Data</button>
+
                   <button onclick="event.stopPropagation();mt_confirmDeleteTenant('${t.id}')" style="background:transparent;border:none;color:var(--red);cursor:pointer;padding:4px;font-size:13px" title="Delete">🗑</button>
                 ` : ''}
               </div>`;
