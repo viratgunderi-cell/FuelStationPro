@@ -6939,7 +6939,8 @@ function openPurchaseModal() {
     <div class="form-row">
       <div class="form-group">
         <label class="form-label">Fuel Type *</label>
-        <select class="form-input" id="purchFuel" onchange="purchFuelChanged()">${fuelOpts}</select>
+        <select class="form-input" id="purchFuel" onchange="purchFuelChanged();calcPurchTotal()">${fuelOpts}</select>
+        <div id="purchCapHint" style="font-size:11px;margin-top:4px;display:none"></div>
       </div>
       <div class="form-group">
         <label class="form-label">Quantity (Litres) *</label>
@@ -7044,6 +7045,18 @@ function calcPurchTotal() {
   const taxPct   = parseFloat(document.getElementById('purchTaxPct')?.value) || 0;
   const prev     = document.getElementById('purchTotalPreview');
   if (!prev) return;
+  // Show tank space warning
+  const purchFuelType = document.getElementById('purchFuel')?.value;
+  const capHint = document.getElementById('purchCapHint');
+  if (capHint && purchFuelType) {
+    const tk = (APP.data?.tanks||[]).find(t=>(t.fuelType||t.fuel_type)===purchFuelType);
+    if (tk) {
+      const avail = Math.max(0,(tk.capacity||0)-(tk.current||0));
+      const over = !isNaN(qty) && qty > avail;
+      capHint.innerHTML = `<span style="color:${over?'var(--red)':'var(--text-3)'}">Tank space available: <strong>${avail.toLocaleString('en-IN')} L</strong> (capacity ${(tk.capacity||0).toLocaleString('en-IN')} L, current ${(tk.current||0).toLocaleString('en-IN')} L)${over?' — ⚠️ exceeds available space!':''}</span>`;
+      capHint.style.display = '';
+    } else { capHint.style.display = 'none'; }
+  }
   if (!isNaN(qty) && qty > 0 && !isNaN(basicKL) && basicKL > 0) {
     const basicPerL  = basicKL / 1000;
     const taxPerL    = basicPerL * (taxPct / 100);
@@ -7075,6 +7088,17 @@ async function savePurchase() {
   if (!fuelType || !validFuels.includes(fuelType)) { toast('Please select a valid fuel type', 'error'); return; }
   if (isNaN(liters) || liters <= 0) { toast('Quantity in litres is required', 'error'); return; }
   if (liters > 50000) { toast('Purchase cannot exceed 50,000 litres', 'error'); return; }
+  // Check tank capacity
+  const purchTank = (APP.data.tanks||[]).find(t => (t.fuelType||t.fuel_type) === fuelType);
+  if (purchTank) {
+    const available = Math.max(0, (purchTank.capacity||0) - (purchTank.current||0));
+    if (liters > purchTank.capacity) {
+      toast(`Cannot purchase ${liters.toLocaleString('en-IN')} L — tank capacity is only ${(purchTank.capacity).toLocaleString('en-IN')} L`, 'error'); return;
+    }
+    if (liters > available) {
+      toast(`Tank only has space for ${available.toLocaleString('en-IN')} L (current: ${(purchTank.current||0).toLocaleString('en-IN')} L, capacity: ${(purchTank.capacity||0).toLocaleString('en-IN')} L)`, 'error'); return;
+    }
+  }
   if (isNaN(basicKL) || basicKL <= 0) { toast('Enter basic price per KL from invoice (required)', 'error'); return; }
   // Calculate effective rate: basicKL/1000 × (1 + taxPct/100)
   const basicPerL = basicKL / 1000;
