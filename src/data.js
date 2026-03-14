@@ -350,6 +350,10 @@ function dataRoutes(db) {
         : `SELECT * FROM ${meta.table} WHERE tenant_id = $1 ORDER BY ${orderBy}`;
       const params = useFilter ? [req.tenantId, fromDate] : [req.tenantId];
       const r = await pool.query(sql, params);
+      // FIX #43: audit log bulk exports so admins can track who exported what data
+      if (req.query.export === '1' || req.query.export === 'true') {
+        auditLog(req, 'EXPORT', req.params.store, '', `${r.rows.length} rows`).catch(() => {});
+      }
       res.json(r.rows.map(parseRow));
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -419,7 +423,8 @@ function dataRoutes(db) {
       return res.status(403).json({ error: 'Only Owner can close books' });
     }
     const date = req.params.date; // YYYY-MM-DD
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
+    // FIX #12: regex only checks format; also validate it's a real calendar date
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(new Date(date).getTime()))
       return res.status(400).json({ error: 'Invalid date format' });
     try {
       await pool.query(
@@ -475,8 +480,10 @@ function dataRoutes(db) {
       if ((data.type || 'sale').toLowerCase() === 'sale' && data.amount > 0) {
         const custId = data.customerId || data.customer_id;
         if (custId) {
+          // FIX #40: Use FOR UPDATE to prevent TOCTOU race — two simultaneous sales
+          // could both pass the limit check against the same pre-update balance
           const custRow = await client.query(
-            'SELECT balance, credit_limit FROM credit_customers WHERE id=$1 AND tenant_id=$2',
+            'SELECT balance, credit_limit FROM credit_customers WHERE id=$1 AND tenant_id=$2 FOR UPDATE',
             [custId, req.tenantId]
           );
           if (custRow.rows.length > 0) {
@@ -487,9 +494,9 @@ function dataRoutes(db) {
             if (limit > 0 && (currentBalance + saleAmount) > limit) {
               await client.query('ROLLBACK');
               client.release();
+              // FIX #14: standardize on error: field (not message:) for consistent API shape
               return res.status(422).json({
-                error: 'credit_limit_exceeded',
-                message: `Credit limit exceeded. Outstanding: ₹${currentBalance.toFixed(2)}, Limit: ₹${limit.toFixed(2)}, This sale: ₹${saleAmount.toFixed(2)}. Remaining credit: ₹${Math.max(0, limit - currentBalance).toFixed(2)}.`,
+                error: `Credit limit exceeded. Outstanding: ₹${currentBalance.toFixed(2)}, Limit: ₹${limit.toFixed(2)}, This sale: ₹${saleAmount.toFixed(2)}. Remaining credit: ₹${Math.max(0, limit - currentBalance).toFixed(2)}.`,
                 outstanding: currentBalance,
                 limit,
                 saleAmount,
