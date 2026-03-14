@@ -95,17 +95,36 @@ self.addEventListener('fetch', event => {
     }
 
     // Public employee APIs (/api/public/*): network-first, fall back to cache
+    // FIX #31: Stamp cache entries with a timestamp header so stale entries (>24h) are
+    // not served as fresh data — forces a network refresh after 24 hours offline.
     if (path.startsWith('/api/public/') && request.method === 'GET') {
       event.respondWith(
         fetch(request.clone())
           .then(res => {
             if (res.ok) {
               const clone = res.clone();
-              caches.open(API_CACHE).then(c => c.put(request, clone));
+              // Add cache timestamp for staleness check
+              clone.headers && caches.open(API_CACHE).then(async c => {
+                const stamped = new Response(await clone.arrayBuffer(), {
+                  status: clone.status,
+                  statusText: clone.statusText,
+                  headers: { ...Object.fromEntries(clone.headers.entries()), 'x-sw-cached-at': Date.now().toString() },
+                });
+                c.put(request, stamped);
+              });
             }
             return res;
           })
-          .catch(() => caches.match(request))
+          .catch(async () => {
+            const cached = await caches.match(request);
+            if (!cached) return new Response('{"error":"offline"}', { status: 503, headers: { 'Content-Type': 'application/json' } });
+            // FIX #31: reject cache entries older than 24 hours
+            const cachedAt = parseInt(cached.headers.get('x-sw-cached-at') || '0', 10);
+            if (cachedAt && (Date.now() - cachedAt) > 86400000) {
+              return new Response('{"error":"offline-stale"}', { status: 503, headers: { 'Content-Type': 'application/json' } });
+            }
+            return cached;
+          })
       );
       return;
     }
