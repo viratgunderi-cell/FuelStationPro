@@ -65,8 +65,33 @@ async function startServer() {
     origin: corsOrigin || false,
     credentials: corsOrigin ? true : false,
   }));
-  // FIX: Increase global rate limit to handle 1200 concurrent users (was 300/min)
-  app.use(rateLimit({ windowMs: 60000, max: 500, standardHeaders: true, legacyHeaders: false }));
+  
+  // PRODUCTION RATE LIMITING: Balanced for 1000 concurrent users while preventing abuse
+  // Peak load: 50-70 req/sec = 3000-4200 req/min, so 5000 allows headroom
+  app.use(rateLimit({ 
+    windowMs: 60000,                // 1 minute window
+    max: 5000,                      // Increased from 500 to 5000 (83 req/sec average)
+    standardHeaders: true,
+    legacyHeaders: false,
+    
+    // Skip rate limiting for health checks
+    skip: (req) => {
+      return req.path === '/api/health' || req.path === '/api/health/detailed';
+    },
+    
+    // Custom key generator - combine IP + tenant for fair multi-tenant limits
+    keyGenerator: (req) => {
+      const tenantId = req.body?.tenantId || req.params?.tenantId || '';
+      const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+      return tenantId ? `${ip}:${tenantId}` : ip;
+    },
+    
+    // Better error message
+    message: { 
+      error: 'Too many requests. Please wait a moment and try again.' 
+    }
+  }));
+  
   app.use(express.json({ limit: '2mb' }));
   app.use(express.urlencoded({ extended: false }));
   app.use(inputSanitizerMiddleware);
@@ -162,6 +187,82 @@ async function startServer() {
     } catch (e) {
       res.status(503).json({ status: 'degraded', database: 'error', error: e.message, uptime: process.uptime() });
     }
+  });
+
+  // PRODUCTION ENHANCEMENT: Detailed health check with metrics
+  // Provides comprehensive system status for monitoring and alerting
+  app.get('/api/health/detailed', async (req, res) => {
+    const health = {
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      version: '1.2.0',
+      uptime: Math.floor(process.uptime()),
+      environment: process.env.NODE_ENV || 'development',
+      
+      // Memory metrics
+      memory: {
+        used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+        total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
+        rss: Math.round(process.memoryUsage().rss / 1024 / 1024),
+        unit: 'MB'
+      },
+      
+      // Database health
+      database: {
+        connected: false,
+        responseTime: 0,
+        pool: {
+          total: 0,
+          idle: 0,
+          waiting: 0
+        }
+      }
+    };
+    
+    try {
+      // Test database connectivity and measure response time
+      const start = Date.now();
+      await pool.query('SELECT 1');
+      health.database.connected = true;
+      health.database.responseTime = Date.now() - start;
+      
+      // Get connection pool stats
+      health.database.pool = {
+        total: pool.totalCount || 0,
+        idle: pool.idleCount || 0,
+        waiting: pool.waitingCount || 0
+      };
+      
+      // Alert if pool utilization is high (>80%)
+      const poolUtilization = health.database.pool.total > 0
+        ? ((health.database.pool.total - health.database.pool.idle) / health.database.pool.total) * 100
+        : 0;
+      if (poolUtilization > 80) {
+        health.warnings = health.warnings || [];
+        health.warnings.push(`High pool utilization: ${poolUtilization.toFixed(1)}%`);
+      }
+      
+      // Alert if memory usage is high (>85%)
+      const memoryUtilization = (process.memoryUsage().heapUsed / process.memoryUsage().heapTotal) * 100;
+      if (memoryUtilization > 85) {
+        health.warnings = health.warnings || [];
+        health.warnings.push(`High memory usage: ${memoryUtilization.toFixed(1)}%`);
+      }
+      
+      // Alert if database response is slow (>100ms)
+      if (health.database.responseTime > 100) {
+        health.warnings = health.warnings || [];
+        health.warnings.push(`Slow database response: ${health.database.responseTime}ms`);
+      }
+      
+    } catch (e) {
+      health.status = 'unhealthy';
+      health.database.error = e.message;
+    }
+    
+    // Set appropriate HTTP status code
+    const statusCode = health.status === 'healthy' ? 200 : 503;
+    res.status(statusCode).json(health);
   });
 
   // FIX #19: Rate limiter for all /api/public/* routes — prevents abuse / DDoS
@@ -1325,19 +1426,73 @@ async function startServer() {
     console.log(`[FuelBunk Pro] Running on port ${PORT} with PostgreSQL`);
   });
 
-  // M-03 FIX: Periodic cleanup — startup-only cleanup is not enough for long-running deployments
-  setInterval(async () => {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PRODUCTION MAINTENANCE JOBS - Optimized for 1000 concurrent users
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  // Session Cleanup - Every 15 minutes (prevents authentication slowdown)
+  // With 1000 users, expect ~10,000 session records/day. Clean aggressively.
+  const sessionCleanupInterval = setInterval(async () => {
     try {
-      await pool.query("DELETE FROM login_attempts WHERE attempted_at < NOW() - INTERVAL '24 hours'");
-      await pool.query("DELETE FROM audit_log WHERE created_at < NOW() - INTERVAL '90 days'");
-      await pool.query("DELETE FROM sessions WHERE expires_at < NOW()");
-    } catch (e) { console.warn('[Cleanup]', e.message); }
-  }, 6 * 60 * 60 * 1000); // every 6 hours
+      const result = await pool.query('DELETE FROM sessions WHERE expires_at < NOW()');
+      if (result.rowCount > 0) {
+        console.log(`[Cleanup] Removed ${result.rowCount} expired sessions`);
+      }
+    } catch (e) {
+      console.error('[Cleanup Error] Sessions:', e.message);
+    }
+  }, 15 * 60 * 1000); // Every 15 minutes
+
+  // Login Attempts Cleanup - Every 1 hour (security log maintenance)
+  // Keeps only last 24 hours for brute force detection
+  const loginCleanupInterval = setInterval(async () => {
+    try {
+      const result = await pool.query(
+        "DELETE FROM login_attempts WHERE attempted_at < NOW() - INTERVAL '24 hours'"
+      );
+      if (result.rowCount > 0) {
+        console.log(`[Cleanup] Removed ${result.rowCount} old login attempts`);
+      }
+    } catch (e) {
+      console.error('[Cleanup Error] Login attempts:', e.message);
+    }
+  }, 60 * 60 * 1000); // Every 1 hour
+
+  // Audit Log Retention - Daily (prevents unbounded growth)
+  // Keeps 90 days of audit history. With 100 stations: ~80,000 rows/day
+  const auditCleanupInterval = setInterval(async () => {
+    try {
+      const result = await pool.query(
+        "DELETE FROM audit_log WHERE created_at < NOW() - INTERVAL '90 days'"
+      );
+      if (result.rowCount > 0) {
+        console.log(`[Cleanup] Removed ${result.rowCount} old audit log entries (90-day retention)`);
+      }
+    } catch (e) {
+      console.error('[Cleanup Error] Audit log:', e.message);
+    }
+  }, 24 * 60 * 60 * 1000); // Every 24 hours
+
+  console.log('[Server] Periodic cleanup jobs initialized (sessions: 15min, logins: 1hr, audit: 24hr)');
 
   // FIX #38: Close DB pool on shutdown so in-flight queries finish cleanly
   const gracefulShutdown = async (signal) => {
     console.log(`[Server] ${signal} received — shutting down gracefully...`);
-    try { await pool.end(); } catch (e) { console.warn('[Server] Pool close error:', e.message); }
+    
+    // Clear all periodic cleanup intervals
+    clearInterval(sessionCleanupInterval);
+    clearInterval(loginCleanupInterval);
+    clearInterval(auditCleanupInterval);
+    console.log('[Server] Cleanup jobs stopped');
+    
+    // Close database pool
+    try { 
+      await pool.end(); 
+      console.log('[Server] Database pool closed');
+    } catch (e) { 
+      console.warn('[Server] Pool close error:', e.message); 
+    }
+    
     process.exit(0);
   };
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
