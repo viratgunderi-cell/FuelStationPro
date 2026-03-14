@@ -1064,4 +1064,3 @@ window.checkTankAlerts = checkTankAlerts;
 window.checkCreditAlerts = checkCreditAlerts;
 window.shareData = shareData;
 window.exportCSV = exportCSV;
-
