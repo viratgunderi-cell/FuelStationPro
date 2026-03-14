@@ -52,10 +52,10 @@ if (dbUrl) {
   poolConfig = {
     connectionString: dbUrl,
     ssl: isInternal ? false : { rejectUnauthorized: false },
-    max: 25,                      // raised from 10 — handles peak shift-change concurrency
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 5000,
-    statement_timeout: 15000,      // L-04 FIX: kill runaway queries after 15s
+    max: 100,                     // FIX: Increased from 25 to 100 for 1200 concurrent users
+    idleTimeoutMillis: 20000,     // Reduced from 30s for faster connection recycling
+    connectionTimeoutMillis: 3000, // Reduced from 5s to fail faster
+    statement_timeout: 10000,      // Reduced from 15s to 10s for faster timeout
   };
 } else {
   console.log('[DB] Using PG* env vars, host:', process.env.PGHOST);
@@ -66,10 +66,10 @@ if (dbUrl) {
     user: process.env.PGUSER,
     password: process.env.PGPASSWORD,
     ssl: false,
-    max: 25,                      // raised from 10 — both branches must match
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 5000,
-    statement_timeout: 15000,      // L-04 FIX: kill runaway queries after 15s
+    max: 100,                     // FIX: Increased from 25 to 100 for 1200 concurrent users
+    idleTimeoutMillis: 20000,     // Reduced from 30s for faster connection recycling
+    connectionTimeoutMillis: 3000, // Reduced from 5s to fail faster
+    statement_timeout: 10000,      // Reduced from 15s to 10s for faster timeout
   };
 }
 
@@ -512,6 +512,9 @@ async function initDatabase() {
     // M-02 FIX: idempotency key prevents duplicate sales on network retry
     `ALTER TABLE sales ADD COLUMN IF NOT EXISTS idempotency_key TEXT DEFAULT ''`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_idem ON sales(tenant_id, idempotency_key) WHERE idempotency_key != ''`,
+    // FIX: Add idempotency key to expenses table to prevent duplicate expense submissions
+    `ALTER TABLE expenses ADD COLUMN IF NOT EXISTS idempotency_key TEXT DEFAULT ''`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_expenses_idem ON expenses(tenant_id, idempotency_key) WHERE idempotency_key != ''`,
     `ALTER TABLE credit_customers ADD COLUMN IF NOT EXISTS balance REAL DEFAULT 0`,
     `ALTER TABLE credit_customers ADD COLUMN IF NOT EXISTS credit_limit REAL DEFAULT 0`,
     `ALTER TABLE credit_customers ADD COLUMN IF NOT EXISTS last_payment TEXT DEFAULT ''`,
