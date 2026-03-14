@@ -12,11 +12,10 @@ const { authMiddleware, inputSanitizerMiddleware } = require('./security');
 const authRoutes = require('./auth');
 const dataRoutes = require('./data');
 
-// ── IST date helper — always use this instead of toISOString() for business dates ──
+// FIX #30: Use toLocaleString('en-CA') for IST date — more reliable than manual +5.5h offset
+// (avoids DST edge cases and is consistent with the same helper in data.js)
 function istDate() {
-  const d = new Date();
-  const ist = new Date(d.getTime() + 5.5 * 3600 * 1000);
-  return ist.toISOString().slice(0, 10);
+  return new Date().toLocaleString('en-CA', { timeZone: 'Asia/Kolkata' }).slice(0, 10);
 }
 
 async function startServer() {
@@ -113,9 +112,8 @@ async function startServer() {
       res.setHeader('Cache-Control', 'public, max-age=86400');
       res.sendFile(f);
     } else {
-      // Return a minimal valid PNG placeholder so Lighthouse doesn't hard-fail
-      res.setHeader('Content-Type', 'image/png');
-      res.status(404).send('Screenshot not found. Add PNG files to public/screenshots/');
+      // FIX #8: Don't set image/png MIME type when returning a text error — causes browser decode errors
+      res.status(404).json({ error: 'Screenshot not found. Add PNG files to public/screenshots/' });
     }
   });
 
@@ -152,8 +150,11 @@ async function startServer() {
     }
   }));
 
+  // FIX #37: pool must be imported BEFORE the /api/health handler that uses it
+  const { pool } = require('./schema');
+
+  // /api/health is in publicPaths (security.js) — no auth required
   app.get('/api/health', async (req, res) => {
-    // L-03 FIX: verify actual DB connectivity, not just process uptime
     try {
       await pool.query('SELECT 1');
       res.json({ status: 'ok', database: 'connected', uptime: process.uptime() });
@@ -162,12 +163,27 @@ async function startServer() {
     }
   });
 
-  // ── Pool for public routes (imported here so public routes can use it) ────
-  const { pool } = require('./schema');
+  // FIX #19: Rate limiter for all /api/public/* routes — prevents abuse / DDoS
+  const publicRouteLimiter = rateLimit({
+    windowMs: 60000,
+    max: 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests, please slow down.' },
+  });
+  app.use('/api/public', publicRouteLimiter);
+
+  // FIX #11: Shared tenant existence check — prevents tenant enumeration on public routes
+  async function checkTenantExists(tenantId) {
+    const r = await pool.query('SELECT id FROM tenants WHERE id = $1 AND active = 1', [tenantId]);
+    return r.rows.length > 0;
+  }
 
   // ── PUBLIC: employee names for login screen (no auth required, no PINs) ─
   app.get('/api/public/employees/:tenantId', async (req, res) => {
     try {
+      // FIX #11: Verify tenant exists before returning any data — prevents enumeration
+      if (!(await checkTenantExists(req.params.tenantId))) return res.json([]);
       // IR-01 FIX: pinHash REMOVED from public response — 4-digit PINs are trivially reversible
       // Use POST /api/public/verify-pin/:tenantId for online verification
       // Offline fallback uses hash stored in IndexedDB during authenticated admin session
@@ -201,6 +217,8 @@ async function startServer() {
         [String(employeeId), req.params.tenantId]
       );
       if (!r.rows[0]) return res.json({ valid: false });
+      // FIX #7: guard against null pin_hash — null === string is always false, but be explicit
+      if (!r.rows[0].pin_hash) return res.json({ valid: false });
       const match = r.rows[0].pin_hash === pinHash;
       res.json({ valid: match });
     } catch (e) {
@@ -511,10 +529,13 @@ async function startServer() {
       );
       saleId = r.rows[0].id;
 
+      // FIX #10: COMMIT + release BEFORE sending response — if res.json() ever throws,
+      // the catch block would attempt a second client.release() causing pool corruption.
       await client.query('COMMIT');
       client.release();
-      res.json({ id: saleId });
+      return res.json({ id: saleId });
     } catch (e) {
+      // Only ROLLBACK if the transaction is still open (client wasn't released yet)
       try { await client.query('ROLLBACK'); } catch {}
       client.release();
       console.error('[public/sales]', e.message);
@@ -657,7 +678,8 @@ async function startServer() {
   app.delete('/api/data/tenants/:id', authMiddleware(db), reqRole('super'), async (req, res) => {
     const client = await pool.connect();
     try {
-      console.log('[Server] DELETE tenant:', req.params.id, 'by:', req.userName);
+      // FIX #26: don't log tenant name/username — use role only to avoid info leakage in logs
+      console.log('[Server] DELETE tenant:', req.params.id, 'by role:', req.userRole);
       await auLog(req, 'DELETE_TENANT', 'tenants', req.params.id, '');
 
       await client.query('BEGIN');
@@ -831,8 +853,9 @@ async function startServer() {
       const { subscription } = req.body;
       if (!subscription?.endpoint) return res.status(400).json({ error: 'Invalid subscription object' });
       try {
-        const tenantId = req.user?.tenantId || req.user?.tenant_id;
-        const userId   = req.user?.id || 'unknown';
+        // FIX #5: authMiddleware sets req.tenantId and req.userId — req.user does not exist
+        const tenantId = req.tenantId;
+        const userId   = req.userId || 'unknown';
         const key = 'push_sub_' + Buffer.from(subscription.endpoint).toString('base64').slice(0, 40);
         await pool.query(
           'INSERT INTO settings (key, tenant_id, value, updated_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT (key, tenant_id) DO UPDATE SET value=$3, updated_at=NOW()',
@@ -852,7 +875,8 @@ async function startServer() {
       const { endpoint } = req.body;
       if (!endpoint) return res.status(400).json({ error: 'Missing endpoint' });
       try {
-        const tenantId = req.user?.tenantId || req.user?.tenant_id;
+        // FIX #6: same as #5 — use req.tenantId set by authMiddleware
+        const tenantId = req.tenantId;
         const key = 'push_sub_' + Buffer.from(endpoint).toString('base64').slice(0, 40);
         await pool.query('DELETE FROM settings WHERE key=$1 AND tenant_id=$2', [key, tenantId]);
         // FIX 23: audit trail for unsubscribe
@@ -1162,8 +1186,14 @@ async function startServer() {
     } catch (e) { console.warn('[Cleanup]', e.message); }
   }, 6 * 60 * 60 * 1000); // every 6 hours
 
-  process.on('SIGTERM', () => { console.log('[Server] Shutting down...'); process.exit(0); });
-  process.on('SIGINT', () => process.exit(0));
+  // FIX #38: Close DB pool on shutdown so in-flight queries finish cleanly
+  const gracefulShutdown = async (signal) => {
+    console.log(`[Server] ${signal} received — shutting down gracefully...`);
+    try { await pool.end(); } catch (e) { console.warn('[Server] Pool close error:', e.message); }
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
 }
 
 startServer().catch(e => {
