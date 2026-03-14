@@ -4022,7 +4022,13 @@ function _openPrint(html, filename) {
   const w = window.open(blobUrl, '_blank');
   if (w && !w.closed) {
     // Pop-up opened normally — auto-print after paint
-    setTimeout(() => { try { w.focus(); w.print(); } catch(e){} URL.revokeObjectURL(blobUrl); }, 600);
+    // FIX #34: revoke via afterprint event + 60s timeout fallback to prevent Blob URL memory leak
+    setTimeout(() => {
+      try { w.focus(); w.print(); } catch(e){}
+      const revoke = () => URL.revokeObjectURL(blobUrl);
+      try { w.addEventListener('afterprint', revoke, { once: true }); } catch(e){}
+      setTimeout(revoke, 60000); // always revoke after 60s if afterprint never fires
+    }, 600);
   } else {
     // Pop-up blocked — show in-page overlay with print + download buttons
     URL.revokeObjectURL(blobUrl); // blob URL won't work cross-origin in iframe — use data URI
