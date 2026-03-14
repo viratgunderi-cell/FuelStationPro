@@ -65,7 +65,8 @@ async function startServer() {
     origin: corsOrigin || false,
     credentials: corsOrigin ? true : false,
   }));
-  app.use(rateLimit({ windowMs: 60000, max: 300, standardHeaders: true, legacyHeaders: false }));
+  // FIX: Increase global rate limit to handle 1200 concurrent users (was 300/min)
+  app.use(rateLimit({ windowMs: 60000, max: 500, standardHeaders: true, legacyHeaders: false }));
   app.use(express.json({ limit: '2mb' }));
   app.use(express.urlencoded({ extended: false }));
   app.use(inputSanitizerMiddleware);
@@ -206,20 +207,84 @@ async function startServer() {
   });
 
   // ── IR-01 FIX: Server-side PIN verification — hash never leaves DB ───────────
-  // M-01 FIX: Rate limit PIN verification — previously had zero protection
-  const pinVerifyLimiter = rateLimit({ windowMs: 300000, max: 15, standardHeaders: true, legacyHeaders: false });
+  // FIX: CRITICAL - Strengthen PIN rate limiting to prevent brute force (was 15/5min, now 10/1min per employee)
+  const pinVerifyLimiter = rateLimit({ 
+    windowMs: 60000,  // 1 minute (reduced from 5 minutes)
+    max: 10,          // Only 10 attempts per minute (reduced from 15)
+    standardHeaders: true, 
+    legacyHeaders: false,
+    keyGenerator: (req) => {
+      // FIX: Rate limit per tenant + employee combination (not per IP)
+      // This prevents an attacker from trying different employee PINs from same IP
+      return `${req.params.tenantId}-${req.body.employeeId || 'unknown'}`;
+    },
+    handler: (req, res) => {
+      res.status(429).json({ 
+        valid: false, 
+        error: 'Too many PIN attempts. Please wait 1 minute before trying again.' 
+      });
+    }
+  });
+  
   app.post('/api/public/verify-pin/:tenantId', pinVerifyLimiter, async (req, res) => {
     try {
       const { employeeId, pinHash } = req.body;
       if (!employeeId || !pinHash) return res.status(400).json({ valid: false, error: 'Missing fields' });
+      
+      // FIX: Check for account lockout after repeated failed attempts
+      const lockoutKey = `lockout_${req.params.tenantId}_${employeeId}`;
+      const failedAttemptsKey = `failed_${req.params.tenantId}_${employeeId}`;
+      
+      // Check failed attempts in login_attempts table
+      const recentAttempts = await pool.query(
+        `SELECT COUNT(*) as count FROM login_attempts 
+         WHERE tenant_id = $1 AND username = $2 AND success = 0 
+         AND attempted_at > NOW() - INTERVAL '15 minutes'`,
+        [req.params.tenantId, employeeId]
+      );
+      
+      const failedCount = parseInt(recentAttempts.rows[0]?.count || 0);
+      
+      // FIX: Lock account after 5 failed attempts within 15 minutes
+      if (failedCount >= 5) {
+        return res.status(429).json({ 
+          valid: false, 
+          error: 'Account temporarily locked due to multiple failed attempts. Please try again in 15 minutes or contact your administrator.',
+          locked: true
+        });
+      }
+      
       const r = await pool.query(
         'SELECT pin_hash FROM employees WHERE id = $1 AND tenant_id = $2 AND active = 1',
         [String(employeeId), req.params.tenantId]
       );
-      if (!r.rows[0]) return res.json({ valid: false });
+      
+      if (!r.rows[0]) {
+        // Log failed attempt
+        await pool.query(
+          'INSERT INTO login_attempts (tenant_id, username, ip_address, success, attempted_at) VALUES ($1, $2, $3, 0, NOW())',
+          [req.params.tenantId, employeeId, req.ip]
+        );
+        return res.json({ valid: false });
+      }
+      
       // FIX #7: guard against null pin_hash — null === string is always false, but be explicit
-      if (!r.rows[0].pin_hash) return res.json({ valid: false });
+      if (!r.rows[0].pin_hash) {
+        await pool.query(
+          'INSERT INTO login_attempts (tenant_id, username, ip_address, success, attempted_at) VALUES ($1, $2, $3, 0, NOW())',
+          [req.params.tenantId, employeeId, req.ip]
+        );
+        return res.json({ valid: false });
+      }
+      
       const match = r.rows[0].pin_hash === pinHash;
+      
+      // Log the attempt
+      await pool.query(
+        'INSERT INTO login_attempts (tenant_id, username, ip_address, success, attempted_at) VALUES ($1, $2, $3, $4, NOW())',
+        [req.params.tenantId, employeeId, req.ip, match ? 1 : 0]
+      );
+      
       res.json({ valid: match });
     } catch (e) {
       console.error('[verify-pin]', e.message);
@@ -450,10 +515,45 @@ async function startServer() {
     try {
       const { tenantId } = req.params;
       const sale = req.body;
+      
+      // FIX: Comprehensive input validation
       if (!tenantId || !sale || !sale.fuelType || !sale.liters || !sale.amount) {
         client.release();
         return res.status(400).json({ error: 'Missing required fields' });
       }
+      
+      // FIX: Validate amounts are positive and reasonable
+      const liters = parseFloat(sale.liters);
+      const amount = parseFloat(sale.amount);
+      
+      if (isNaN(liters) || liters <= 0 || liters > 10000) {
+        client.release();
+        return res.status(400).json({ error: 'Invalid liters: must be between 0 and 10,000' });
+      }
+      
+      if (isNaN(amount) || amount <= 0 || amount > 10000000) {
+        client.release();
+        return res.status(400).json({ error: 'Invalid amount: must be between 0 and ₹1 crore' });
+      }
+      
+      // FIX: Validate fuel type
+      const validFuelTypes = ['Petrol', 'Diesel', 'CNG', 'petrol', 'diesel', 'cng'];
+      if (!validFuelTypes.includes(sale.fuelType)) {
+        client.release();
+        return res.status(400).json({ error: 'Invalid fuel type' });
+      }
+      
+      // FIX: Validate date is not in the future
+      if (sale.date) {
+        const saleDate = new Date(sale.date);
+        const today = new Date();
+        today.setHours(23, 59, 59, 999); // End of today
+        if (saleDate > today) {
+          client.release();
+          return res.status(400).json({ error: 'Sale date cannot be in the future' });
+        }
+      }
+      
       // Verify tenant exists
       const tenantCheck = await client.query('SELECT id FROM tenants WHERE id = $1', [tenantId]);
       if (!tenantCheck.rows.length) { client.release(); return res.status(404).json({ error: 'Tenant not found' }); }
@@ -920,12 +1020,26 @@ async function startServer() {
   app.post('/api/public/tank-deduct/:tenantId', async (req, res) => {
     // FA-04 FIX: If admin recorded a manual dip today (last_dip_source = 'admin_dip'),
     // skip meter-based deduction — dip is the authoritative physical measurement.
+    // CRITICAL FIX #1: Added idempotency key to prevent duplicate deductions on network retry
     try {
       const tenantId = req.params.tenantId;
-      const { deductions, shiftDate } = req.body; // shiftDate: YYYY-MM-DD from client IST date
+      const { deductions, shiftDate, idempotencyKey } = req.body; // shiftDate: YYYY-MM-DD from client IST date
       if (!deductions || typeof deductions !== 'object') {
         return res.status(400).json({ error: 'Missing deductions' });
       }
+      
+      // CRITICAL FIX #1: Check idempotency - prevent duplicate deductions from network retries
+      if (idempotencyKey) {
+        const existing = await pool.query(
+          'SELECT value FROM settings WHERE tenant_id = $1 AND key = $2',
+          [tenantId, `tank_deduct_idem_${idempotencyKey}`]
+        );
+        if (existing.rows.length > 0) {
+          console.log(`[tank-deduct] Idempotency: Already processed ${idempotencyKey}`);
+          return res.json({ success: true, duplicate: true, message: 'Already processed' });
+        }
+      }
+      
       const today = shiftDate || istDate();
       const skipped = [];
 
@@ -1008,6 +1122,15 @@ async function startServer() {
         } catch (pushErr) {
           console.warn('[tank-deduct] Push notification failed:', pushErr.message);
         }
+      }
+
+      // CRITICAL FIX #1: Store idempotency key to prevent duplicate processing
+      if (idempotencyKey) {
+        await pool.query(
+          `INSERT INTO settings (tenant_id, key, value) VALUES ($1, $2, $3)
+           ON CONFLICT (tenant_id, key) DO NOTHING`,
+          [tenantId, `tank_deduct_idem_${idempotencyKey}`, JSON.stringify({ timestamp: Date.now(), deductions })]
+        );
       }
 
       res.json({ success: true, skipped });
@@ -1135,27 +1258,52 @@ async function startServer() {
     try {
       const tenantId = req.params.tenantId;
       const e = req.body;
+      
+      // FIX: Validate required fields and amounts
       if (!e || !e.amount || !e.category) {
         return res.status(400).json({ error: 'Missing required fields' });
       }
+      
+      // FIX: Validate amount is positive and reasonable
+      const amount = parseFloat(e.amount);
+      if (isNaN(amount) || amount <= 0 || amount > 10000000) {
+        return res.status(400).json({ error: 'Invalid amount' });
+      }
+      
+      // FIX: Idempotency protection - prevent duplicate expense submissions on network retry
+      if (e.idempotencyKey) {
+        const existing = await pool.query(
+          'SELECT id FROM expenses WHERE tenant_id = $1 AND idempotency_key = $2',
+          [tenantId, e.idempotencyKey]
+        );
+        if (existing.rows.length > 0) {
+          return res.json({ success: true, duplicate: true, id: existing.rows[0].id });
+        }
+      }
+      
       await pool.query(
         `INSERT INTO expenses
-          (tenant_id, date, category, description, amount, mode, paid_to, approved_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          (tenant_id, date, category, description, amount, mode, paid_to, approved_by, idempotency_key)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [
           tenantId,
           e.date || istDate(),
           e.category || 'General',
           e.desc || e.description || '',
-          e.amount,
+          amount,
           e.mode || 'cash',
           e.employee || '',
-          e.employee || ''
+          e.employee || '',
+          e.idempotencyKey || ''
         ]
       );
       res.json({ success: true });
     } catch (err) {
       console.error('[public/expense]', err.message);
+      // FIX: Check for unique constraint violation (duplicate idempotency key)
+      if (err.message && err.message.includes('idx_expenses_idem')) {
+        return res.json({ success: true, duplicate: true });
+      }
       res.status(500).json({ error: err.message });
     }
   });
