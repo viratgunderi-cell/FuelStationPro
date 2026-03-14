@@ -52,10 +52,13 @@ if (dbUrl) {
   poolConfig = {
     connectionString: dbUrl,
     ssl: isInternal ? false : { rejectUnauthorized: false },
-    max: 100,                     // FIX: Increased from 25 to 100 for 1200 concurrent users
-    idleTimeoutMillis: 20000,     // Reduced from 30s for faster connection recycling
-    connectionTimeoutMillis: 3000, // Reduced from 5s to fail faster
-    statement_timeout: 10000,      // Reduced from 15s to 10s for faster timeout
+    // PRODUCTION OPTIMIZATION: Pool sized for 1000 concurrent users
+    max: 150,                       // Increased from 100 to handle peak load (700+ concurrent)
+    min: 20,                        // Keep minimum connections alive to reduce latency
+    idleTimeoutMillis: 15000,       // Reduced from 20s for faster connection recycling
+    connectionTimeoutMillis: 5000,  // Increased from 3s to handle queue during spikes
+    statement_timeout: 15000,       // Increased from 10s for complex report queries
+    allowExitOnIdle: false,         // Prevent pool shutdown during idle periods
   };
 } else {
   console.log('[DB] Using PG* env vars, host:', process.env.PGHOST);
@@ -66,10 +69,13 @@ if (dbUrl) {
     user: process.env.PGUSER,
     password: process.env.PGPASSWORD,
     ssl: false,
-    max: 100,                     // FIX: Increased from 25 to 100 for 1200 concurrent users
-    idleTimeoutMillis: 20000,     // Reduced from 30s for faster connection recycling
-    connectionTimeoutMillis: 3000, // Reduced from 5s to fail faster
-    statement_timeout: 10000,      // Reduced from 15s to 10s for faster timeout
+    // PRODUCTION OPTIMIZATION: Pool sized for 1000 concurrent users
+    max: 150,                       // Increased from 100 to handle peak load (700+ concurrent)
+    min: 20,                        // Keep minimum connections alive to reduce latency
+    idleTimeoutMillis: 15000,       // Reduced from 20s for faster connection recycling
+    connectionTimeoutMillis: 5000,  // Increased from 3s to handle queue during spikes
+    statement_timeout: 15000,       // Increased from 10s for complex report queries
+    allowExitOnIdle: false,         // Prevent pool shutdown during idle periods
   };
 }
 
@@ -109,6 +115,17 @@ function convertSql(sql, mode) {
 class PgDbWrapper {
   constructor(pool) {
     this.pool = pool;
+  }
+
+  // PRODUCTION FIX: Query timeout protection
+  // Prevents long-running queries from blocking connections during high load
+  async queryWithTimeout(sql, params = [], timeoutMs = 5000) {
+    return Promise.race([
+      this.pool.query(sql, params),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error(`Query timeout exceeded (${timeoutMs}ms)`)), timeoutMs)
+      )
+    ]);
   }
 
   prepare(sql) {
@@ -193,8 +210,37 @@ class PgDbWrapper {
 // ─────────────────────────────────────────────────────────────
 async function initDatabase() {
   console.log('[DB] Connecting to PostgreSQL...');
-  try { await pool.query('SELECT 1'); console.log('[DB] Connection OK'); }
-  catch (e) { console.error('[DB] Connection failed:', e.message); throw e; }
+  
+  // PRODUCTION FIX: Connection retry with exponential backoff
+  // Handles temporary network issues, database restarts, and startup race conditions
+  async function connectWithRetry(maxRetries = 5) {
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        await pool.query('SELECT 1');
+        console.log('[DB] Connection successful');
+        return true;
+      } catch (e) {
+        const delay = Math.min(1000 * Math.pow(2, i), 30000); // Max 30 seconds
+        console.error(
+          `[DB] Connection failed (attempt ${i + 1}/${maxRetries}): ${e.message}`
+        );
+        
+        if (i < maxRetries - 1) {
+          console.log(`[DB] Retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        } else {
+          throw new Error(`Database connection failed after ${maxRetries} attempts: ${e.message}`);
+        }
+      }
+    }
+  }
+  
+  try {
+    await connectWithRetry(5);
+  } catch (e) {
+    console.error('[DB] Fatal connection error:', e.message);
+    throw e;
+  }
 
   const TABLES = [
     `CREATE TABLE IF NOT EXISTS super_admin (
